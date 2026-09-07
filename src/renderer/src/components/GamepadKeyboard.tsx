@@ -48,6 +48,7 @@ const GERMAN_LETTER_ROWS = [
   [...'asdfghjkl'],
   [...'yxcvbnm']
 ]
+const SPANISH_LETTER_ROWS = [[...'qwertyuiop'], [...'asdfghjklñ'], [...'zxcvbnm']]
 const PRIMARY_SYMBOL_ROWS = [
   [...'1234567890'],
   ['@', '#', '€', '_', '&', '-', '+', '(', ')', '/'],
@@ -433,8 +434,13 @@ export function GamepadKeyboard(): JSX.Element {
 
   const rows = useMemo(() => {
     if (mode === 'numbers') return NUMBER_ROWS
-    if (mode === 'symbols') return secondarySymbols ? SECONDARY_SYMBOL_ROWS : PRIMARY_SYMBOL_ROWS
-    return language === 'de' ? GERMAN_LETTER_ROWS : ENGLISH_LETTER_ROWS
+    if (mode === 'symbols') {
+      const symbols = secondarySymbols ? SECONDARY_SYMBOL_ROWS : PRIMARY_SYMBOL_ROWS
+      return language === 'es'
+        ? [[...(secondarySymbols ? 'ÁÉÍÓÚÜ¿¡' : 'áéíóúü¿¡')], ...symbols]
+        : symbols
+    }
+    return language === 'es' ? SPANISH_LETTER_ROWS : language === 'de' ? GERMAN_LETTER_ROWS : ENGLISH_LETTER_ROWS
   }, [language, mode, secondarySymbols])
 
   const isSearch = session?.target.type === 'search' || session?.target.enterKeyHint === 'search'

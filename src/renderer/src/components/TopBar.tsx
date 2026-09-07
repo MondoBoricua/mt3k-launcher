@@ -19,6 +19,7 @@ import {
   totalDiscordUnread,
   useDiscordChatStore
 } from '@renderer/state/discordChatStore'
+import { preloadMainView } from '@renderer/lib/mainViewLoaders'
 
 const items: { id: MainView; labelKey: TranslationKey; icon: typeof Home }[] = [
   { id: 'home', labelKey: 'nav.home', icon: Home },
@@ -215,6 +216,8 @@ export function TopBar(): JSX.Element {
                 data-dock-item
                 data-active={active ? 'true' : 'false'}
                 data-main-view={item.id}
+                onFocus={() => preloadMainView(item.id)}
+                onPointerEnter={() => preloadMainView(item.id)}
                 onClick={() => setMainView(item.id)}
                 aria-label={label}
                 aria-current={active ? 'page' : undefined}

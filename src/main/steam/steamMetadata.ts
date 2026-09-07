@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import Store from 'electron-store'
 import { app } from 'electron'
-import type { GameMetadata, GamePlatform } from '@shared/ipc'
+import type { GameMetadata, GamePlatform, LibraryAccessKind } from '@shared/ipc'
 import { syncCoordinator } from '../sync/syncCoordinator'
 import { fetchWithElectronNet } from '../networkFetch'
 
@@ -39,17 +39,20 @@ interface QueueItem {
   appId: number
   language: string
   allowCreate: boolean
+  libraryAccess?: LibraryAccessKind
   attempts: number
 }
 
 interface MetadataUpdate {
   metadata: SteamAppMetadata
   allowCreate: boolean
+  libraryAccess?: LibraryAccessKind
 }
 
 export interface MetadataSyncTarget {
   appId: number
   allowCreate: boolean
+  libraryAccess?: LibraryAccessKind
 }
 
 const cache = new Store<{ entries: Record<string, CachedMetadata> }>({
@@ -288,7 +291,8 @@ export class SteamMetadataService extends EventEmitter {
       const existing = uniqueTargets.get(target.appId)
       uniqueTargets.set(target.appId, {
         appId: target.appId,
-        allowCreate: Boolean(existing?.allowCreate || target.allowCreate)
+        allowCreate: Boolean(existing?.allowCreate || target.allowCreate),
+        libraryAccess: target.libraryAccess ?? existing?.libraryAccess
       })
     }
 
@@ -305,14 +309,25 @@ export class SteamMetadataService extends EventEmitter {
     )
   }
 
+  /** Bypasses the persistent TTL for an explicit single-game refresh. */
+  async refreshGame(appId: number, language: string): Promise<boolean> {
+    if (!Number.isInteger(appId) || appId <= 0) return false
+    const metadata = await fetchMetadata(appId, language)
+    if (!metadata) return false
+    cacheEntries[cacheKey(appId, language)] = metadata
+    scheduleCachePersist()
+    this.emitUpdate(metadata, false)
+    return true
+  }
+
   private enqueueTargets(targets: Iterable<MetadataSyncTarget>, language: string): void {
-    for (const { appId, allowCreate } of targets) {
+    for (const { appId, allowCreate, libraryAccess } of targets) {
       if (!Number.isInteger(appId) || appId <= 0) continue
       const key = cacheKey(appId, language)
       const rawCached = cacheEntries[key] as CachedMetadata | LegacyCachedMetadata | undefined
       const cached = rawCached ? normalizeCacheEntry(rawCached, language) : undefined
       if (cached) {
-        this.emitUpdate(cached, allowCreate)
+        this.emitUpdate(cached, allowCreate, libraryAccess)
         if (isFresh(cached)) {
           this.markSyncComplete(key)
           continue
@@ -322,9 +337,10 @@ export class SteamMetadataService extends EventEmitter {
       const existing = this.queued.get(key)
       if (existing) {
         existing.allowCreate ||= allowCreate
+        existing.libraryAccess = libraryAccess ?? existing.libraryAccess
         continue
       }
-      const item = { appId, language, allowCreate, attempts: 0 }
+      const item = { appId, language, allowCreate, libraryAccess, attempts: 0 }
       this.queued.set(key, item)
       this.queue.push(item)
     }
@@ -335,9 +351,13 @@ export class SteamMetadataService extends EventEmitter {
     }
   }
 
-  private emitUpdate(entry: CachedMetadata, allowCreate: boolean): void {
+  private emitUpdate(
+    entry: CachedMetadata,
+    allowCreate: boolean,
+    libraryAccess?: LibraryAccessKind
+  ): void {
     const { metadataSchemaVersion: _schemaVersion, ...metadata } = entry
-    this.emit('updated', { metadata, allowCreate } satisfies MetadataUpdate)
+    this.emit('updated', { metadata, allowCreate, libraryAccess } satisfies MetadataUpdate)
   }
 
   private async run(): Promise<void> {
@@ -354,7 +374,7 @@ export class SteamMetadataService extends EventEmitter {
           if (metadata) {
             cacheEntries[key] = metadata
             scheduleCachePersist()
-            this.emitUpdate(metadata, item.allowCreate)
+            this.emitUpdate(metadata, item.allowCreate, item.libraryAccess)
           }
           this.markSyncComplete(key)
         } catch {

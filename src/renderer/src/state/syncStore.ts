@@ -19,6 +19,8 @@ interface SyncState {
 }
 
 let listening = false
+let initialized = false
+let initializationPromise: Promise<void> | undefined
 
 export const SYNC_PIPELINE_ORDER: SyncPipelineId[] = [
   'library',
@@ -31,10 +33,25 @@ export const SYNC_PIPELINE_ORDER: SyncPipelineId[] = [
 export const useSyncStore = create<SyncState>((set) => ({
   status: initialStatus,
   init: async () => {
+    if (initialized) return
+    if (initializationPromise) return initializationPromise
     if (!listening) {
       listening = true
       window.api.sync.onUpdated((status) => set({ status }))
     }
-    set({ status: await window.api.sync.get() })
+    const request = (async (): Promise<void> => {
+      try {
+        set({ status: await window.api.sync.get() })
+        initialized = true
+      } catch {
+        // Keep the safe idle snapshot. MainShell may retry initialization after mount.
+      }
+    })()
+    initializationPromise = request
+    try {
+      await request
+    } finally {
+      if (initializationPromise === request) initializationPromise = undefined
+    }
   }
 }))

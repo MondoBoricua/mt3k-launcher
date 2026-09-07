@@ -1,3 +1,4 @@
+import { type Language, languageLocale, normalizeLanguage } from '@shared/language'
 import { create } from 'zustand'
 import type { StoreProduct, StoreRegionId, StoreSnapshot } from '@shared/ipc'
 import { notify } from './notificationStore'
@@ -34,12 +35,13 @@ interface StoreState {
 }
 
 let listening = false
+let initializationPromise: Promise<void> | undefined
 let searchSequence = 0
 
 function formatMinor(priceMinor: number, currency: string): string {
   const language = currentLanguage()
   try {
-    return new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', {
+    return new Intl.NumberFormat(languageLocale(language), {
       style: 'currency',
       currency
     }).format(priceMinor / 100)
@@ -48,8 +50,8 @@ function formatMinor(priceMinor: number, currency: string): string {
   }
 }
 
-function currentLanguage(): 'en' | 'de' {
-  return document.documentElement.lang === 'de' ? 'de' : 'en'
+function currentLanguage(): Language {
+  return normalizeLanguage(document.documentElement.lang)
 }
 
 function productName(snapshot: StoreSnapshot, productId: string): string {
@@ -103,12 +105,22 @@ export const useStoreStore = create<StoreState>((set) => ({
   searchResults: [],
   isSearching: false,
   init: async () => {
+    if (useStoreStore.getState().initialized) return
+    if (initializationPromise) return initializationPromise
     if (!listening) {
       listening = true
       window.api.store.onUpdated((snapshot) => commitSnapshot(snapshot))
     }
-    await loadSnapshot(window.api.store.get(), false)
-    set({ initialized: true })
+    const request = (async (): Promise<void> => {
+      await loadSnapshot(window.api.store.get(), false)
+      set({ initialized: true })
+    })()
+    initializationPromise = request
+    try {
+      await request
+    } finally {
+      if (initializationPromise === request) initializationPromise = undefined
+    }
   },
   refresh: async () => {
     await loadSnapshot(window.api.store.refresh())

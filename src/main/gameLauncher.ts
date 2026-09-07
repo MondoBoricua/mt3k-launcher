@@ -1,10 +1,14 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { win32 as path } from 'node:path'
 import { shell } from 'electron'
 import type { LibraryGame } from '@shared/ipc'
 import { retroLaunchArguments } from '@shared/retroSystems'
 import { launcherDownloadMonitor } from './downloads/launcherDownloadMonitor'
+import {
+  isWindowsElevationRequiredError,
+  windowsCommandLineArguments
+} from './gameLaunchElevationPolicy'
 import { prepareRetroFullscreen } from './retro/retroLaunchPreparation'
 import { playStationRemotePlayService } from './playstation/remotePlay'
 import { getSteamAppsDirectories, getSteamInstallPath } from './steam/steamInstall'
@@ -16,6 +20,14 @@ import {
   normalizeXboxProductId,
   requestXboxProductInstall
 } from './xbox/xboxInstallRequest'
+
+const WINDOWS_POWERSHELL_PATH = path.join(
+  process.env.SystemRoot ?? 'C:\\Windows',
+  'System32',
+  'WindowsPowerShell',
+  'v1.0',
+  'powershell.exe'
+)
 
 export interface GameLaunchReceipt {
   /** Present only when ORBIT spawned the configured game executable itself. */
@@ -82,6 +94,74 @@ function launchDetached(
       resolve(child.pid ?? 0)
     })
   })
+}
+
+function encodedPowerShell(script: string): string {
+  return Buffer.from(script, 'utf16le').toString('base64')
+}
+
+function launchElevatedWithPowerShell(
+  executable: string,
+  args: readonly string[],
+  cwd: string
+): Promise<number> {
+  const payload = Buffer.from(
+    JSON.stringify({ executable, arguments: windowsCommandLineArguments(args), cwd }),
+    'utf8'
+  ).toString('base64')
+  const script = `
+$ErrorActionPreference = 'Stop'
+$requestJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}'))
+$request = $requestJson | ConvertFrom-Json
+$parameters = @{
+  FilePath = [string]$request.executable
+  WorkingDirectory = [string]$request.cwd
+  Verb = 'RunAs'
+  PassThru = $true
+  ErrorAction = 'Stop'
+}
+if ($request.arguments) { $parameters.ArgumentList = [string]$request.arguments }
+$child = Start-Process @parameters
+[Console]::Out.Write([string]$child.Id)
+`
+
+  return new Promise((resolve, reject) => {
+    execFile(
+      WINDOWS_POWERSHELL_PATH,
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encodedPowerShell(script)],
+      { encoding: 'utf8', timeout: 120_000, windowsHide: true },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(stderr.trim() || 'Administrator approval was cancelled or unavailable'))
+          return
+        }
+        const processId = Number.parseInt(stdout.trim(), 10)
+        resolve(Number.isInteger(processId) && processId > 0 ? processId : 0)
+      }
+    )
+  })
+}
+
+/** Launches a game directly where possible, but delegates only this executable
+ * to the Windows shell when its manifest requires administrator approval. ORBIT
+ * itself stays unelevated, so other launchers do not inherit broad privileges. */
+async function launchDetachedGame(
+  executable: string,
+  args: readonly string[],
+  cwd: string
+): Promise<number> {
+  try {
+    return await launchDetached(executable, args, cwd)
+  } catch (error) {
+    if (process.platform !== 'win32' || !isWindowsElevationRequiredError(error)) throw error
+
+    if (args.length === 0) {
+      const shellError = await shell.openPath(executable)
+      if (shellError) throw new Error(shellError)
+      return 0
+    }
+    return launchElevatedWithPowerShell(executable, args, cwd)
+  }
 }
 
 function providerLaunchArguments(value: unknown): string[] {
@@ -185,7 +265,11 @@ export async function launchGame(game: LibraryGame): Promise<GameLaunchReceipt> 
     }
     const installDir = game.installDir?.trim()
     const cwd = installDir && existsSync(installDir) ? installDir : path.dirname(executable)
-    const spawnedGamePid = await launchDetached(executable, game.local?.launchArguments ?? [], cwd)
+    const spawnedGamePid = await launchDetachedGame(
+      executable,
+      game.local?.launchArguments ?? [],
+      cwd
+    )
     return spawnedGamePid > 0 ? { spawnedGamePid } : {}
   }
 
@@ -235,7 +319,7 @@ export async function launchGame(game: LibraryGame): Promise<GameLaunchReceipt> 
 
   if (game.provider === 'gog' && game.installed) {
     const { executable, cwd } = installedProviderExecutable(game)
-    const spawnedGamePid = await launchDetached(
+    const spawnedGamePid = await launchDetachedGame(
       executable,
       providerLaunchArguments(game.metadata.launchArguments ?? []),
       cwd
@@ -256,7 +340,7 @@ export async function launchGame(game: LibraryGame): Promise<GameLaunchReceipt> 
       throw new Error('The assigned RetroArch core is no longer available')
     }
     const ensureFullscreenWithHotkey = await prepareRetroFullscreen(retro)
-    const spawnedGamePid = await launchDetached(
+    const spawnedGamePid = await launchDetachedGame(
       executable,
       retroLaunchArguments(retro),
       path.dirname(executable)

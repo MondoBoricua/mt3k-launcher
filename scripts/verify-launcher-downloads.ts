@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {
   deriveEpicDownloadActivity,
   deriveSteamDownloadActivity,
+  hasEpicPendingDownloadSettled,
   isSteamDownloadComplete,
   isSteamDownloadFailed,
   parseEpicDownloadSample,
@@ -18,6 +19,11 @@ import {
   parseXboxPackageProgressEvent,
   XboxPackageActivityMonitor
 } from '../src/main/xbox/xboxPackageActivity.ts'
+import {
+  isLauncherApplicationId,
+  launcherProviderForApplicationId,
+  LibraryRefreshScheduler
+} from '../src/main/library/libraryRefreshScheduler.ts'
 
 function steamManifest(fields: Record<string, string>): string {
   return `"AppState"
@@ -126,6 +132,10 @@ assert.equal(
   null
 )
 
+assert.equal(hasEpicPendingDownloadSettled(20_000, 25_000), false)
+assert.equal(hasEpicPendingDownloadSettled(20_000, 25_001), true)
+assert.equal(hasEpicPendingDownloadSettled(Number.NaN, 25_001), false)
+
 assert.equal(clampLauncherProgress(-2), 0)
 assert.equal(clampLauncherProgress(2), 1)
 assert.equal(clampLauncherProgress(Number.NaN), undefined)
@@ -155,6 +165,50 @@ const snapshot = (revision: number): LauncherDownloadSnapshot => ({
 assert.equal(shouldApplyLauncherDownloadSnapshot(snapshot(4), snapshot(3)), false)
 assert.equal(shouldApplyLauncherDownloadSnapshot(snapshot(4), snapshot(4)), false)
 assert.equal(shouldApplyLauncherDownloadSnapshot(snapshot(4), snapshot(5)), true)
+
+assert.equal(isLauncherApplicationId('launcher:epic'), true)
+assert.equal(isLauncherApplicationId('launcher:ubisoft'), true)
+assert.equal(isLauncherApplicationId('launcher:playstation'), false)
+assert.equal(isLauncherApplicationId('custom:ubisoft'), false)
+assert.equal(launcherProviderForApplicationId('launcher:epic'), 'epic')
+assert.equal(launcherProviderForApplicationId('launcher:ubisoft'), 'ubisoft')
+
+const libraryRefreshes: string[][] = []
+const libraryRefreshScheduler = new LibraryRefreshScheduler(async (targets) => {
+  libraryRefreshes.push(
+    targets
+      .map((target) => `${target.provider}:${target.providerGameId ?? '*'}`)
+      .sort()
+  )
+}, 0)
+libraryRefreshScheduler.request({ provider: 'epic', providerGameId: 'celeste' })
+libraryRefreshScheduler.request({ provider: 'epic', providerGameId: 'celeste' })
+libraryRefreshScheduler.request({ provider: 'steam', providerGameId: '10' })
+await new Promise((resolve) => setTimeout(resolve, 10))
+assert.deepEqual(libraryRefreshes, [['epic:celeste', 'steam:10']])
+
+libraryRefreshScheduler.request({ provider: 'epic', providerGameId: 'another-game' })
+libraryRefreshScheduler.request({ provider: 'epic' })
+await new Promise((resolve) => setTimeout(resolve, 10))
+assert.deepEqual(libraryRefreshes[1], ['epic:*'])
+
+libraryRefreshScheduler.handleWindowBlurred(1_000)
+assert.equal(libraryRefreshScheduler.handleWindowFocused(15_999), false)
+libraryRefreshScheduler.expectLauncherReturn('launcher:ubisoft')
+assert.equal(libraryRefreshScheduler.handleWindowFocused(16_000), true)
+await new Promise((resolve) => setTimeout(resolve, 10))
+assert.deepEqual(libraryRefreshes[2], ['ubisoft:*'])
+
+libraryRefreshScheduler.handleWindowBlurred(20_000)
+assert.equal(libraryRefreshScheduler.handleWindowFocused(35_000), true)
+await new Promise((resolve) => setTimeout(resolve, 10))
+assert.deepEqual(libraryRefreshes[3], ['ea:*', 'gog:*', 'ubisoft:*'])
+
+libraryRefreshScheduler.handleWindowBlurred(40_000)
+assert.equal(libraryRefreshScheduler.handleWindowFocused(55_000, false), false)
+await new Promise((resolve) => setTimeout(resolve, 10))
+assert.equal(libraryRefreshes.length, 4)
+libraryRefreshScheduler.dispose()
 
 const xboxEvent = parseXboxPackageProgressEvent(
   JSON.stringify({

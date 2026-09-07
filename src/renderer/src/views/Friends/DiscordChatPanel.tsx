@@ -1,3 +1,4 @@
+import { type Language, languageLocale } from '@shared/language'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
@@ -30,7 +31,7 @@ const MESSAGE_LIMIT = 2_000
 
 interface Props {
   friend?: OrbitFriend
-  language: 'en' | 'de'
+  language: Language
   onClose: () => void
   onOpenDiscord: () => Promise<boolean>
 }
@@ -126,7 +127,7 @@ export function DiscordChatPanel({
 
   const timeFormatter = useMemo(
     () =>
-      new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', {
+      new Intl.DateTimeFormat(languageLocale(language), {
         hour: '2-digit',
         minute: '2-digit'
       }),

@@ -29,6 +29,9 @@ export function findNextFocus(
   current: HTMLElement,
   direction: NavDirection
 ): HTMLElement | null {
+  const settingsTarget = findSettingsTarget(current, direction)
+  if (settingsTarget !== undefined) return settingsTarget
+
   const applicationTarget = findApplicationTarget(current, direction)
   if (applicationTarget !== undefined) return applicationTarget
 
@@ -67,6 +70,43 @@ export function findNextFocus(
   }
 
   return findNearestCandidate(current, direction, getFocusableElements())
+}
+
+/** Keep category entry and accordion boundaries independent of wide row geometry. */
+function findSettingsTarget(
+  current: HTMLElement,
+  direction: NavDirection
+): HTMLElement | null | undefined {
+  const root = current.closest<HTMLElement>('[data-settings-root]')
+  if (!root || current.closest('[data-focus-scope="active"]')) return undefined
+  const headers = Array.from(
+    root.querySelectorAll<HTMLElement>('[data-settings-section-header]')
+  ).filter(isVisibleFocusTarget)
+  const activeTab = root.querySelector<HTMLElement>('[data-settings-page][aria-current="page"]')
+
+  if (current.hasAttribute('data-settings-page')) {
+    return direction === 'down' ? headers[0] ?? null : undefined
+  }
+
+  const section = current.closest<HTMLElement>('[data-settings-section]')
+  const header = section?.querySelector<HTMLElement>('[data-settings-section-header]')
+  if (!section || !header) return undefined
+  const index = headers.indexOf(header)
+  const controls = getFocusableElements().filter((element) =>
+    element !== header && !element.matches(':disabled') && section.contains(element)
+  )
+
+  if (current === header) {
+    if (direction === 'up') return headers[index - 1] ?? activeTab
+    if (direction === 'down') return controls[0] ?? headers[index + 1] ?? null
+    return null
+  }
+
+  const next = findNearestCandidate(current, direction, controls)
+  if (next) return next
+  if (direction === 'up') return header
+  if (direction === 'down') return headers[index + 1] ?? null
+  return null
 }
 
 /**
@@ -775,6 +815,19 @@ export function moveFocus(
   options: { allowNavigationLayerTransition?: boolean } = {}
 ): boolean {
   const current = document.activeElement as HTMLElement | null
+  if (
+    current?.matches('input[type="range"]') &&
+    (direction === 'left' || direction === 'right')
+  ) {
+    const slider = current as HTMLInputElement
+    if (slider.disabled) return false
+    const previous = slider.value
+    direction === 'right' ? slider.stepUp() : slider.stepDown()
+    if (slider.value === previous) return false
+    slider.dispatchEvent(new Event('input', { bubbles: true }))
+    slider.dispatchEvent(new Event('change', { bubbles: true }))
+    return true
+  }
   if (!current || !current.hasAttribute('data-focusable')) {
     const previous = document.activeElement
     focusFirstIn()

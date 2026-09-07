@@ -2,6 +2,7 @@ import { AlertCircle, CheckCircle2, DownloadCloud, ShieldCheck } from 'lucide-re
 import { motion } from 'framer-motion'
 import { useT } from '@renderer/i18n/useT'
 import { useAppUpdateStore } from '@renderer/state/appUpdateStore'
+import { canRetryAppUpdateDownload } from '@shared/appUpdatePolicy'
 
 export function AppUpdateStatusChip(): JSX.Element | null {
   const t = useT()
@@ -55,11 +56,20 @@ export function AppUpdateStatusChip(): JSX.Element | null {
 
   const failed = snapshot.stage === 'error'
   const available = snapshot.stage === 'available'
+  const retryDownload = canRetryAppUpdateDownload(snapshot)
   return (
     <motion.button
       data-focusable
       type="button"
-      onClick={() => (failed ? void check() : available ? void download() : showBanner())}
+      onClick={() =>
+        retryDownload
+          ? void download()
+          : failed
+            ? void check()
+            : available
+              ? void download()
+              : showBanner()
+      }
       whileTap={{ scale: 0.96 }}
       aria-label={t(
         failed

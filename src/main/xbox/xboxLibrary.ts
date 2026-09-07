@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events'
+import { app } from 'electron'
 import type {
+  GameEntitlementKind,
   GameMetadata,
   LibraryGame,
   LibraryDetectionMethod,
@@ -16,6 +18,7 @@ import { scanXboxAppLibrary, type XboxAppGame } from './xboxAppLibrary'
 import { fetchXboxCatalogProducts } from './xboxCatalog'
 import { scanInstalledXboxGameByFamily, scanInstalledXboxGames } from './xboxInstall'
 import { normalizeXboxPackageFamilyName } from './xboxPackageIdentity'
+import { xboxGamePassHistory } from './xboxGamePassHistory'
 import {
   xboxMetadataService,
   type XboxMetadataResult,
@@ -36,10 +39,14 @@ function xboxProductId(value: string | undefined): string | undefined {
   return normalized && /^[A-Z0-9]{12}$/.test(normalized) ? normalized : undefined
 }
 
-function installedMetadata(local: GameMetadata, catalog?: XboxAppGame): GameMetadata {
-  if (!catalog) return local
-  return {
+function installedMetadata(local: GameMetadata, catalog?: Pick<XboxAppGame, 'metadata'>): GameMetadata {
+  const localWithEvidence: GameMetadata = {
     ...local,
+    entitlement: local.entitlement ?? { kind: 'unknown', evidence: 'local-install' }
+  }
+  if (!catalog) return localWithEvidence
+  return {
+    ...localWithEvidence,
     ...catalog.metadata,
     // Launching stays tied to the installed AppX identity even though the
     // durable library identity is now the Microsoft Store product ID.
@@ -73,6 +80,7 @@ export class XboxLibraryService
 {
   readonly provider = 'xbox' as const
   private refreshInFlight: Promise<LibrarySnapshot> | null = null
+  private installedRefreshInFlight: Promise<LibrarySnapshot> | null = null
   private packageRefreshes = new Map<string, Promise<boolean>>()
   private gameIdByPackageFamilyName = new Map<string, string>()
   private providerStatus: LibraryProviderStatus = {
@@ -127,7 +135,13 @@ export class XboxLibraryService
     return {
       ...this.providerStatus,
       ...gameRepository.getProviderCounts('xbox'),
-      methods: [...this.providerStatus.methods]
+      methods: [...this.providerStatus.methods],
+      subscriptions: this.providerStatus.subscriptions
+        ? [...this.providerStatus.subscriptions]
+        : undefined,
+      entitlementCounts: this.providerStatus.entitlementCounts
+        ? { ...this.providerStatus.entitlementCounts }
+        : undefined
     }
   }
 
@@ -175,6 +189,17 @@ export class XboxLibraryService
     }
   }
 
+  /** Reconciles local Gaming Services packages without reading the Xbox app
+   * account database or requesting the Microsoft Store display catalog. */
+  refreshInstalledGames(providerGameIds?: readonly string[]): Promise<LibrarySnapshot> {
+    if (this.installedRefreshInFlight) return this.installedRefreshInFlight
+    const refresh = this.doRefreshInstalledGames(providerGameIds).finally(() => {
+      if (this.installedRefreshInFlight === refresh) this.installedRefreshInFlight = null
+    })
+    this.installedRefreshInFlight = refresh
+    return refresh
+  }
+
   async refresh(): Promise<LibrarySnapshot> {
     if (this.refreshInFlight) return this.refreshInFlight
     this.refreshInFlight = this.doRefresh()
@@ -193,7 +218,7 @@ export class XboxLibraryService
       methods: []
     })
     const [appLibraryResult, installedResult] = await Promise.allSettled([
-      scanXboxAppLibrary(),
+      scanXboxAppLibrary({ cacheDirectory: app.getPath('userData') }),
       scanInstalledXboxGames()
     ])
 
@@ -236,10 +261,22 @@ export class XboxLibraryService
       const games = new Map(appLibrary.games)
       const byPackageFamilyName = new Map(appLibrary.byPackageFamilyName)
       for (const [productId, game] of resolved) {
-        games.set(productId, game)
-        const packageFamilyName = normalizeXboxPackageFamilyName(game.packageFamilyName)
+        const subscriptionGame: XboxAppGame = {
+          ...game,
+          metadata: {
+            ...game.metadata,
+            providerStoreId: game.metadata.providerStoreId ?? productId,
+            entitlement: {
+              kind: 'subscription',
+              subscription: 'xbox-game-pass',
+              evidence: 'local-cache'
+            }
+          }
+        }
+        games.set(productId, subscriptionGame)
+        const packageFamilyName = normalizeXboxPackageFamilyName(subscriptionGame.packageFamilyName)
         if (packageFamilyName) {
-          byPackageFamilyName.set(packageFamilyName.toLowerCase(), game)
+          byPackageFamilyName.set(packageFamilyName.toLowerCase(), subscriptionGame)
         }
       }
       const unresolvedProductIds = appLibrary.unresolvedProductIds.filter(
@@ -254,6 +291,40 @@ export class XboxLibraryService
         games,
         byPackageFamilyName
       }
+    }
+    if (
+      appLibrary?.available &&
+      appLibrary.activeSubscription &&
+      appLibrary.eligibleProductCount > 0
+    ) {
+      const membershipDetectedAt = xboxGamePassHistory.observe([
+        ...appLibrary.games.keys(),
+        ...appLibrary.unresolvedProductIds
+      ])
+      const games = new Map<string, XboxAppGame>()
+      const byPackageFamilyName = new Map<string, XboxAppGame>()
+      for (const [productId, game] of appLibrary.games) {
+        const entitlement = game.metadata.entitlement
+        const updatedGame: XboxAppGame = {
+          ...game,
+          metadata: {
+            ...game.metadata,
+            entitlement:
+              entitlement?.kind === 'subscription'
+                ? {
+                    ...entitlement,
+                    membershipDetectedAt: membershipDetectedAt.get(productId)
+                  }
+                : entitlement
+          }
+        }
+        games.set(productId, updatedGame)
+        const packageFamilyName = normalizeXboxPackageFamilyName(updatedGame.packageFamilyName)
+        if (packageFamilyName) {
+          byPackageFamilyName.set(packageFamilyName.toLowerCase(), updatedGame)
+        }
+      }
+      appLibrary = { ...appLibrary, games, byPackageFamilyName }
     }
     const nextPackageGameIds = new Map<string, string>()
     for (const game of appLibrary?.games.values() ?? []) {
@@ -361,9 +432,16 @@ export class XboxLibraryService
     const methods: LibraryDetectionMethod[] = []
     if (appLibraryResult.status === 'fulfilled') methods.push('xbox-app-cache')
     if (displayCatalogAvailable) methods.push('xbox-display-catalog')
-    if (displayCatalogCached) methods.push('cached-data')
+    if (displayCatalogCached || appLibrary?.reusedScanCache) methods.push('cached-data')
     if (installedResult.status === 'fulfilled') methods.push('windows-packages')
     const counts = gameRepository.getProviderCounts('xbox')
+    const entitlementCounts = gameRepository
+      .getGamesByProvider('xbox')
+      .reduce<Partial<Record<GameEntitlementKind, number>>>((result, game) => {
+        const kind = game.metadata.entitlement?.kind ?? 'unknown'
+        result[kind] = (result[kind] ?? 0) + 1
+        return result
+      }, {})
     const allSourcesFailed =
       appLibraryResult.status === 'rejected' && installedResult.status === 'rejected'
     const appLibraryReady = Boolean(
@@ -381,6 +459,8 @@ export class XboxLibraryService
             : 'local-only',
       connection: 'automatic',
       methods,
+      subscriptions: appLibrary?.subscriptions ?? [],
+      entitlementCounts,
       issue: allSourcesFailed || oneSourceFailed || !appLibraryReady
         ? 'source-unavailable'
         : counts.gameCount === 0
@@ -390,6 +470,90 @@ export class XboxLibraryService
     })
 
     this.emitSnapshot()
+    return this.getSnapshot()
+  }
+
+  private async doRefreshInstalledGames(
+    providerGameIds?: readonly string[]
+  ): Promise<LibrarySnapshot> {
+    const activeRefresh = this.refreshInFlight
+    if (activeRefresh) await activeRefresh.catch(() => undefined)
+
+    syncCoordinator.begin('library', 1, 0, 'xbox-installed', 'xbox')
+    try {
+      const requestedIds = providerGameIds
+        ? new Set(providerGameIds.map((providerGameId) => providerGameId.trim().toLowerCase()))
+        : undefined
+      const installed = await scanInstalledXboxGames()
+      const installedDeltas: Array<{
+        providerGameId: string
+        name: string
+        installDir: string
+        metadata: GameMetadata
+      }> = []
+      const fallbackTargets: XboxMetadataSyncTarget[] = []
+      const packageGameIds = new Map(this.gameIdByPackageFamilyName)
+
+      for (const localGame of installed.values()) {
+        const packageFamilyName = normalizeXboxPackageFamilyName(localGame.packageFamilyName)
+        const knownGame = packageFamilyName
+          ? this.resolvePackageFamilyName(packageFamilyName)
+          : undefined
+        const providerGameId = knownGame?.providerGameId ?? localGame.providerGameId
+        if (
+          requestedIds &&
+          !requestedIds.has(providerGameId.toLowerCase()) &&
+          !requestedIds.has(localGame.providerGameId.toLowerCase())
+        ) {
+          continue
+        }
+        const existing = gameRepository.getGame(`xbox:${providerGameId}`)
+        const changed =
+          !existing?.installed ||
+          existing.installDir !== localGame.installDir ||
+          existing.name !== localGame.name
+        if (!changed) {
+          if (packageFamilyName) {
+            packageGameIds.set(packageFamilyName.toLowerCase(), `xbox:${providerGameId}`)
+          }
+          continue
+        }
+        installedDeltas.push({
+          providerGameId,
+          name: localGame.name,
+          installDir: localGame.installDir,
+          metadata: installedMetadata(
+            localGame.metadata,
+            knownGame ? { metadata: knownGame.metadata } : undefined
+          )
+        })
+        if (packageFamilyName) {
+          packageGameIds.set(packageFamilyName.toLowerCase(), `xbox:${providerGameId}`)
+        }
+        if (!knownGame) {
+          fallbackTargets.push({
+            providerGameId,
+            name: localGame.name,
+            packageVersion: localGame.packageVersion
+          })
+        }
+      }
+
+      if (installedDeltas.length > 0) {
+        gameRepository.applyInstalledProviderPatch('xbox', installedDeltas)
+      }
+      this.gameIdByPackageFamilyName = packageGameIds
+      if (fallbackTargets.length > 0) xboxMetadataService.syncLibrary(fallbackTargets)
+      const games = installedDeltas
+        .map((game) => gameRepository.getGame(`xbox:${game.providerGameId}`))
+        .filter((game): game is NonNullable<typeof game> => Boolean(game))
+      if (games.length > 0) artworkService.syncProvider(games, 'xbox')
+      syncCoordinator.complete('library', 'xbox-installed', 'xbox')
+      if (installedDeltas.length > 0) this.emitSnapshot()
+    } catch {
+      // Keep the last good installed snapshot when PackageManager is busy.
+      syncCoordinator.fail('library', 'xbox-installed', 'xbox')
+    }
     return this.getSnapshot()
   }
 
@@ -461,7 +625,11 @@ export class XboxLibraryService
       provider: 'xbox',
       ...gameRepository.getProviderCounts('xbox'),
       ...next,
-      methods: [...next.methods]
+      methods: [...next.methods],
+      subscriptions: next.subscriptions ? [...next.subscriptions] : undefined,
+      entitlementCounts: next.entitlementCounts
+        ? { ...next.entitlementCounts }
+        : undefined
     }
     this.emitSnapshot()
   }

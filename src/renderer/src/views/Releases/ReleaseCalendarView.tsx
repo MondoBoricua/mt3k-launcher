@@ -1,3 +1,4 @@
+import { languageLocale } from '@shared/language'
 import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { CalendarDays, ExternalLink, Heart, RefreshCw, Sparkles } from 'lucide-react'
@@ -39,7 +40,7 @@ export function ReleaseCalendarView(): JSX.Element {
   const refresh = useStoreStore((state) => state.refresh)
   const toggleWishlist = useStoreStore((state) => state.toggleWishlist)
   const [pendingFavoriteIds, setPendingFavoriteIds] = useState<Set<string>>(() => new Set())
-  const locale = language === 'de' ? 'de-DE' : 'en-US'
+  const locale = languageLocale(language)
   const releases = useMemo(
     () =>
       snapshot.monthlyReleases.filter(

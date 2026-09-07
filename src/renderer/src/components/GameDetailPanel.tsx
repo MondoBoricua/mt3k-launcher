@@ -1,15 +1,17 @@
+import { type Language, languageLocale } from '@shared/language'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import {
   CalendarDays,
   Archive,
   CircleAlert,
+  CloudLightning,
+  Database,
   EyeOff,
   ExternalLink,
   FolderOpen,
   Gamepad2,
   HardDriveDownload,
-  ImagePlus,
   LibraryBig,
   Loader2,
   Play,
@@ -26,13 +28,13 @@ import {
 import type {
   GameAchievementsSnapshot,
   GameCompletionTimes,
-  ImageOrientation,
-  ImageUpdate,
   LibraryGame
 } from '@shared/ipc'
 import { retroLaunchArguments } from '@shared/retroSystems'
 import { GameImage } from './GameImage'
-import { ArtworkPicker } from './ArtworkPicker'
+import type { GameTrailer } from '@shared/gameTrailer'
+import { GameTrailerBackground, GameTrailerDialog } from './GameTrailerPlayer'
+import { GameMetadataEditor } from './GameMetadataEditor'
 import { formatWindowsArguments, LaunchOptionsDialog } from './LaunchOptionsDialog'
 import { LibraryCollectionDialog } from './LibraryCollectionDialog'
 import { useBackHandler } from '@renderer/hooks/useBackHandler'
@@ -45,22 +47,17 @@ import { formatPlaytime } from '@renderer/lib/playtime'
 import { useLibraryStore } from '@renderer/state/libraryStore'
 import { useLibraryCollectionsStore } from '@renderer/state/libraryCollectionsStore'
 import { notify } from '@renderer/state/notificationStore'
+import { useGeForceNowStore } from '@renderer/state/geForceNowStore'
+import { useTitleMusicStore } from '@renderer/state/titleMusicStore'
 
 interface Props {
   game: LibraryGame
 }
 
-const EDITABLE_ARTWORK_ORIENTATIONS: readonly ImageOrientation[] = [
-  'vertical',
-  'horizontal',
-  'logo',
-  'icon'
-]
-
-function formatHours(minutes: number | undefined, language: 'en' | 'de'): string {
+function formatHours(minutes: number | undefined, language: Language): string {
   if (!minutes) return '—'
   const hours = minutes / 60
-  const value = new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', {
+  const value = new Intl.NumberFormat(languageLocale(language), {
     maximumFractionDigits: hours < 10 ? 1 : 0
   }).format(hours)
   return `${value} h`
@@ -71,13 +68,23 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   const reduceMotion = Boolean(useReducedMotion())
   const language = usePreferencesStore((state) => state.language)
   const showAchievements = usePreferencesStore((state) => state.showAchievements)
-  const achievementsSupported = game.provider === 'steam' || game.provider === 'retro'
+  const backgroundTrailers = usePreferencesStore((state) => state.backgroundTrailers)
+  const setFullScreenTrailerOpen = useTitleMusicStore(
+    (state) => state.setFullScreenTrailerOpen
+  )
+  const [trailer, setTrailer] = useState<GameTrailer | null>(null)
+  const [trailerOpen, setTrailerOpen] = useState(false)
+  const trailerRef = useRef<HTMLButtonElement>(null)
+  const achievementsSupported =
+    game.provider === 'steam' || game.provider === 'retro' || game.provider === 'xbox'
   const closeGame = useGameDetailStore((state) => state.closeGame)
+  const preferredAction = useGameDetailStore((state) => state.preferredAction)
   const launch = useLaunchGame()
   const detailRootRef = useRef<HTMLDivElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const launchRef = useRef<HTMLButtonElement>(null)
-  const artworkRef = useRef<HTMLButtonElement>(null)
+  const cloudLaunchRef = useRef<HTMLButtonElement>(null)
+  const metadataRef = useRef<HTMLButtonElement>(null)
   const launchOptionsRef = useRef<HTMLButtonElement>(null)
   const collectionsRef = useRef<HTMLButtonElement>(null)
   const [completionTimes, setCompletionTimes] = useState<GameCompletionTimes | null>(
@@ -91,23 +98,47 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   const [backupBusy, setBackupBusy] = useState(false)
   const [backupFeedback, setBackupFeedback] = useState<'success' | 'failed' | null>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
-  const [artworkPickerOpen, setArtworkPickerOpen] = useState(false)
+  const [metadataEditorOpen, setMetadataEditorOpen] = useState(false)
   const [launchOptionsOpen, setLaunchOptionsOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
   const [favoriteBusy, setFavoriteBusy] = useState(false)
+  const [cloudLaunchState, setCloudLaunchState] = useState<'idle' | 'launching' | 'error'>('idle')
   const [excludeState, setExcludeState] = useState<'idle' | 'saving' | 'error'>('idle')
-  const [hasArtworkOverrides, setHasArtworkOverrides] = useState({
-    vertical: false,
-    horizontal: false,
-    logo: false,
-    icon: false
-  })
-  const [artworkFeedback, setArtworkFeedback] = useState<'updated' | 'reset' | 'failed' | null>(null)
   const favoriteGameIds = useLibraryCollectionsStore((state) => state.favoriteGameIds)
   const toggleFavorite = useLibraryCollectionsStore((state) => state.toggleFavorite)
   const isFavorite = favoriteGameIds.includes(game.id)
+  const geForceNowMatch = useGeForceNowStore((state) => state.matchesByGameId[game.id])
+  const entitlement = game.metadata.entitlement
+  const xboxCloudUrl =
+    game.provider === 'xbox' && /^[A-Z0-9]{12}$/iu.test(game.metadata.providerStoreId ?? '')
+      ? `https://www.xbox.com/${languageLocale(language)}/play/games/${game.metadata.providerStoreId}`
+      : undefined
 
   useBackHandler(closeGame)
+
+  useEffect(() => {
+    if (!geForceNowMatch && document.activeElement === document.body) {
+      focusElement(launchRef.current, { ensureVisible: false })
+    }
+  }, [geForceNowMatch])
+
+  useEffect(() => {
+    setFullScreenTrailerOpen(game.id, trailerOpen)
+    return () => setFullScreenTrailerOpen(game.id, false)
+  }, [game.id, setFullScreenTrailerOpen, trailerOpen])
+
+  useEffect(() => {
+    let active = true
+    setTrailer(null)
+    setTrailerOpen(false)
+    // Avoid unnecessary requests while rapidly switching between details.
+    const timer = window.setTimeout(() => {
+      void window.api.game.resolveTrailer(game.id).then((result) => {
+        if (active) setTrailer(result)
+      }).catch(() => undefined)
+    }, 350)
+    return () => { active = false; window.clearTimeout(timer) }
+  }, [game.id, game.metadataRevision, language])
 
   useEffect(() => {
     const previousFocus = document.activeElement as HTMLElement | null
@@ -115,7 +146,12 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
     const frame = requestAnimationFrame(() => {
       // The panel is still translated outside the viewport during this frame.
       // Scrolling it into view would move the inert shell until the slide settles.
-      focusElement(launchRef.current, { ensureVisible: false })
+      focusElement(
+        preferredAction === 'geforce-now' && geForceNowMatch
+          ? cloudLaunchRef.current
+          : launchRef.current,
+        { ensureVisible: false }
+      )
     })
     return () => {
       cancelAnimationFrame(frame)
@@ -144,7 +180,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
     return () => {
       active = false
     }
-  }, [game.id])
+  }, [game.id, game.metadataRevision])
 
   useEffect(() => {
     let active = true
@@ -163,7 +199,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
     return () => {
       active = false
     }
-  }, [achievementsSupported, game.id, showAchievements])
+  }, [achievementsSupported, game.id, showAchievements, language])
 
   async function retryAchievements(): Promise<void> {
     if (loadingAchievements) return
@@ -184,54 +220,12 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   }, [confirmRemove])
 
   useEffect(() => {
-    let active = true
-    const generations: Record<ImageOrientation, number> = {
-      vertical: 0,
-      horizontal: 0,
-      logo: 0,
-      icon: 0
-    }
-    setArtworkFeedback(null)
-    setHasArtworkOverrides({ vertical: false, horizontal: false, logo: false, icon: false })
-    const refreshOrientation = (orientation: ImageOrientation): void => {
-      const generation = ++generations[orientation]
-      void window.api.image
-        .hasCustom(game.id, orientation)
-        .then((hasCustom) => {
-          if (!active || generations[orientation] !== generation) return
-          setHasArtworkOverrides((current) => ({ ...current, [orientation]: hasCustom }))
-        })
-        .catch(() => {
-          if (!active || generations[orientation] !== generation) return
-          setHasArtworkOverrides((current) => ({ ...current, [orientation]: false }))
-        })
-    }
-    for (const orientation of EDITABLE_ARTWORK_ORIENTATIONS) refreshOrientation(orientation)
-    const dispose = window.api.image.onUpdated((update: ImageUpdate) => {
-      if (update.gameId === game.id) {
-        refreshOrientation(update.orientation)
-      }
-    })
-    return () => {
-      active = false
-      for (const orientation of EDITABLE_ARTWORK_ORIENTATIONS) generations[orientation]++
-      dispose()
-    }
-  }, [game.id])
-
-  useEffect(() => {
-    if (!artworkFeedback) return
-    const timer = window.setTimeout(() => setArtworkFeedback(null), 2_800)
-    return () => window.clearTimeout(timer)
-  }, [artworkFeedback])
-
-  useEffect(() => {
     const root = detailRootRef.current
     if (!root) return
-    if (artworkPickerOpen || launchOptionsOpen || collectionsOpen) root.setAttribute('inert', '')
+    if (metadataEditorOpen || launchOptionsOpen || collectionsOpen || trailerOpen) root.setAttribute('inert', '')
     else root.removeAttribute('inert')
     return () => root.removeAttribute('inert')
-  }, [artworkPickerOpen, collectionsOpen, launchOptionsOpen])
+  }, [metadataEditorOpen, collectionsOpen, launchOptionsOpen, trailerOpen])
 
   const playtime = formatPlaytime(game, t) ?? t('details.notPlayed')
   const summary = game.metadata.summary ?? game.metadata.description
@@ -263,7 +257,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
       ? t('details.backupFailed')
       : backupFeedback === 'success' || local?.lastBackupAt
         ? t('details.backupLast', {
-            date: new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', {
+            date: new Intl.DateTimeFormat(languageLocale(language), {
               dateStyle: 'short',
               timeStyle: 'short'
             }).format(local?.lastBackupAt ?? Date.now())
@@ -274,6 +268,17 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
     if (retroLaunchUnavailable) return
     launch(game.id)
     closeGame()
+  }
+
+  const handleCloudLaunch = async (): Promise<void> => {
+    if (!geForceNowMatch || cloudLaunchState === 'launching') return
+    setCloudLaunchState('launching')
+    try {
+      await window.api.geforceNow.launchGame(game.id)
+      closeGame()
+    } catch {
+      setCloudLaunchState('error')
+    }
   }
 
   const handleBackup = async (): Promise<void> => {
@@ -350,16 +355,6 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
     }
   }
 
-  const closeArtworkPicker = (): void => {
-    setArtworkPickerOpen(false)
-    requestAnimationFrame(() => focusElement(artworkRef.current))
-  }
-
-  const handleArtworkApplied = (orientation: ImageOrientation): void => {
-    setHasArtworkOverrides((current) => ({ ...current, [orientation]: true }))
-    setArtworkFeedback('updated')
-  }
-
   const handleToggleFavorite = async (): Promise<void> => {
     if (favoriteBusy) return
     setFavoriteBusy(true)
@@ -372,11 +367,6 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
     }
   }
 
-  const handleArtworkReset = (orientation: ImageOrientation): void => {
-    setHasArtworkOverrides((current) => ({ ...current, [orientation]: false }))
-    setArtworkFeedback('reset')
-  }
-
   const closeLaunchOptions = (): void => {
     setLaunchOptionsOpen(false)
     requestAnimationFrame(() => focusElement(launchOptionsRef.current))
@@ -386,8 +376,8 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
     <>
     <motion.div
       ref={detailRootRef}
-      data-focus-scope={artworkPickerOpen || launchOptionsOpen || collectionsOpen ? undefined : 'active'}
-      aria-hidden={artworkPickerOpen || launchOptionsOpen || collectionsOpen || undefined}
+      data-focus-scope={metadataEditorOpen || launchOptionsOpen || collectionsOpen || trailerOpen ? undefined : 'active'}
+      aria-hidden={metadataEditorOpen || launchOptionsOpen || collectionsOpen || trailerOpen || undefined}
       role="dialog"
       aria-modal="true"
       aria-label={game.name}
@@ -432,44 +422,21 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
         <GameImage
           gameId={game.id}
           name={game.name}
+          decorative
           orientation="horizontal"
           className="absolute inset-0 h-full w-full scale-[1.02] object-cover"
         />
+        {trailer && trailer.format !== 'external' && backgroundTrailers && !reduceMotion && !trailerOpen && !metadataEditorOpen && !launchOptionsOpen && !collectionsOpen && (
+          <GameTrailerBackground key={`${game.id}:${trailer.url}`} trailer={trailer} />
+        )}
         <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/65 to-black/20" />
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-black/10" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_82%_18%,transparent_0%,rgba(0,0,0,0.28)_48%,rgba(0,0,0,0.72)_100%)]" />
 
-        <div className="absolute right-[clamp(1rem,2vw,2rem)] top-[clamp(1rem,2vw,2rem)] z-30 flex items-center gap-2">
+        <div className="absolute right-[clamp(0.85rem,1.7vw,1.6rem)] top-[clamp(0.85rem,1.7vw,1.6rem)] z-30">
           <button
             data-focusable
             type="button"
-            aria-disabled={excludeState === 'saving'}
-            data-disabled={excludeState === 'saving' ? 'true' : undefined}
-            onClick={() => void handleExclude()}
-            className={`flex h-11 items-center gap-2 rounded-full border px-4 text-xs font-semibold backdrop-blur-xl transition-colors ${
-              excludeState === 'error'
-                ? 'border-amber-200/25 bg-amber-300/[0.12] text-amber-100 hover:bg-amber-300/20'
-                : 'border-white/10 bg-black/35 text-white/75 hover:bg-white/15 hover:text-white'
-            }`}
-          >
-            {excludeState === 'saving' ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <EyeOff size={16} />
-            )}
-            <span aria-live="polite">
-              {t(
-                excludeState === 'saving'
-                  ? 'details.excludeSaving'
-                  : excludeState === 'error'
-                    ? 'details.excludeRetry'
-                    : 'details.exclude'
-              )}
-            </span>
-          </button>
-
-          <button
-            data-focusable
             onClick={closeGame}
             aria-label={t('details.close')}
             className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/35 text-white backdrop-blur-xl transition-colors hover:bg-white/15"
@@ -480,37 +447,62 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
 
         <div className="absolute inset-0 z-20 overflow-hidden">
           <div className="game-detail-layout grid h-full">
-            <div className="game-detail-overview grid min-h-0 items-start">
+            <div className="game-detail-overview scrollbar-none grid min-h-0 items-start overflow-y-auto overscroll-contain">
               <div className="min-w-0">
-              <div className="game-detail-identity flex items-end gap-[clamp(0.8rem,1.4vw,1.35rem)]">
-                <div className="relative h-[clamp(4.25rem,6.6vw,6.5rem)] aspect-[2/3] shrink-0 overflow-hidden rounded-[clamp(0.65rem,1vw,1rem)] border border-white/20 bg-black/35 shadow-[0_16px_40px_rgba(0,0,0,0.48)]">
-                  <GameImage
-                    gameId={game.id}
-                    name={game.name}
-                    orientation="vertical"
-                    className="h-full w-full object-cover"
-                  />
-                  <span
-                    aria-hidden="true"
-                    className="pointer-events-none absolute inset-0 rounded-[inherit] ring-1 ring-inset ring-white/10"
-                  />
-                </div>
-                <div className="min-w-0 pb-1">
-                  <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[clamp(0.6rem,0.8vw,0.72rem)] font-semibold uppercase tracking-[0.16em] text-white/60">
-                    <span>{game.provider}</span>
-                    {game.installed && (
-                      <span className="rounded-full bg-accent/15 px-2.5 py-1 text-accent">
-                        {t('details.installed')}
-                      </span>
-                    )}
+                <div className="game-detail-identity flex items-end gap-[clamp(0.8rem,1.4vw,1.35rem)]">
+                  <div className="relative h-[clamp(4.25rem,6.6vw,6.5rem)] aspect-[2/3] shrink-0 overflow-hidden rounded-[clamp(0.65rem,1vw,1rem)] border border-white/20 bg-black/35 shadow-[0_16px_40px_rgba(0,0,0,0.48)]">
+                    <GameImage
+                      gameId={game.id}
+                      name={game.name}
+                      orientation="vertical"
+                      className="h-full w-full object-cover"
+                    />
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 rounded-[inherit] ring-1 ring-inset ring-white/10"
+                    />
                   </div>
-                  <h1 className="line-clamp-2 text-[clamp(1.8rem,3.25vw,3.8rem)] font-bold leading-[0.96] tracking-[-0.04em] text-white">
-                    {game.name}
-                  </h1>
+                  <div className="min-w-0 pb-1">
+                    <p className="mb-1.5 text-[clamp(0.6rem,0.75vw,0.7rem)] font-bold uppercase tracking-[0.18em] text-white/48">
+                      {game.provider}
+                    </p>
+                    <h1 className="line-clamp-2 text-[clamp(1.8rem,3.25vw,3.8rem)] font-bold leading-[0.96] tracking-[-0.04em] text-white">
+                      {game.name}
+                    </h1>
+                    <div className="game-detail-statuses mt-2.5 flex flex-wrap items-center gap-1.5 text-[clamp(0.62rem,0.76vw,0.72rem)] font-semibold text-white/70">
+                      {game.libraryAccess === 'shared' && (
+                        <span className="rounded-full border border-sky-200/20 bg-sky-300/10 px-2 py-1 text-sky-100/80">
+                          {t('details.steamShared')}
+                        </span>
+                      )}
+                      {entitlement?.kind === 'subscription' && (
+                        <span className="flex items-center gap-1.5 rounded-full border border-[#52c75a]/25 bg-[#107c10]/15 px-2 py-1 text-[#8bea91]">
+                          <Sparkles size={11} />
+                          {t('library.entitlement.gamePass')}
+                        </span>
+                      )}
+                      {entitlement?.kind === 'purchased' && (
+                        <span className="flex items-center gap-1.5 rounded-full border border-sky-200/20 bg-sky-300/10 px-2 py-1 text-sky-100/80">
+                          <ShieldCheck size={11} />
+                          {t('library.entitlement.purchased')}
+                        </span>
+                      )}
+                      {game.installed && (
+                        <span className="rounded-full border border-accent/20 bg-accent/10 px-2 py-1 text-accent">
+                          {t('details.installed')}
+                        </span>
+                      )}
+                      {geForceNowMatch && (
+                        <span className="flex items-center gap-1.5 rounded-full border border-[#9ee34b]/25 bg-[#76b900]/15 px-2 py-1 text-[#b7f16f]">
+                          <CloudLightning size={11} />
+                          {t('library.geforceNow.available')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
 
-              <div className="game-detail-meta flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[clamp(0.72rem,0.9vw,0.88rem)] text-white/65">
+                <div className="game-detail-meta flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[clamp(0.72rem,0.9vw,0.88rem)] text-white/65">
                 {developer && (
                   <span className="flex min-w-0 items-center gap-2">
                     <Gamepad2 size={14} className="shrink-0 text-accent" />
@@ -532,6 +524,36 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
                   >
                     <ExternalLink size={13} />
                     {t('details.storePage')}
+                  </button>
+                )}
+                {game.metadata.website && game.metadata.website !== game.metadata.storeUrl && (
+                  <button
+                    data-focusable
+                    onClick={() => void window.api.app.openExternal(game.metadata.website as string)}
+                    className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1.5 text-[11px] font-semibold text-white/60 transition-colors hover:bg-white/[0.12] hover:text-white"
+                  >
+                    <ExternalLink size={13} />
+                    {t('metadata.website')}
+                  </button>
+                )}
+                {game.metadata.achievementsUrl && (
+                  <button
+                    data-focusable
+                    onClick={() => void window.api.app.openExternal(game.metadata.achievementsUrl as string)}
+                    className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1.5 text-[11px] font-semibold text-white/60 transition-colors hover:bg-white/[0.12] hover:text-white"
+                  >
+                    <Trophy size={13} />
+                    {t('metadata.achievements')}
+                  </button>
+                )}
+                {xboxCloudUrl && (
+                  <button
+                    data-focusable
+                    onClick={() => void window.api.app.openExternal(xboxCloudUrl)}
+                    className="flex items-center gap-1.5 rounded-full border border-[#52c75a]/20 bg-[#107c10]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[#8bea91] transition-colors hover:bg-[#107c10]/20 hover:text-white"
+                  >
+                    <CloudLightning size={13} />
+                    {t('details.xboxCloudCheck')}
                   </button>
                 )}
               </div>
@@ -685,14 +707,14 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
             </div>
             </div>
 
-            <div className="game-detail-actions grid grid-cols-4 gap-2.5">
+            <div className="game-detail-actions grid gap-2.5">
               <button
                 ref={launchRef}
                 data-focusable
                 aria-disabled={retroLaunchUnavailable}
                 data-disabled={retroLaunchUnavailable ? 'true' : undefined}
                 onClick={handleLaunch}
-                className={`game-detail-action border-transparent bg-accent font-bold text-black shadow-[0_12px_40px_rgb(var(--color-accent)/0.25)] ${
+                className={`game-detail-action game-detail-action--primary border-transparent bg-accent font-bold text-black shadow-[0_12px_40px_rgb(var(--color-accent)/0.25)] ${
                   retroLaunchUnavailable
                     ? 'cursor-not-allowed opacity-55'
                     : 'hover:scale-[1.015]'
@@ -713,6 +735,44 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
                       ? t('details.play')
                       : t('details.install')}
               </button>
+
+              {trailer && (
+                <button ref={trailerRef} data-focusable
+                  onClick={() => {
+                    if (trailer.format === 'external') void window.api.app.openExternal(trailer.url)
+                    else setTrailerOpen(true)
+                  }}
+                  className="game-detail-action border-white/15 bg-white/[0.07] text-white hover:bg-white/15">
+                  <Play size={17} />{t('trailer.watch')}
+                </button>
+              )}
+              {geForceNowMatch && (
+                <button
+                  ref={cloudLaunchRef}
+                  data-geforce-now-game-launch
+                  data-focusable
+                  type="button"
+                  disabled={cloudLaunchState === 'launching'}
+                  data-disabled={cloudLaunchState === 'launching' ? 'true' : undefined}
+                  onClick={() => void handleCloudLaunch()}
+                  className={`game-detail-action border-[#9ee34b]/35 bg-[#76b900]/15 font-bold text-[#c7ff82] hover:bg-[#76b900]/25 ${
+                    cloudLaunchState === 'error' ? 'border-amber-200/35 text-amber-100' : ''
+                  }`}
+                >
+                  {cloudLaunchState === 'launching' ? (
+                    <Loader2 size={17} className="animate-spin" />
+                  ) : (
+                    <CloudLightning size={17} />
+                  )}
+                  {t(
+                    cloudLaunchState === 'launching'
+                      ? 'details.geforceNowLaunching'
+                      : cloudLaunchState === 'error'
+                        ? 'details.geforceNowRetry'
+                        : 'details.geforceNowPlay'
+                  )}
+                </button>
+              )}
 
               <button
                 data-focusable
@@ -746,22 +806,13 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
               </button>
 
               <button
-                ref={artworkRef}
+                ref={metadataRef}
                 data-focusable
-                onClick={() => {
-                  setArtworkFeedback(null)
-                  setArtworkPickerOpen(true)
-                }}
+                onClick={() => setMetadataEditorOpen(true)}
                 className="game-detail-action border-white/15 bg-white/[0.07] text-white hover:bg-white/15"
               >
-                <ImagePlus size={16} className="shrink-0" />
-                {artworkFeedback === 'updated'
-                  ? t('details.artworkChanged')
-                  : artworkFeedback === 'reset'
-                    ? t('details.artworkReset')
-                    : artworkFeedback === 'failed'
-                      ? t('details.artworkFailed')
-                      : t('details.changeArtwork')}
+                <Database size={16} className="shrink-0" />
+                {t('details.metadata')}
               </button>
 
               {local?.backupEnabled && (
@@ -794,6 +845,34 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
                 </button>
               )}
 
+              <button
+                data-focusable
+                type="button"
+                aria-disabled={excludeState === 'saving'}
+                data-disabled={excludeState === 'saving' ? 'true' : undefined}
+                onClick={() => void handleExclude()}
+                className={`game-detail-action ${
+                  excludeState === 'error'
+                    ? 'border-amber-200/25 bg-amber-300/[0.12] text-amber-100 hover:bg-amber-300/20'
+                    : 'border-white/10 bg-white/[0.045] text-white/55 hover:bg-white/[0.12] hover:text-white'
+                }`}
+              >
+                {excludeState === 'saving' ? (
+                  <Loader2 size={16} className="shrink-0 animate-spin" />
+                ) : (
+                  <EyeOff size={16} className="shrink-0" />
+                )}
+                <span aria-live="polite">
+                  {t(
+                    excludeState === 'saving'
+                      ? 'details.excludeSaving'
+                      : excludeState === 'error'
+                        ? 'details.excludeRetry'
+                        : 'details.exclude'
+                  )}
+                </span>
+              </button>
+
               {local && (
                 <button
                   data-focusable
@@ -813,14 +892,19 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
         </div>
       </motion.section>
     </motion.div>
-    {artworkPickerOpen && (
-      <ArtworkPicker
-        gameId={game.id}
-        gameName={game.name}
-        hasOverrides={hasArtworkOverrides}
-        onApplied={handleArtworkApplied}
-        onReset={handleArtworkReset}
-        onClose={closeArtworkPicker}
+    {trailerOpen && trailer && (
+      <GameTrailerDialog trailer={trailer} gameName={game.name} onClose={() => {
+        setTrailerOpen(false)
+        requestAnimationFrame(() => focusElement(trailerRef.current))
+      }} />
+    )}
+    {metadataEditorOpen && (
+      <GameMetadataEditor
+        game={game}
+        onClose={() => {
+          setMetadataEditorOpen(false)
+          requestAnimationFrame(() => focusElement(metadataRef.current))
+        }}
       />
     )}
     {launchOptionsOpen && (local || retro) && (

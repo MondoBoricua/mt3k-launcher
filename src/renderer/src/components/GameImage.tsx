@@ -8,6 +8,8 @@ interface Props {
   className?: string
   previewUrl?: string
   fit?: 'auto' | 'cover'
+  /** Background artwork must not repeat its foreground title when artwork is missing. */
+  decorative?: boolean
 }
 
 const ACCENT_GRADIENTS = [
@@ -109,7 +111,8 @@ export function GameImage({
   orientation,
   className = '',
   previewUrl,
-  fit = 'auto'
+  fit = 'auto',
+  decorative = false
 }: Props): JSX.Element {
   const key = imageKey(gameId, orientation)
   const [resolved, setResolved] = useState<ResolvedImage | null | undefined>(() => resolvedCache.get(key))
@@ -173,6 +176,7 @@ export function GameImage({
     }
     return (
       <div
+        aria-hidden={decorative || undefined}
         className={`relative isolate flex items-end overflow-hidden bg-[#090d13] p-[10%] text-white ${className}`}
       >
         {orientation === 'horizontal' ? (
@@ -194,9 +198,11 @@ export function GameImage({
           aria-hidden="true"
           className="absolute -right-[5%] top-[18%] h-px w-[75%] -rotate-[28deg] bg-white/30"
         />
-        <span className="relative z-10 line-clamp-3 text-[clamp(0.7rem,1.15vw,1rem)] font-bold leading-tight drop-shadow-lg">
-          {name}
-        </span>
+        {!decorative && (
+          <span className="relative z-10 line-clamp-3 text-[clamp(0.7rem,1.15vw,1rem)] font-bold leading-tight drop-shadow-lg">
+            {name}
+          </span>
+        )}
       </div>
     )
   }

@@ -1,3 +1,5 @@
+import { t } from './i18n'
+import { acceptLanguages } from '@shared/language'
 import { app, BrowserWindow, dialog, shell } from 'electron'
 import Store from 'electron-store'
 import { execFile, spawn } from 'node:child_process'
@@ -13,6 +15,8 @@ import type {
   OrbitApplication,
   OrbitApplicationSnapshot
 } from '@shared/ipc'
+import { GEFORCE_NOW_APPLICATION_ID } from '@shared/geforceNow'
+import { orbitPlusService } from './orbitPlus/orbitPlusService'
 import {
   normalizeCustomLaunchArguments,
   parseCustomLaunchArguments
@@ -22,6 +26,7 @@ import { playStationRemotePlayService } from './playstation/remotePlay'
 import { settingsStore } from './settingsStore'
 import { MediaControllerBridge } from './mediaControllerBridge'
 import { netflixMediaService } from './netflixMediaService'
+import { geForceNowWebService } from './geforceNow/geforceNowWebService'
 
 interface StoredCustomApplication {
   id: string
@@ -238,7 +243,8 @@ function nativeApplication(
   id: string,
   name: string,
   category: OrbitApplication['category'],
-  executablePath: string | undefined
+  executablePath: string | undefined,
+  controllerOptimized = false
 ): DiscoveredNativeApplication {
   return {
     application: {
@@ -248,7 +254,7 @@ function nativeApplication(
       target: 'native',
       available: Boolean(executablePath),
       issue: executablePath ? undefined : 'executable-missing',
-      controllerOptimized: false
+      controllerOptimized
     },
     target: executablePath
       ? { executablePath, arguments: [], iconPath: executablePath }
@@ -417,29 +423,57 @@ async function discoveredNativeApplications(): Promise<DiscoveredNativeApplicati
       : undefined,
     programFiles ? join(programFiles, 'Ubisoft', 'Ubisoft Game Launcher', 'upc.exe') : undefined
   ])
-  const [steam, epic, registryGog, registryEa, registryUbisoft, graphicsEnvironment] =
-    await Promise.all([
-    steamDirect ? Promise.resolve(steamDirect) : registrySteamExecutable(),
-    epicDirect
-      ? Promise.resolve(epicDirect)
-      : registryLauncherExecutable(['Epic Games Launcher'], epicRelativeExecutables),
-    gog
-      ? Promise.resolve(gog)
-      : registryLauncherExecutable(['GOG Galaxy'], ['GalaxyClient.exe']),
-    ea
-      ? Promise.resolve(ea)
-      : registryLauncherExecutable(
-          ['EA app', 'EA Desktop'],
-          ['EADesktop.exe', join('EA Desktop', 'EADesktop.exe')]
-        ),
-    ubisoft
-      ? Promise.resolve(ubisoft)
-      : registryLauncherExecutable(
-          ['Ubisoft Connect', 'Ubisoft Game Launcher'],
-          ['UbisoftConnect.exe', 'upc.exe']
-        ),
-    graphicsEnvironmentPromise
+  const geForceNowDirect = firstExistingPath([
+    localAppData
+      ? join(localAppData, 'NVIDIA Corporation', 'GeForceNOW', 'CEF', 'GeForceNOW.exe')
+      : undefined,
+    localAppData
+      ? join(localAppData, 'NVIDIA Corporation', 'GeForceNOW', 'GeForceNOW.exe')
+      : undefined,
+    programFiles
+      ? join(programFiles, 'NVIDIA Corporation', 'GeForceNOW', 'CEF', 'GeForceNOW.exe')
+      : undefined,
+    programFilesX86
+      ? join(programFilesX86, 'NVIDIA Corporation', 'GeForceNOW', 'CEF', 'GeForceNOW.exe')
+      : undefined
   ])
+  const [
+    steam,
+    epic,
+    registryGog,
+    registryEa,
+    registryUbisoft,
+    geForceNow,
+    graphicsEnvironment
+  ] =
+    await Promise.all([
+      steamDirect ? Promise.resolve(steamDirect) : registrySteamExecutable(),
+      epicDirect
+        ? Promise.resolve(epicDirect)
+        : registryLauncherExecutable(['Epic Games Launcher'], epicRelativeExecutables),
+      gog
+        ? Promise.resolve(gog)
+        : registryLauncherExecutable(['GOG Galaxy'], ['GalaxyClient.exe']),
+      ea
+        ? Promise.resolve(ea)
+        : registryLauncherExecutable(
+            ['EA app', 'EA Desktop'],
+            ['EADesktop.exe', join('EA Desktop', 'EADesktop.exe')]
+          ),
+      ubisoft
+        ? Promise.resolve(ubisoft)
+        : registryLauncherExecutable(
+            ['Ubisoft Connect', 'Ubisoft Game Launcher'],
+            ['UbisoftConnect.exe', 'upc.exe']
+          ),
+      geForceNowDirect
+        ? Promise.resolve(geForceNowDirect)
+        : registryLauncherExecutable(
+            ['NVIDIA GeForce NOW', 'GeForce NOW'],
+            [join('CEF', 'GeForceNOW.exe'), 'GeForceNOW.exe']
+          ),
+      graphicsEnvironmentPromise
+    ])
   gog = registryGog
   ea = registryEa
   ubisoft = registryUbisoft
@@ -453,6 +487,17 @@ async function discoveredNativeApplications(): Promise<DiscoveredNativeApplicati
     nativeApplication(LAUNCHER_GOG_ID, 'GOG Galaxy', 'launcher', gog),
     systemApplication(LAUNCHER_XBOX_ID, 'Xbox', xboxAvailable),
     systemApplication(LAUNCHER_PLAYSTATION_ID, 'PlayStation', false),
+    ...(geForceNow
+      ? [
+          nativeApplication(
+            GEFORCE_NOW_APPLICATION_ID,
+            'GeForce NOW',
+            'launcher',
+            geForceNow,
+            true
+          )
+        ]
+      : []),
     nativeApplication(LAUNCHER_EA_ID, 'EA app', 'launcher', ea),
     nativeApplication(LAUNCHER_UBISOFT_ID, 'Ubisoft Connect', 'launcher', ubisoft)
   ]
@@ -615,12 +660,12 @@ function isExpectedYouTubeTvNavigationReplacement(error: unknown): boolean {
 }
 
 function youtubeTvLaunchConfig(): { url: string; acceptLanguages: string } {
-  const language = settingsStore.get('language') === 'de' ? 'de' : 'en'
+  const language = settingsStore.get('language')
   const url = new URL(YOUTUBE_TV_URL)
   url.searchParams.set('hl', language)
   return {
     url: url.toString(),
-    acceptLanguages: language === 'de' ? 'de-DE,de,en-US,en' : 'en-US,en'
+    acceptLanguages: acceptLanguages(language)
   }
 }
 
@@ -776,11 +821,11 @@ class ApplicationService {
 
   async selectCustomApplication(mainWindow: BrowserWindow): Promise<CustomApplicationDraft | null> {
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Applikation auswählen',
+      title: t('Select application'),
       properties: ['openFile'],
       filters: [
-        { name: 'Windows-Applikationen', extensions: ['exe'] },
-        { name: 'Alle Dateien', extensions: ['*'] }
+        { name: t('Windows applications'), extensions: ['exe'] },
+        { name: t('All files'), extensions: ['*'] }
       ]
     })
     if (result.canceled || result.filePaths.length === 0) return null
@@ -854,6 +899,9 @@ class ApplicationService {
 
   async launch(applicationIdValue: unknown, mainWindow: BrowserWindow): Promise<ApplicationLaunchResult> {
     const applicationId = validatedApplicationId(applicationIdValue)
+    if (applicationId === GEFORCE_NOW_APPLICATION_ID) {
+      orbitPlusService.requireFeature('cloud-gaming')
+    }
     const snapshot = await this.getSnapshot()
     const application = snapshot.applications.find((candidate) => candidate.id === applicationId)
     if (!application) throw new Error('Die Applikation wurde nicht gefunden')
@@ -901,6 +949,9 @@ class ApplicationService {
       this.snapshot = null
       throw new Error('Die Applikation ist nicht mehr installiert oder wurde verschoben')
     }
+    if (applicationId === GEFORCE_NOW_APPLICATION_ID) {
+      orbitPlusService.requireFeature('cloud-gaming')
+    }
     await launchDetached(target.executablePath, target.arguments)
     if (!mainWindow.isDestroyed()) mainWindow.minimize()
     return {
@@ -914,6 +965,7 @@ class ApplicationService {
     this.disposing = true
     this.mediaController.dispose()
     netflixMediaService.dispose()
+    geForceNowWebService.dispose()
     if (this.mediaWindow && !this.mediaWindow.isDestroyed()) this.mediaWindow.destroy()
     this.mediaWindow = null
     this.drafts.clear()

@@ -1,12 +1,39 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { GameMetadata } from '@shared/ipc'
+import type { GameMetadata, GameSubscription } from '@shared/ipc'
 import { normalizeXboxPackageFamilyName } from './xboxPackageIdentity'
+import { normalizeXboxTitleId } from './xboxTitleIdentity'
 
 const XBOX_APP_PACKAGE_FAMILY = 'Microsoft.GamingApp_8wekyb3d8bbwe'
 const XBOX_APP_CACHE_TIMEOUT_MS = 45_000
 const MAX_CACHE_OUTPUT_BYTES = 16 * 1024 * 1024
+const XBOX_APP_LIBRARY_CACHE_VERSION = 3
+const XBOX_APP_LIBRARY_CACHE_FILE = 'orbit-xbox-app-library-scan-v1.json'
+const MAX_XBOX_APP_LIBRARY_CACHE_BYTES = MAX_CACHE_OUTPUT_BYTES + 64 * 1024
+const MAX_XBOX_APP_LIBRARY_GAMES = 10_000
+
+interface FileFingerprint {
+  size: number
+  mtimeMs: number
+}
+
+export interface XboxAppCacheFingerprint {
+  database: FileFingerprint
+  wal?: FileFingerprint
+}
+
+interface PersistedXboxAppLibraryScan {
+  version: number
+  fingerprint: XboxAppCacheFingerprint
+  payload: XboxAppCachePayload
+}
+
+export interface XboxAppLibraryScanOptions {
+  /** ORBIT user-data directory. Without it the scan remains deliberately uncached. */
+  cacheDirectory?: string
+}
 
 interface XboxAppCacheRecord {
   productId?: string
@@ -17,6 +44,7 @@ interface XboxAppCacheRecord {
   categories?: unknown
   releaseDate?: string
   packageFamilyName?: string
+  titleId?: string
   verticalUrls?: unknown
   horizontalUrls?: unknown
   iconUrls?: unknown
@@ -26,6 +54,7 @@ interface XboxAppCacheRecord {
 interface XboxAppCachePayload {
   available?: boolean
   activeSubscription?: boolean
+  subscriptions?: unknown
   complete?: boolean
   eligibleProductCount?: number
   resolvedProductCount?: number
@@ -44,7 +73,9 @@ export interface XboxAppGame {
 export interface XboxAppLibrarySnapshot {
   available: boolean
   activeSubscription: boolean
+  subscriptions: GameSubscription[]
   complete: boolean
+  reusedScanCache: boolean
   eligibleProductCount: number
   resolvedProductCount: number
   unresolvedProductCount: number
@@ -62,7 +93,7 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $databasePath = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.GamingApp_8wekyb3d8bbwe\LocalState\AsyncCache.db'
 if (-not (Test-Path -LiteralPath $databasePath)) {
-  [pscustomobject]@{ available = $false; activeSubscription = $false; complete = $false; eligibleProductCount = 0; resolvedProductCount = 0; unresolvedProductCount = 0; unresolvedProductIds = @(); games = @() } |
+  [pscustomobject]@{ available = $false; activeSubscription = $false; subscriptions = @(); complete = $false; eligibleProductCount = 0; resolvedProductCount = 0; unresolvedProductCount = 0; unresolvedProductIds = @(); games = @() } |
     ConvertTo-Json -Compress
   exit 0
 }
@@ -210,6 +241,10 @@ if ($hasActiveSubscription -and $subscriptionData) {
       ForEach-Object { [string]$_.id } |
       Select-Object -First 1)[0]
     if (-not $packageFamilyName) { $packageFamilyName = $packageFamilyByStoreId[$storeId] }
+    $titleId = @($data.alternateIds |
+      Where-Object { $_.idType -in @('XBOXTITLEID', 'TITLEID') } |
+      ForEach-Object { [string]$_.id } |
+      Select-Object -First 1)[0]
     $verticalUrls = Get-Urls @($data.artwork) @('POSTER', 'BRANDEDKEYART')
     $horizontalUrls = Get-Urls @($data.artwork) @('SUPERHEROART', 'TITLEDHEROART')
     $iconUrls = Get-Urls @($data.artwork) @('BOXART', 'SQUARE', 'ICON')
@@ -223,6 +258,7 @@ if ($hasActiveSubscription -and $subscriptionData) {
       categories = @($data.categories | ForEach-Object { [string]$_ })
       releaseDate = [string]$data.releaseDate
       packageFamilyName = $packageFamilyName
+      titleId = $titleId
       verticalUrls = $verticalUrls
       horizontalUrls = $horizontalUrls
       iconUrls = $iconUrls
@@ -234,6 +270,7 @@ if ($hasActiveSubscription -and $subscriptionData) {
 [pscustomobject]@{
   available = $true
   activeSubscription = $hasActiveSubscription
+  subscriptions = if ($hasActiveSubscription) { @('xbox-game-pass') } else { @() }
   complete = $hasActiveSubscription -and $subscriptionData -and $unresolvedProductCount -eq 0
   eligibleProductCount = @($eligibleProductIds | Select-Object -Unique).Count
   resolvedProductCount = $gamesByProductId.Count
@@ -251,6 +288,124 @@ function cachePath(): string {
     'LocalState',
     'AsyncCache.db'
   )
+}
+
+function persistedScanPath(cacheDirectory: string): string {
+  return join(cacheDirectory, XBOX_APP_LIBRARY_CACHE_FILE)
+}
+
+async function fileFingerprint(path: string): Promise<FileFingerprint | undefined> {
+  try {
+    const details = await stat(path)
+    return details.isFile() ? { size: details.size, mtimeMs: details.mtimeMs } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function xboxAppCacheFingerprint(path: string): Promise<XboxAppCacheFingerprint | undefined> {
+  const database = await fileFingerprint(path)
+  if (!database) return undefined
+  const wal = await fileFingerprint(`${path}-wal`)
+  return wal ? { database, wal } : { database }
+}
+
+function sameFileFingerprint(
+  left: FileFingerprint | undefined,
+  right: FileFingerprint | undefined
+): boolean {
+  return left?.size === right?.size && left?.mtimeMs === right?.mtimeMs
+}
+
+export function sameXboxAppCacheFingerprint(
+  left: XboxAppCacheFingerprint | undefined,
+  right: XboxAppCacheFingerprint | undefined
+): boolean {
+  return Boolean(
+    left &&
+      right &&
+      sameFileFingerprint(left.database, right.database) &&
+      sameFileFingerprint(left.wal, right.wal)
+  )
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function isXboxAppCachePayload(value: unknown): value is XboxAppCachePayload {
+  return (
+    isObject(value) &&
+    typeof value.available === 'boolean' &&
+    typeof value.activeSubscription === 'boolean' &&
+    typeof value.complete === 'boolean' &&
+    Array.isArray(value.games) &&
+    value.games.length <= MAX_XBOX_APP_LIBRARY_GAMES
+  )
+}
+
+function isFileFingerprint(value: unknown): value is FileFingerprint {
+  return (
+    isObject(value) &&
+    typeof value.size === 'number' &&
+    Number.isSafeInteger(value.size) &&
+    value.size >= 0 &&
+    typeof value.mtimeMs === 'number' &&
+    Number.isFinite(value.mtimeMs) &&
+    value.mtimeMs >= 0
+  )
+}
+
+function isXboxAppCacheFingerprint(value: unknown): value is XboxAppCacheFingerprint {
+  return (
+    isObject(value) &&
+    isFileFingerprint(value.database) &&
+    (value.wal === undefined || isFileFingerprint(value.wal))
+  )
+}
+
+async function readPersistedScan(
+  cacheDirectory: string,
+  fingerprint: XboxAppCacheFingerprint
+): Promise<XboxAppCachePayload | undefined> {
+  const path = persistedScanPath(cacheDirectory)
+  try {
+    const details = await stat(path)
+    if (!details.isFile() || details.size > MAX_XBOX_APP_LIBRARY_CACHE_BYTES) return undefined
+    const value = JSON.parse(await readFile(path, 'utf8')) as unknown
+    if (
+      !isObject(value) ||
+      value.version !== XBOX_APP_LIBRARY_CACHE_VERSION ||
+      !isXboxAppCacheFingerprint(value.fingerprint) ||
+      !sameXboxAppCacheFingerprint(value.fingerprint, fingerprint) ||
+      !isXboxAppCachePayload(value.payload)
+    ) {
+      return undefined
+    }
+    return value.payload
+  } catch {
+    return undefined
+  }
+}
+
+async function persistScan(
+  cacheDirectory: string,
+  fingerprint: XboxAppCacheFingerprint,
+  payload: XboxAppCachePayload
+): Promise<void> {
+  try {
+    await mkdir(cacheDirectory, { recursive: true })
+    const value: PersistedXboxAppLibraryScan = {
+      version: XBOX_APP_LIBRARY_CACHE_VERSION,
+      fingerprint,
+      payload
+    }
+    const serialized = JSON.stringify(value)
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_XBOX_APP_LIBRARY_CACHE_BYTES) return
+    await writeFile(persistedScanPath(cacheDirectory), serialized, 'utf8')
+  } catch {
+    // A cache write must never turn library discovery into a startup failure.
+  }
 }
 
 function runXboxAppCacheScan(): Promise<string> {
@@ -289,24 +444,20 @@ function httpsUrls(value: unknown): string[] | undefined {
   return values && values.length > 0 ? values : undefined
 }
 
-/** Reads the playable PC Game Pass collection already cached by the Xbox app. */
-export async function scanXboxAppLibrary(): Promise<XboxAppLibrarySnapshot> {
-  if (process.platform !== 'win32' || !existsSync(cachePath())) {
-    return {
-      available: false,
-      activeSubscription: false,
-      complete: false,
-      eligibleProductCount: 0,
-      resolvedProductCount: 0,
-      unresolvedProductCount: 0,
-      unresolvedProductIds: [],
-      games: new Map(),
-      byPackageFamilyName: new Map()
-    }
-  }
+function nonNegativeNumber(value: unknown): number {
+  const number = Number(value ?? 0)
+  return Number.isFinite(number) ? Math.max(0, number) : 0
+}
 
-  const output = await runXboxAppCacheScan()
-  const payload = JSON.parse(output) as XboxAppCachePayload
+function gameSubscriptions(value: unknown): GameSubscription[] {
+  const subscriptions = Array.isArray(value) ? value : [value]
+  return subscriptions.includes('xbox-game-pass') ? ['xbox-game-pass'] : []
+}
+
+function snapshotFromPayload(
+  payload: XboxAppCachePayload,
+  reusedScanCache: boolean
+): XboxAppLibrarySnapshot {
   const games = new Map<string, XboxAppGame>()
   const byPackageFamilyName = new Map<string, XboxAppGame>()
   const unresolvedProductIds = [
@@ -318,7 +469,12 @@ export async function scanXboxAppLibrary(): Promise<XboxAppLibrarySnapshot> {
     )
   ]
 
-  for (const record of payload.games ?? []) {
+  const records = Array.isArray(payload.games)
+    ? payload.games.slice(0, MAX_XBOX_APP_LIBRARY_GAMES)
+    : []
+  for (const candidate of records) {
+    if (!isObject(candidate)) continue
+    const record = candidate as XboxAppCacheRecord
     const productId = text(record.productId)?.toUpperCase()
     const name = text(record.title)
     if (!productId || !/^[A-Z0-9]{12}$/.test(productId) || !name) continue
@@ -327,6 +483,8 @@ export async function scanXboxAppLibrary(): Promise<XboxAppLibrarySnapshot> {
     const icon = httpsUrls(record.iconUrls)
     const logo = httpsUrls(record.logoUrls)
     const packageFamilyName = normalizeXboxPackageFamilyName(record.packageFamilyName)
+    const titleId =
+      normalizeXboxTitleId(record.titleId) ?? normalizeXboxTitleId(record.titleId, true)
     const description = text(record.description)
     const developer = text(record.developer)
     const publisher = text(record.publisher)
@@ -342,6 +500,14 @@ export async function scanXboxAppLibrary(): Promise<XboxAppLibrarySnapshot> {
         publishers: publisher ? [publisher] : undefined,
         releaseDateText: text(record.releaseDate),
         platforms: ['windows'],
+        providerStoreId: productId,
+        providerTitleId: titleId,
+        providerPackageFamilyName: packageFamilyName,
+        entitlement: {
+          kind: 'subscription',
+          subscription: 'xbox-game-pass',
+          evidence: 'local-cache'
+        },
         storeUrl: `msxbox://game/?productId=${productId}`,
         backgroundUrl: horizontal?.[0],
         storeHeaderUrl: horizontal?.[0],
@@ -356,14 +522,59 @@ export async function scanXboxAppLibrary(): Promise<XboxAppLibrarySnapshot> {
   return {
     available: payload.available === true,
     activeSubscription: payload.activeSubscription === true,
+    subscriptions: gameSubscriptions(payload.subscriptions),
     complete:
       payload.complete === true &&
-      games.size === Math.max(0, Number(payload.resolvedProductCount ?? 0)),
-    eligibleProductCount: Math.max(0, Number(payload.eligibleProductCount ?? 0)),
+      games.size === nonNegativeNumber(payload.resolvedProductCount),
+    reusedScanCache,
+    eligibleProductCount: nonNegativeNumber(payload.eligibleProductCount),
     resolvedProductCount: games.size,
-    unresolvedProductCount: Math.max(0, Number(payload.unresolvedProductCount ?? 0)),
+    unresolvedProductCount: nonNegativeNumber(payload.unresolvedProductCount),
     unresolvedProductIds,
     games,
     byPackageFamilyName
   }
+}
+
+/** Reads the playable PC Game Pass collection already cached by the Xbox app. */
+export async function scanXboxAppLibrary(
+  options: XboxAppLibraryScanOptions = {}
+): Promise<XboxAppLibrarySnapshot> {
+  const sourcePath = cachePath()
+  if (process.platform !== 'win32' || !existsSync(sourcePath)) {
+    return {
+      available: false,
+      activeSubscription: false,
+      subscriptions: [],
+      complete: false,
+      reusedScanCache: false,
+      eligibleProductCount: 0,
+      resolvedProductCount: 0,
+      unresolvedProductCount: 0,
+      unresolvedProductIds: [],
+      games: new Map(),
+      byPackageFamilyName: new Map()
+    }
+  }
+
+  const fingerprintBeforeScan = await xboxAppCacheFingerprint(sourcePath)
+  if (options.cacheDirectory && fingerprintBeforeScan) {
+    const cachedPayload = await readPersistedScan(options.cacheDirectory, fingerprintBeforeScan)
+    if (cachedPayload) return snapshotFromPayload(cachedPayload, true)
+  }
+
+  const output = await runXboxAppCacheScan()
+  const parsed = JSON.parse(output) as unknown
+  if (!isXboxAppCachePayload(parsed)) {
+    throw new Error('Xbox app library cache returned an invalid payload')
+  }
+  const snapshot = snapshotFromPayload(parsed, false)
+
+  if (options.cacheDirectory && fingerprintBeforeScan) {
+    const fingerprintAfterScan = await xboxAppCacheFingerprint(sourcePath)
+    if (sameXboxAppCacheFingerprint(fingerprintBeforeScan, fingerprintAfterScan)) {
+      await persistScan(options.cacheDirectory, fingerprintBeforeScan, parsed)
+    }
+  }
+  return snapshot
 }

@@ -1,12 +1,15 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { TopBar } from './TopBar'
 import { HomeView } from '@renderer/views/Home/HomeView'
-import { FriendsView } from '@renderer/views/Friends/FriendsView'
-import { LibraryView } from '@renderer/views/Library/LibraryView'
-import { StoreView } from '@renderer/views/Store/StoreView'
-import { SettingsView } from '@renderer/views/Settings/SettingsView'
-import { ApplicationsView } from '@renderer/views/Applications/ApplicationsView'
 import {
   useNavigationStore,
   type MainView
@@ -16,7 +19,7 @@ import { useBackHandler } from '@renderer/hooks/useBackHandler'
 import { useSyncStore } from '@renderer/state/syncStore'
 import { GameDetailPanel } from './GameDetailPanel'
 import { useGameDetailStore } from '@renderer/state/gameDetailStore'
-import { focusElement, focusFirstIn } from '@renderer/lib/spatialNavigation'
+import { focusElement } from '@renderer/lib/spatialNavigation'
 import { useStoreStore } from '@renderer/state/storeStore'
 import { GameLaunchSplash } from './GameLaunchSplash'
 import { SessionSummaryToast } from './SessionSummaryToast'
@@ -25,35 +28,130 @@ import { useAppUpdateStore } from '@renderer/state/appUpdateStore'
 import { BottomStatusHud } from './BottomStatusHud'
 import type { GameLaunchStatus } from '@shared/ipc'
 import { DiscordChatController } from './DiscordChatController'
+import { mainViewLoaders } from '@renderer/lib/mainViewLoaders'
+import { setOrbitPerformanceMode } from '@renderer/lib/performanceMode'
+import { useGeForceNowStore } from '@renderer/state/geForceNowStore'
+import { RunningGameProvider } from '@renderer/state/runningGameContext'
+import { GameTitleMusic } from './GameTitleMusic'
+import { LauncherBackgroundMusic } from './LauncherBackgroundMusic'
+import { usePreferencesStore } from '@renderer/state/preferencesStore'
+import { useTitleMusicStore } from '@renderer/state/titleMusicStore'
+import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
+import { orbitPlusHasFeature } from '@shared/ipc'
 
 const SESSION_SUMMARY_VISIBLE_MS = 6_000
+const RENDERER_HIBERNATION_DELAY_MS = 1_500
+
+const ApplicationsView = lazy(() =>
+  mainViewLoaders.applications().then((module) => ({ default: module.ApplicationsView }))
+)
+const FriendsView = lazy(() =>
+  mainViewLoaders.friends().then((module) => ({ default: module.FriendsView }))
+)
+const LibraryView = lazy(() =>
+  mainViewLoaders.library().then((module) => ({ default: module.LibraryView }))
+)
+const StoreView = lazy(() =>
+  mainViewLoaders.store().then((module) => ({ default: module.StoreView }))
+)
+const SettingsView = lazy(() =>
+  mainViewLoaders.settings().then((module) => ({ default: module.SettingsView }))
+)
 
 export function MainShell(): JSX.Element {
   const mainView = useNavigationStore((s) => s.mainView)
   const mainViewDirection = useNavigationStore((s) => s.mainViewDirection)
   const setMainView = useNavigationStore((s) => s.setMainView)
   const initLibrary = useLibraryStore((s) => s.init)
+  const scheduleLibraryRefresh = useLibraryStore((s) => s.scheduleRefresh)
+  const initGeForceNow = useGeForceNowStore((s) => s.init)
   const initSync = useSyncStore((s) => s.init)
   const initStore = useStoreStore((s) => s.init)
   const refreshStoreIfStale = useStoreStore((s) => s.refreshIfStale)
   const detailGameId = useGameDetailStore((s) => s.gameId)
+  const launcherMusicEnabled = usePreferencesStore((state) => state.launcherMusic)
+  const launcherMusicVolume = usePreferencesStore((state) => state.launcherMusicVolume)
+  const configuredLauncherMusicSource = usePreferencesStore(
+    (state) => state.launcherMusicSource
+  )
+  const customLauncherMusic = usePreferencesStore((state) => state.customLauncherMusic)
+  const gameTitleMusicEnabled = usePreferencesStore((state) => state.gameTitleMusic)
+  const gameTitleMusicVolume = usePreferencesStore((state) => state.gameTitleMusicVolume)
+  const gameTitleMusicDelaySeconds = usePreferencesStore(
+    (state) => state.gameTitleMusicDelaySeconds
+  )
+  const gameTitleMusicFadeSeconds = usePreferencesStore(
+    (state) => state.gameTitleMusicFadeSeconds
+  )
+  const homeTitleMusicGameId = useTitleMusicStore((state) => state.homeGameId)
+  const fullScreenTrailerGameId = useTitleMusicStore(
+    (state) => state.fullScreenTrailerGameId
+  )
+  const playingTitleMusicGameId = useTitleMusicStore((state) => state.playingGameId)
+  const orbitPlusSnapshot = useOrbitPlusStore((state) => state.snapshot)
   const [launchStatus, setLaunchStatus] = useState<GameLaunchStatus>({ phase: 'idle' })
   const [sessionSummary, setSessionSummary] = useState<GameLaunchStatus | null>(null)
+  const [visualsHibernated, setVisualsHibernated] = useState(false)
+  const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const updateStage = useAppUpdateStore((state) => state.snapshot.stage)
   const updateBannerVisible = useAppUpdateStore((state) => state.bannerVisible)
   const pendingSessionSummaryRef = useRef<GameLaunchStatus | null>(null)
-  const games = useLibraryStore((s) => s.snapshot.games)
-  const providerGames = useLibraryStore((s) => s.snapshot.providerGames)
   const shellRef = useRef<HTMLDivElement>(null)
-  const detailGame = detailGameId
-    ? (games.find((game) => game.id === detailGameId) ??
-      providerGames.find((game) => game.id === detailGameId))
-    : undefined
+  const runningGameId = launchStatus.phase === 'running' ? launchStatus.gameId : undefined
+  const titleMusicGameId =
+    detailGameId ?? (mainView === 'home' ? homeTitleMusicGameId : null)
+  const titleMusicActive =
+    gameTitleMusicEnabled &&
+    Boolean(titleMusicGameId) &&
+    launchStatus.phase === 'idle' &&
+    windowFocused
+  const titleMusicSuspended = fullScreenTrailerGameId === titleMusicGameId
+  const customLauncherMusicUnlocked = orbitPlusHasFeature(
+    orbitPlusSnapshot,
+    'manual-audio'
+  )
+  const launcherMusicSource =
+    configuredLauncherMusicSource === 'custom' && customLauncherMusicUnlocked
+      ? 'custom'
+      : 'orbit'
+  const launcherMusicActive =
+    launcherMusicEnabled && launchStatus.phase === 'idle' && windowFocused
+  const musicImmediateStop = !windowFocused || launchStatus.phase !== 'idle'
+  const launcherMusicSuspended =
+    Boolean(playingTitleMusicGameId) || Boolean(fullScreenTrailerGameId)
+  const launchOverlayVisible =
+    launchStatus.phase !== 'idle' && launchStatus.phase !== 'running'
+  const detailGame = useLibraryStore((state) => {
+    if (!detailGameId) return undefined
+    return (
+      state.snapshot.games.find((game) => game.id === detailGameId) ??
+      state.snapshot.providerGames.find((game) => game.id === detailGameId)
+    )
+  })
+  const titleMusicSelectionKey = useLibraryStore((state) => {
+    if (!titleMusicGameId) return undefined
+    const game = (
+      state.snapshot.games.find((game) => game.id === titleMusicGameId) ??
+      state.snapshot.providerGames.find((game) => game.id === titleMusicGameId)
+    )
+    return game ? `${game.name}\0${game.metadata.titleMusicUrl ?? ''}` : undefined
+  })
 
   useEffect(() => {
     void initSync()
     void initStore()
   }, [initStore, initSync])
+
+  useEffect(() => {
+    const handleFocus = (): void => setWindowFocused(true)
+    const handleBlur = (): void => setWindowFocused(false)
+    window.addEventListener('focus', handleFocus)
+    window.addEventListener('blur', handleBlur)
+    return () => {
+      window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('blur', handleBlur)
+    }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -77,13 +175,75 @@ export function MainShell(): JSX.Element {
   }, [])
 
   useEffect(() => {
+    const syncPerformanceMode = (): void => {
+      setOrbitPerformanceMode(
+        Boolean(runningGameId) && (document.hidden || !document.hasFocus())
+      )
+    }
+    syncPerformanceMode()
+    document.addEventListener('visibilitychange', syncPerformanceMode)
+    window.addEventListener('focus', syncPerformanceMode)
+    window.addEventListener('blur', syncPerformanceMode)
+    return () => {
+      document.removeEventListener('visibilitychange', syncPerformanceMode)
+      window.removeEventListener('focus', syncPerformanceMode)
+      window.removeEventListener('blur', syncPerformanceMode)
+      setOrbitPerformanceMode(false)
+    }
+  }, [runningGameId])
+
+  useEffect(() => {
+    let hibernationTimer: number | undefined
+    const cancelHibernation = (): void => {
+      if (hibernationTimer !== undefined) window.clearTimeout(hibernationTimer)
+      hibernationTimer = undefined
+    }
+    const wakeVisuals = (): void => {
+      cancelHibernation()
+      setVisualsHibernated(false)
+    }
+    const syncVisibility = (): void => {
+      cancelHibernation()
+      if (!runningGameId || !document.hidden) {
+        setVisualsHibernated(false)
+        return
+      }
+      // Once a confirmed game owns the screen, release every hidden card,
+      // backdrop and compositing layer. Renderer stores remain alive, so the
+      // exact launcher state can be reconstructed immediately on return.
+      hibernationTimer = window.setTimeout(
+        () => setVisualsHibernated(true),
+        RENDERER_HIBERNATION_DELAY_MS
+      )
+    }
+
+    document.addEventListener('visibilitychange', syncVisibility)
+    window.addEventListener('focus', wakeVisuals)
+    syncVisibility()
+    return () => {
+      cancelHibernation()
+      document.removeEventListener('visibilitychange', syncVisibility)
+      window.removeEventListener('focus', wakeVisuals)
+    }
+  }, [runningGameId])
+
+  useEffect(() => {
     if (!sessionSummary) return
     const timer = window.setTimeout(() => setSessionSummary(null), SESSION_SUMMARY_VISIBLE_MS)
     return () => window.clearTimeout(timer)
   }, [sessionSummary])
 
   useEffect(() => {
-    void initLibrary()
+    let active = true
+    void initLibrary().then(() => {
+      if (!active) return
+      scheduleLibraryRefresh()
+      return initGeForceNow()
+    })
+    return () => {
+      active = false
+      useGeForceNowStore.getState().dispose()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -98,23 +258,42 @@ export function MainShell(): JSX.Element {
   useEffect(() => {
     const shell = shellRef.current
     if (!shell) return
-    if (detailGame || launchStatus.phase !== 'idle' || updateStage === 'installing') {
+    if (detailGame || launchOverlayVisible || updateStage === 'installing') {
       shell.setAttribute('inert', '')
     }
     else shell.removeAttribute('inert')
     return () => shell.removeAttribute('inert')
-  }, [detailGame, launchStatus.phase, updateStage])
+  }, [detailGame, launchOverlayVisible, updateStage])
 
   useEffect(() => {
-    const frame = requestAnimationFrame(() => {
+    let observer: MutationObserver | undefined
+    const focusActivePane = (): boolean => {
       const activePane = shellRef.current?.querySelector<HTMLElement>(
         `[data-view-pane="${mainView}"]`
       )
       const preferredEntry = activePane?.querySelector<HTMLElement>('[data-view-entry="true"]')
-      if (preferredEntry) focusElement(preferredEntry)
-      else if (activePane) focusFirstIn(activePane)
+      const target =
+        preferredEntry ??
+        activePane?.querySelector<HTMLElement>('[data-focusable]:not([data-disabled="true"])')
+      if (!target) return false
+      focusElement(target)
+      return true
+    }
+    const frame = requestAnimationFrame(() => {
+      if (focusActivePane()) return
+      const activePane = shellRef.current?.querySelector<HTMLElement>(
+        `[data-view-pane="${mainView}"]`
+      )
+      if (!activePane) return
+      observer = new MutationObserver(() => {
+        if (focusActivePane()) observer?.disconnect()
+      })
+      observer.observe(activePane, { childList: true, subtree: true })
     })
-    return () => cancelAnimationFrame(frame)
+    return () => {
+      cancelAnimationFrame(frame)
+      observer?.disconnect()
+    }
   }, [mainView])
 
   function renderView(view: MainView): JSX.Element {
@@ -126,49 +305,89 @@ export function MainShell(): JSX.Element {
     return <SettingsView />
   }
 
-  return (
-    <div className="relative h-full w-full overflow-hidden">
-      <DiscordChatController />
-      <div ref={shellRef} className="flex h-full w-full flex-col overflow-hidden">
-        <TopBar />
-        <main className="relative flex-1 overflow-hidden">
-          <PersistentViewPane
-            key={mainView}
-            view={mainView}
-            active
-            direction={mainViewDirection}
-          >
-            {renderView(mainView)}
-          </PersistentViewPane>
-        </main>
-        <BottomStatusHud />
-      </div>
+  if (visualsHibernated) {
+    return (
+      <div
+        data-orbit-renderer-hibernated="true"
+        aria-hidden="true"
+        className="h-full w-full bg-black"
+      />
+    )
+  }
 
-      <AnimatePresence>{detailGame && <GameDetailPanel key={detailGame.id} game={detailGame} />}</AnimatePresence>
-      <AnimatePresence>
-        {launchStatus.phase !== 'idle' && (
-          <GameLaunchSplash
-            key={launchStatus.gameId ?? 'game-launch'}
-            status={launchStatus}
-          />
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {sessionSummary && (
-          <SessionSummaryToast
-            key={`${sessionSummary.gameId}:${sessionSummary.endedAt}`}
-            status={sessionSummary}
-            visibleSeconds={SESSION_SUMMARY_VISIBLE_MS / 1_000}
-          />
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {updateBannerVisible &&
-          (updateStage === 'installing' ||
-            (updateStage === 'ready' && launchStatus.phase === 'idle')) && (
-            <AppUpdateBanner key="app-update" />
+  return (
+    <RunningGameProvider gameId={runningGameId}>
+      <div className="relative h-full w-full overflow-hidden">
+        <LauncherBackgroundMusic
+          active={launcherMusicActive}
+          suspended={launcherMusicSuspended}
+          immediateStop={musicImmediateStop}
+          source={launcherMusicSource}
+          customUrl={launcherMusicSource === 'custom' ? customLauncherMusic?.url : undefined}
+          volume={launcherMusicVolume}
+        />
+        <GameTitleMusic
+          gameId={titleMusicGameId}
+          selectionKey={titleMusicSelectionKey}
+          active={titleMusicActive}
+          suspended={titleMusicSuspended}
+          immediateStop={musicImmediateStop}
+          volume={gameTitleMusicVolume}
+          delaySeconds={gameTitleMusicDelaySeconds}
+          fadeSeconds={gameTitleMusicFadeSeconds}
+        />
+        <DiscordChatController />
+        <div ref={shellRef} className="flex h-full w-full flex-col overflow-hidden">
+          <TopBar />
+          <main className="relative flex-1 overflow-hidden">
+            <PersistentViewPane
+              key={mainView}
+              view={mainView}
+              active
+              direction={mainViewDirection}
+            >
+              <Suspense fallback={<ViewLoadingFallback />}>
+                {renderView(mainView)}
+              </Suspense>
+            </PersistentViewPane>
+          </main>
+          <BottomStatusHud />
+        </div>
+
+        <AnimatePresence>{detailGame && <GameDetailPanel key={detailGame.id} game={detailGame} />}</AnimatePresence>
+        <AnimatePresence>
+          {launchOverlayVisible && (
+            <GameLaunchSplash
+              key={launchStatus.gameId ?? 'game-launch'}
+              status={launchStatus}
+            />
           )}
-      </AnimatePresence>
+        </AnimatePresence>
+        <AnimatePresence>
+          {sessionSummary && (
+            <SessionSummaryToast
+              key={`${sessionSummary.gameId}:${sessionSummary.endedAt}`}
+              status={sessionSummary}
+              visibleSeconds={SESSION_SUMMARY_VISIBLE_MS / 1_000}
+            />
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {updateBannerVisible &&
+            (updateStage === 'installing' ||
+              (updateStage === 'ready' && launchStatus.phase === 'idle')) && (
+              <AppUpdateBanner key="app-update" />
+            )}
+        </AnimatePresence>
+      </div>
+    </RunningGameProvider>
+  )
+}
+
+function ViewLoadingFallback(): JSX.Element {
+  return (
+    <div role="status" aria-label="ORBIT" className="flex h-full items-center justify-center">
+      <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/15 border-t-accent" />
     </div>
   )
 }

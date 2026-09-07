@@ -1,4 +1,9 @@
 import type { GameLaunchFailureReason, GameProvider } from '@shared/ipc'
+import { win32 as path } from 'node:path'
+import {
+  gameTrackingMethodsForProvider,
+  type GameTrackingMethod
+} from '../shared/gameTracking'
 
 const NO_EVIDENCE_TIMEOUT_MS: Record<GameProvider, number> = {
   local: 20_000,
@@ -26,8 +31,10 @@ const PROVISIONAL_HANDOFF_GRACE_MS: Record<GameProvider, number> = {
 
 export const GAME_PROCESS_CANDIDATE_STABILITY_MS = 650
 const PROCESS_SAMPLE_GRACE_MS = 1_500
+const MAX_PROVIDER_SESSION_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1_000
 
 export interface GameProcessIdentitySignals {
+  providerReportedGame: boolean
   directlySpawnedGame: boolean
   exactExecutable: boolean
   insideInstallDir: boolean
@@ -41,9 +48,45 @@ export interface GameProcessIdentitySignals {
   windowsAppsProcess: boolean
 }
 
+export interface SelectedGameTrackingMethod {
+  method: GameTrackingMethod
+  fallbackIndex: number
+}
+
+/**
+ * Selects one authoritative identity for the candidate using the provider's
+ * ordered tracking plan. All applicable fallbacks are evaluated on every
+ * sample, so a store client changing its hand-off shape cannot strand ORBIT.
+ */
+export function selectGameTrackingMethod(
+  provider: GameProvider,
+  signals: GameProcessIdentitySignals
+): SelectedGameTrackingMethod | undefined {
+  const methods = gameTrackingMethodsForProvider(provider)
+  for (let fallbackIndex = 0; fallbackIndex < methods.length; fallbackIndex += 1) {
+    const method = methods[fallbackIndex]
+    const matches =
+      (method === 'provider-process' && signals.providerReportedGame) ||
+      (method === 'process-tree' &&
+        (signals.directlySpawnedGame || signals.fromTrackedGame)) ||
+      (method === 'install-directory' && signals.insideInstallDir) ||
+      (method === 'package-identity' && signals.packageFamilyMatches) ||
+      (method === 'executable' &&
+        (signals.exactExecutable || signals.executableHintMatches)) ||
+      (method === 'provider-handoff' &&
+        (signals.idMatches ||
+          (signals.fromLauncher &&
+            signals.visible &&
+            (signals.nameMatches || signals.windowsAppsProcess))))
+    if (matches) return { method, fallbackIndex }
+  }
+  return undefined
+}
+
 /** A window by itself is never enough to identify a game process. */
 export function hasEligibleGameProcessIdentity(signals: GameProcessIdentitySignals): boolean {
   const hasStrongIdentity =
+    signals.providerReportedGame ||
     signals.directlySpawnedGame ||
     signals.exactExecutable ||
     signals.insideInstallDir ||
@@ -74,6 +117,44 @@ export function ancestryIncludesTrackedPid(
   return false
 }
 
+/** Segment-safe Windows directory match used by provider folder tracking. */
+export function windowsExecutableInsideDirectory(
+  executablePath: string | undefined,
+  installDirectory: string | undefined
+): boolean {
+  const normalize = (value: string | undefined): string =>
+    (value ?? '').trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+  const executable = normalize(executablePath)
+  const directory = normalize(installDirectory)
+  const directoryRoot = normalize(path.parse(directory).root)
+  return Boolean(
+    executable &&
+      directory &&
+      path.isAbsolute(directory) &&
+      directory !== directoryRoot &&
+      executable.startsWith(`${directory}\\`)
+  )
+}
+
+/**
+ * Keeps provider history useful for presentation without claiming unobserved
+ * time as an ORBIT-tracked session. The returned start is bounded because logs
+ * and provider caches may survive crashes or contain corrupt timestamps.
+ */
+export function providerSessionTimestamps(
+  observedAt: number,
+  providerStartedAt: number | undefined
+): { startedAt: number; detectedAt: number } {
+  const startedAt =
+    Number.isFinite(providerStartedAt) && (providerStartedAt ?? 0) > 0
+      ? Math.min(
+          observedAt,
+          Math.max(observedAt - MAX_PROVIDER_SESSION_LOOKBACK_MS, providerStartedAt as number)
+        )
+      : observedAt
+  return { startedAt, detectedAt: observedAt }
+}
+
 export function launchNoEvidenceTimeoutMs(provider: GameProvider): number {
   return NO_EVIDENCE_TIMEOUT_MS[provider]
 }
@@ -90,10 +171,11 @@ export function provisionalHandoffGraceMs(provider: GameProvider): number {
 export function windowsPackageIdentityMatches(
   launchUri: string | undefined,
   executablePath: string | undefined,
-  commandLine = ''
+  commandLine = '',
+  packageFamilyName?: string
 ): boolean {
   const match = /^shell:appsfolder\\([^!\\]+)!/i.exec(launchUri?.trim() ?? '')
-  const family = match?.[1]?.toLowerCase() ?? ''
+  const family = (match?.[1] ?? packageFamilyName?.trim() ?? '').toLowerCase()
   if (!family) return false
 
   const normalizedCommandLine = commandLine.toLowerCase()

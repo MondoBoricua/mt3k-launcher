@@ -1,3 +1,4 @@
+import { type Language } from './language'
 import type { LibraryGame } from './ipc'
 
 function normalizeTitle(value: string): string {
@@ -312,13 +313,13 @@ function hasIdentityQualifier(value: string): boolean {
 function preferredRegionBonus(
   fileName: string,
   rawRomName: string | undefined,
-  language: 'de' | 'en'
+  language: Language
 ): number {
   const candidateRegions = artworkRegions(fileName)
   const rawRegions = artworkRegions(rawRomName)
   const matchesRom = [...candidateRegions].some((region) => rawRegions.has(region))
   let score = matchesRom ? 60 : 0
-  if (language === 'de' && candidateRegions.has('europe')) score += 35
+  if ((language === 'de' || language === 'es') && candidateRegions.has('europe')) score += 35
   else if (candidateRegions.has('usa')) score += 30
   else if (candidateRegions.has('world')) score += 25
   else if (candidateRegions.has('japan')) score += 5
@@ -331,7 +332,7 @@ export function matchLibretroThumbnail(
   files: readonly string[],
   gameName: string,
   rawRomName: string | undefined,
-  language: 'de' | 'en'
+  language: Language
 ): string | undefined {
   // A raw qualifier that is not release metadata (hack, beta, prototype,
   // expansion, etc.) is identity evidence. Do not let a cleaned display title

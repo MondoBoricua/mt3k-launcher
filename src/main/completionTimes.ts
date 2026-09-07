@@ -39,9 +39,9 @@ function hasEstimate(value: GameCompletionTimes): boolean {
 export class CompletionTimesService {
   private inFlight = new Map<string, Promise<GameCompletionTimes | null>>()
 
-  resolve(game: LibraryGame): Promise<GameCompletionTimes | null> {
+  resolve(game: LibraryGame, force = false): Promise<GameCompletionTimes | null> {
     const cached = game.metadata.completionTimes
-    if (cached && isFresh(cached)) return Promise.resolve(cached)
+    if (!force && cached && isFresh(cached)) return Promise.resolve(cached)
 
     const current = this.inFlight.get(game.id)
     if (current) return current

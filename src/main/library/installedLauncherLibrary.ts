@@ -19,6 +19,7 @@ export class InstalledLauncherLibraryService
   implements LibraryProviderAdapter<void>
 {
   private refreshInFlight: Promise<LibrarySnapshot> | null = null
+  private installedRefreshInFlight: Promise<LibrarySnapshot> | null = null
   private providerStatus: LibraryProviderStatus
 
   constructor(
@@ -52,6 +53,55 @@ export class InstalledLauncherLibraryService
     })
     this.refreshInFlight = refresh
     return refresh
+  }
+
+  /** Adds newly discovered local installs without rewriting unchanged games
+   * or rerunning unrelated provider pipelines. */
+  refreshInstalledGames(): Promise<LibrarySnapshot> {
+    if (this.installedRefreshInFlight) return this.installedRefreshInFlight
+    const refresh = this.doRefreshInstalledGames().finally(() => {
+      if (this.installedRefreshInFlight === refresh) this.installedRefreshInFlight = null
+    })
+    this.installedRefreshInFlight = refresh
+    return refresh
+  }
+
+  private async doRefreshInstalledGames(): Promise<LibrarySnapshot> {
+    const activeRefresh = this.refreshInFlight
+    if (activeRefresh) await activeRefresh.catch(() => undefined)
+    syncCoordinator.begin('library', 1, 0, this.provider, this.provider)
+    try {
+      const discovery = await scanWindowsLauncherLibraries()
+      if (!discovery.complete) throw new Error('Windows launcher discovery is unavailable')
+      const changedInstalled = [...discovery.games[this.provider].values()].filter((game) => {
+        const existing = gameRepository.getGame(`${this.provider}:${game.providerGameId}`)
+        return (
+          !existing?.installed ||
+          existing.installDir !== game.installDir ||
+          existing.name !== game.name
+        )
+      })
+      if (changedInstalled.length > 0) {
+        gameRepository.applyInstalledProviderPatch(
+          this.provider,
+          changedInstalled.map((game) => ({
+            providerGameId: game.providerGameId,
+            name: game.name,
+            installDir: game.installDir,
+            metadata: game.metadata
+          }))
+        )
+        const games = changedInstalled
+          .map((game) => gameRepository.getGame(`${this.provider}:${game.providerGameId}`))
+          .filter((game): game is NonNullable<typeof game> => Boolean(game))
+        if (games.length > 0) artworkService.syncProvider(games, this.provider)
+        this.emitSnapshot()
+      }
+      syncCoordinator.complete('library', this.provider, this.provider)
+    } catch {
+      syncCoordinator.fail('library', this.provider, this.provider)
+    }
+    return gameRepository.getSnapshot()
   }
 
   private async doRefresh(): Promise<LibrarySnapshot> {

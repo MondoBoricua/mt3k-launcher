@@ -3,7 +3,7 @@ import type { FriendsProvider, FriendsSnapshot } from '@shared/ipc'
 
 export type FriendsFilter = 'all' | FriendsProvider
 
-const FILTER_ORDER: FriendsFilter[] = ['all', 'steam', 'discord', 'epic']
+const FILTER_ORDER: FriendsFilter[] = ['all', 'steam', 'discord', 'epic', 'xbox']
 
 const initialSnapshot: FriendsSnapshot = {
   friends: [],
@@ -22,6 +22,12 @@ const initialSnapshot: FriendsSnapshot = {
     },
     epic: {
       provider: 'epic',
+      state: 'not-connected',
+      friendCount: 0,
+      onlineCount: 0
+    },
+    xbox: {
+      provider: 'xbox',
       state: 'not-connected',
       friendCount: 0,
       onlineCount: 0

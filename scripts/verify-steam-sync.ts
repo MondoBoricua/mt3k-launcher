@@ -9,6 +9,47 @@ import {
   decideSteamSyncHealth,
   shouldShowSteamSyncNotice
 } from '../src/shared/steamSyncPolicy.ts'
+import {
+  classifySteamSessionAccess,
+  isSteamSharedLibraryGame,
+  projectSteamSharedVisibility
+} from '../src/shared/steamLibraryAccess.ts'
+
+const authoritativeSteamApps = new Set([10, 20])
+assert.equal(classifySteamSessionAccess(10, authoritativeSteamApps), 'owned')
+assert.equal(
+  classifySteamSessionAccess(30, authoritativeSteamApps),
+  'shared',
+  'a client-visible app outside the authoritative owned list is a shared session license'
+)
+assert.equal(
+  classifySteamSessionAccess(30),
+  undefined,
+  'a missing authoritative comparison must not guess that a title is shared'
+)
+assert.equal(
+  isSteamSharedLibraryGame({ provider: 'steam', libraryAccess: 'shared' }),
+  true
+)
+assert.equal(
+  isSteamSharedLibraryGame({ provider: 'epic', libraryAccess: 'shared' }),
+  false
+)
+const accessProjection = [
+  { provider: 'steam' as const, libraryAccess: 'owned' as const, id: 'owned' },
+  { provider: 'steam' as const, libraryAccess: 'shared' as const, id: 'family' },
+  { provider: 'epic' as const, libraryAccess: 'shared' as const, id: 'other-provider' }
+]
+assert.deepEqual(
+  projectSteamSharedVisibility(accessProjection, false).map((game) => game.id),
+  ['owned', 'other-provider'],
+  'the Library toggle hides only shared Steam licenses'
+)
+assert.equal(
+  projectSteamSharedVisibility(accessProjection, true),
+  accessProjection,
+  'the enabled Library toggle keeps the existing snapshot reference'
+)
 
 const communityFriends = parseSteamCommunityFriendsHtml(`
   <div class="selectable friend_block_v2 persona in-game" data-steamid="76561198000000001" data-search="Player One ; Portal 2 ;">
@@ -99,8 +140,22 @@ assert.deepEqual(
     supplementalSourcesComplete: false,
     localLibraryComplete: true
   }),
-  { state: 'partial', issue: 'source-unavailable' },
+  { state: 'partial', issue: 'supplemental-source-unavailable' },
   'missing session sources can hide borrowed games and must remain visible as partial'
+)
+
+assert.deepEqual(
+  decideSteamSyncHealth({
+    primaryLibraryAvailable: true,
+    fallbackLibraryAvailable: false,
+    cachedGameCount: 250,
+    pendingMetadataCount: 0,
+    ownedResponseWasEmpty: false,
+    supplementalSourcesComplete: true,
+    localLibraryComplete: false
+  }),
+  { state: 'partial', issue: 'local-source-unavailable' },
+  'an unreadable local Steam library must identify the affected source'
 )
 
 assert.deepEqual(

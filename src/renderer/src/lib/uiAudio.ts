@@ -1,13 +1,12 @@
-import type { AudioPreset } from '@shared/ipc'
+import {
+  AUDIO_CUE_IDS,
+  type AudioCueId,
+  type AudioCuePreset,
+  type AudioPreset,
+  type CustomUiAudioCues
+} from '@shared/ipc'
 
-export type UiSoundId =
-  | 'navigate'
-  | 'confirm'
-  | 'back'
-  | 'switch'
-  | 'open'
-  | 'close'
-  | 'error'
+export type UiSoundId = AudioCueId
 
 interface Voice {
   start: number
@@ -545,7 +544,7 @@ const PLAYSTATION_RECIPES: Record<UiSoundId, SoundRecipe> = {
   }
 }
 
-type AudibleAudioPreset = Exclude<AudioPreset, 'off'>
+type AudibleAudioPreset = Exclude<AudioCuePreset, 'off'>
 
 const SOUND_SETS: Record<AudibleAudioPreset, Record<UiSoundId, SoundRecipe>> = {
   orbit: ORBIT_RECIPES,
@@ -560,9 +559,29 @@ const SOUND_SETS: Record<AudibleAudioPreset, Record<UiSoundId, SoundRecipe>> = {
 const buffers = new Map<string, AudioBuffer[]>()
 const cursors = new Map<UiSoundId, number>()
 const lastPlayedAt = new Map<UiSoundId, number>()
+const customBuffers = new Map<UiSoundId, { url: string; buffer: AudioBuffer }>()
+const customLoads = new Map<string, Promise<AudioBuffer | null>>()
+const activeCustomSources = new Map<UiSoundId, AudioBufferSourceNode>()
 let audioContext: AudioContext | null = null
 let audioOutput: AudioNode | null = null
 let activePreset: AudioPreset = 'orbit'
+let activeCustomCues: CustomUiAudioCues = {}
+let manualAudioAccess = false
+
+function stopCustomSource(id: UiSoundId): void {
+  const source = activeCustomSources.get(id)
+  if (!source) return
+  activeCustomSources.delete(id)
+  try {
+    source.stop()
+  } catch {
+    // A source that has just ended is already silent.
+  }
+}
+
+function stopAllCustomSources(): void {
+  for (const id of [...activeCustomSources.keys()]) stopCustomSource(id)
+}
 
 function context(): AudioContext {
   if (!audioContext) {
@@ -605,15 +624,80 @@ function voiceSample(voice: Voice, time: number): number {
   return (fundamental + overtone) * voice.level * attack * release
 }
 
-function recipeFor(id: UiSoundId, preset: AudioPreset): SoundRecipe {
-  return preset === 'off' ? ORBIT_RECIPES[id] : SOUND_SETS[preset][id]
+function resolvedPreset(): AudioCuePreset {
+  if (activePreset === 'manual') return 'orbit'
+  return activePreset
 }
 
-function bufferKey(id: UiSoundId, preset: AudioPreset): string {
+function loadCustomCue(id: UiSoundId): Promise<AudioBuffer | null> {
+  const cue = activeCustomCues[id]
+  if (!cue || !manualAudioAccess) return Promise.resolve(null)
+  const cached = customBuffers.get(id)
+  if (cached?.url === cue.url) return Promise.resolve(cached.buffer)
+  const key = `${id}:${cue.url}`
+  const pending = customLoads.get(key)
+  if (pending) return pending
+
+  const request = fetch(cue.url, { cache: 'no-store' })
+    .then((response) => {
+      if (!response.ok) throw new Error(`Custom interface sound returned ${response.status}`)
+      return response.arrayBuffer()
+    })
+    .then((data) => context().decodeAudioData(data))
+    .then((buffer) => {
+      if (activeCustomCues[id]?.url === cue.url && manualAudioAccess) {
+        customBuffers.set(id, { url: cue.url, buffer })
+      }
+      return buffer
+    })
+    .catch(() => null)
+    .finally(() => customLoads.delete(key))
+  customLoads.set(key, request)
+  return request
+}
+
+function playCustomCue(id: UiSoundId): boolean {
+  if (activePreset !== 'manual' || !manualAudioAccess || !activeCustomCues[id]) return false
+  const entry = customBuffers.get(id)
+  if (!entry || entry.url !== activeCustomCues[id]?.url) {
+    void loadCustomCue(id)
+    return false
+  }
+
+  const audio = context()
+  if (audio.state === 'suspended') void audio.resume()
+  // Custom files can be much longer than ORBIT's generated clicks. Keep rapid
+  // navigation deterministic by allowing only one custom interface sound at once.
+  stopAllCustomSources()
+  const source = audio.createBufferSource()
+  const gain = audio.createGain()
+  source.buffer = entry.buffer
+  gain.gain.value = 0.42
+  source.connect(gain)
+  gain.connect(output(audio))
+  activeCustomSources.set(id, source)
+  source.addEventListener('ended', () => {
+    if (activeCustomSources.get(id) === source) activeCustomSources.delete(id)
+    source.disconnect()
+    gain.disconnect()
+  }, { once: true })
+  source.start()
+  return true
+}
+
+function recipeFor(id: UiSoundId, preset: AudibleAudioPreset): SoundRecipe {
+  return SOUND_SETS[preset][id]
+}
+
+function bufferKey(id: UiSoundId, preset: AudibleAudioPreset): string {
   return `${preset}:${id}`
 }
 
-function createSoundBuffer(id: UiSoundId, variant: number, preset: AudioPreset): AudioBuffer {
+function createSoundBuffer(
+  id: UiSoundId,
+  variant: number,
+  preset: AudibleAudioPreset
+): AudioBuffer {
   const recipe = recipeFor(id, preset)
   const sampleRate = 48_000
   const frameCount = Math.ceil(recipe.duration * sampleRate)
@@ -645,16 +729,18 @@ function createSoundBuffer(id: UiSoundId, variant: number, preset: AudioPreset):
 /** Pre-renders ORBIT's short interaction tones once, with no files or decoding. */
 export function preloadUiSounds(): void {
   if (activePreset === 'off') return
-  const ids = Object.keys(ORBIT_RECIPES) as UiSoundId[]
-  for (const id of ids) {
-    const key = bufferKey(id, activePreset)
+  if (activePreset === 'manual' && manualAudioAccess) {
+    for (const id of AUDIO_CUE_IDS) void loadCustomCue(id)
+  }
+  for (const id of AUDIO_CUE_IDS) {
+    const preset = resolvedPreset()
+    if (preset === 'off') continue
+    const key = bufferKey(id, preset)
     if (buffers.has(key)) continue
-    const variantCount = recipeFor(id, activePreset).variants ?? 1
+    const variantCount = recipeFor(id, preset).variants ?? 1
     buffers.set(
       key,
-      Array.from({ length: variantCount }, (_, variant) =>
-        createSoundBuffer(id, variant, activePreset)
-      )
+      Array.from({ length: variantCount }, (_, variant) => createSoundBuffer(id, variant, preset))
     )
   }
 }
@@ -666,15 +752,51 @@ export function setUiAudioPreset(preset: AudioPreset, preview = false): void {
   playUiSound('confirm')
 }
 
+/** Keeps premium audio enforcement inside the playback path as well as the UI. */
+export function setUiAudioManualAccess(unlocked: boolean): void {
+  manualAudioAccess = unlocked
+  if (unlocked) {
+    if (activePreset === 'manual') preloadUiSounds()
+    return
+  }
+  stopAllCustomSources()
+}
+
+export async function setUiAudioCustomCues(
+  cues: CustomUiAudioCues,
+  previewId?: UiSoundId
+): Promise<void> {
+  const previousCues = activeCustomCues
+  activeCustomCues = { ...cues }
+  for (const id of AUDIO_CUE_IDS) {
+    const cached = customBuffers.get(id)
+    if (previousCues[id]?.url !== activeCustomCues[id]?.url) {
+      stopCustomSource(id)
+      if (cached) customBuffers.delete(id)
+    }
+  }
+  if (!manualAudioAccess) return
+  if (!previewId) {
+    if (activePreset === 'manual') preloadUiSounds()
+    return
+  }
+  await loadCustomCue(previewId)
+  if (activePreset !== 'manual') return
+  lastPlayedAt.delete(previewId)
+  playUiSound(previewId)
+}
+
 export function playUiSound(id: UiSoundId): void {
-  if (activePreset === 'off') return
-  const recipe = recipeFor(id, activePreset)
+  const preset = resolvedPreset()
+  if (preset === 'off') return
+  const recipe = recipeFor(id, preset)
   const now = performance.now()
   if (now - (lastPlayedAt.get(id) ?? -Infinity) < recipe.cooldownMs) return
   lastPlayedAt.set(id, now)
 
+  if (playCustomCue(id)) return
   preloadUiSounds()
-  const soundBuffers = buffers.get(bufferKey(id, activePreset))
+  const soundBuffers = buffers.get(bufferKey(id, preset))
   if (!soundBuffers?.length) return
   const nextCursor = cursors.get(id) ?? 0
   cursors.set(id, nextCursor + 1)
@@ -689,11 +811,11 @@ export function playUiSound(id: UiSoundId): void {
   filter.frequency.value =
     id === 'error'
       ? 1_250
-      : activePreset === 'soft'
+      : preset === 'soft'
         ? 4_100
-        : activePreset === 'deep'
+        : preset === 'deep'
           ? 1_150
-          : activePreset === 'minimal'
+          : preset === 'minimal'
             ? 3_200
             : 2_450
   filter.Q.value = 0.45

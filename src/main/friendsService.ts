@@ -15,7 +15,8 @@ import type {
   FriendsProviderStatus,
   FriendsSnapshot,
   OrbitFriend,
-  SteamAccount
+  SteamAccount,
+  XboxAccount
 } from '@shared/ipc'
 import { steamAuthManager } from './steam/steamAuth'
 import { parseSteamCommunityFriendsHtml } from './steam/steamWebParsers'
@@ -27,14 +28,19 @@ import {
   epicSocialPresence,
   type EpicPresenceSnapshot
 } from './epic/epicSocialPresence'
+import { xboxAuthManager } from './xbox/xboxAuth'
+import { parseXboxSocialPeople } from './xbox/xboxSocialParsers'
 
 const STEAM_ID_PATTERN = /^\d{17}$/
 const EPIC_ACCOUNT_ID_PATTERN = /^[a-f0-9]{32}$/i
+const XBOX_XUID_PATTERN = /^\d{1,20}$/
 const MAX_STEAM_FRIENDS = 2_000
 const MAX_EPIC_FRIENDS = 2_000
+const MAX_XBOX_FRIENDS = 2_000
 const MAX_EPIC_BATCH_SIZE = 50
 const MAX_STEAM_FRIENDS_RESPONSE_BYTES = 8 * 1024 * 1024
 const MAX_EPIC_RESPONSE_BYTES = 8 * 1024 * 1024
+const MAX_XBOX_RESPONSE_BYTES = 8 * 1024 * 1024
 const VISIBLE_REFRESH_BUDGET_MS = 4_000
 
 const friendsCache = new Store<{ snapshot?: FriendsSnapshot }>({
@@ -67,7 +73,8 @@ function initialSnapshot(): FriendsSnapshot {
     providers: {
       steam: providerStatus('steam', 'not-connected'),
       discord: providerStatus('discord', 'not-connected'),
-      epic: providerStatus('epic', 'not-connected')
+      epic: providerStatus('epic', 'not-connected'),
+      xbox: providerStatus('xbox', 'not-connected')
     },
     updatedAt: 0,
     isRefreshing: false
@@ -127,15 +134,21 @@ function cachedHttpsUrl(value: unknown, provider: FriendsProvider, kind: 'avatar
     if (url.protocol !== 'https:') return undefined
     const host = url.hostname.toLowerCase()
     if (kind === 'profile') {
-      return provider === 'steam' &&
+      if (
+        provider === 'steam' &&
         (host === 'steamcommunity.com' || host.endsWith('.steamcommunity.com'))
+      ) {
+        return url.toString()
+      }
+      return provider === 'xbox' && host === 'account.xbox.com'
         ? url.toString()
         : undefined
     }
     if (
       (provider === 'steam' && (host === 'steamstatic.com' || host.endsWith('.steamstatic.com'))) ||
       (provider === 'discord' &&
-        (host === 'cdn.discordapp.com' || host === 'media.discordapp.net'))
+        (host === 'cdn.discordapp.com' || host === 'media.discordapp.net')) ||
+      (provider === 'xbox' && (host === 'xboxlive.com' || host.endsWith('.xboxlive.com')))
     ) {
       return url.toString()
     }
@@ -148,6 +161,7 @@ function cachedHttpsUrl(value: unknown, provider: FriendsProvider, kind: 'avatar
 function validProviderUserId(provider: FriendsProvider, value: string): boolean {
   if (provider === 'steam') return STEAM_ID_PATTERN.test(value)
   if (provider === 'discord') return /^\d{17,20}$/.test(value)
+  if (provider === 'xbox') return XBOX_XUID_PATTERN.test(value)
   return EPIC_ACCOUNT_ID_PATTERN.test(value)
 }
 
@@ -295,6 +309,33 @@ async function fetchSteamFriends(steamId: string): Promise<OrbitFriend[]> {
       Number(Boolean(right.activity)) - Number(Boolean(left.activity)) ||
       left.displayName.localeCompare(right.displayName)
   )
+}
+
+async function fetchXboxFriends(): Promise<OrbitFriend[]> {
+  const url = new URL(
+    'https://peoplehub.xboxlive.com/users/me/people/social/decoration/preferredcolor,detail,multiplayersummary,presencedetail'
+  )
+  const response = await xboxAuthManager.fetchXboxService(
+    url,
+    {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache' },
+      signal: AbortSignal.timeout(15_000)
+    },
+    '5'
+  )
+  if (response.status === 401) throw new FriendsProviderError('authentication-failed')
+  if (response.status === 403) throw new FriendsProviderError('private-profile')
+  if (!response.ok) throw new FriendsProviderError('provider-unavailable')
+  const source = await response.text()
+  if (Buffer.byteLength(source, 'utf8') > MAX_XBOX_RESPONSE_BYTES) {
+    throw new FriendsProviderError('provider-unavailable')
+  }
+  try {
+    return parseXboxSocialPeople(JSON.parse(source) as unknown, MAX_XBOX_FRIENDS)
+  } catch {
+    throw new FriendsProviderError('provider-unavailable')
+  }
 }
 
 interface EpicFriendSummaryEntry {
@@ -602,6 +643,41 @@ export class FriendsService extends EventEmitter {
     }
   }
 
+  private async refreshXboxProvider(
+    account: XboxAccount,
+    previous: FriendsSnapshot
+  ): Promise<ProviderRefreshResult> {
+    try {
+      const friends = await fetchXboxFriends()
+      const updatedAt = Date.now()
+      return {
+        friends,
+        status: {
+          provider: 'xbox',
+          state: 'ready',
+          friendCount: friends.length,
+          onlineCount: friends.filter((friend) => onlinePresence(friend.presence)).length,
+          updatedAt,
+          accountName: account.gamertag
+        }
+      }
+    } catch (error) {
+      const friends = previous.friends.filter((friend) => friend.provider === 'xbox')
+      return {
+        friends,
+        status: {
+          provider: 'xbox',
+          state: 'error',
+          friendCount: friends.length,
+          onlineCount: friends.filter((friend) => onlinePresence(friend.presence)).length,
+          updatedAt: previous.providers.xbox.updatedAt,
+          accountName: account.gamertag,
+          issue: error instanceof FriendsProviderError ? error.issue : 'provider-unavailable'
+        }
+      }
+    }
+  }
+
   private mergeProviderResult(result: ProviderRefreshResult): FriendsSnapshot {
     const provider = result.status.provider
     const previous = this.snapshot
@@ -660,7 +736,25 @@ export class FriendsService extends EventEmitter {
       this.mergeDiscord(snapshot)
     }
 
-    await Promise.allSettled([steamRefresh(), discordRefresh(), epicRefresh()])
+    const xboxRefresh = async (): Promise<void> => {
+      const connection = xboxAuthManager.getAccount()
+        ? xboxAuthManager.getConnectionSnapshot()
+        : await xboxAuthManager.restoreSession()
+      const account = connection.account
+      const result = account
+        ? await this.refreshXboxProvider(account, previous)
+        : {
+            friends: [],
+            status: providerStatus('xbox', 'not-connected')
+          }
+      if ((xboxAuthManager.getAccount()?.xuid ?? null) !== (account?.xuid ?? null)) {
+        accountsChanged = true
+        return
+      }
+      this.mergeProviderResult(result)
+    }
+
+    await Promise.allSettled([steamRefresh(), discordRefresh(), epicRefresh(), xboxRefresh()])
     clearTimeout(visibleRefreshTimer)
     if (accountsChanged) return this.performRefresh()
     return this.publish({ ...this.snapshot, updatedAt: Date.now(), isRefreshing: false })
@@ -718,7 +812,9 @@ export class FriendsService extends EventEmitter {
           ? 'https://steamcommunity.com/'
           : provider === 'discord'
             ? 'https://discord.com/channels/@me'
-            : 'com.epicgames.launcher://friends'
+            : provider === 'xbox'
+              ? 'https://account.xbox.com/Profile'
+              : 'com.epicgames.launcher://friends'
     try {
       await shell.openExternal(url)
     } catch (error) {

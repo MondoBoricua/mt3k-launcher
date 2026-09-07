@@ -1,3 +1,5 @@
+import type { AppUpdateSnapshot } from './ipc'
+
 export interface AppUpdateAssetCandidate {
   id: number
   name: string
@@ -32,6 +34,7 @@ const MAX_RELEASE_NOTES_LENGTH = 6_000
 const MAX_RELEASE_NAME_LENGTH = 160
 const MAX_UPDATE_SIZE = 1_073_741_824
 const MIN_UPDATE_SIZE = 1_048_576
+const APP_UPDATE_DOWNLOAD_RETRY_DELAYS_MS = [1_000, 3_000, 8_000] as const
 
 interface ParsedVersion {
   major: number
@@ -223,4 +226,32 @@ export function isValidAppUpdateContentRange(
     end < total &&
     total === expectedTotal
   )
+}
+
+/** Returns a bounded backoff for transient installer-download failures. The
+ * partial file remains authoritative, so every retry can resume from disk. */
+export function appUpdateDownloadRetryDelay(failedAttempts: number): number | null {
+  if (!Number.isSafeInteger(failedAttempts) || failedAttempts < 0) return null
+  return APP_UPDATE_DOWNLOAD_RETRY_DELAYS_MS[failedAttempts] ?? null
+}
+
+export function canRetryAppUpdateDownload(
+  snapshot: Pick<AppUpdateSnapshot, 'stage' | 'error'>
+): boolean {
+  return snapshot.stage === 'error' && snapshot.error === 'download-failed'
+}
+
+export function isAllowedAppUpdateDownloadUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    const host = parsed.hostname.toLowerCase()
+    return (
+      parsed.protocol === 'https:' &&
+      (host === 'github.com' ||
+        host === 'objects.githubusercontent.com' ||
+        host.endsWith('.githubusercontent.com'))
+    )
+  } catch {
+    return false
+  }
 }

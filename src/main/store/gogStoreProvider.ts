@@ -29,7 +29,7 @@ async function queryGog(
   const url = new URL('https://catalog.gog.com/v1/catalog')
   url.searchParams.set('query', name)
   url.searchParams.set('countryCode', region.countryCode)
-  url.searchParams.set('locale', region.locale)
+  url.searchParams.set('locale', region.contentLocale ?? region.locale)
   url.searchParams.set('currencyCode', region.currency)
   url.searchParams.set('limit', String(limit))
   const response = await fetchWithElectronNet(url, {

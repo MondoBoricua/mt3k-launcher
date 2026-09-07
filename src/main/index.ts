@@ -22,7 +22,7 @@ import {
   suspendBackgroundAgent
 } from './orbitBackgroundServiceSuspension'
 import { scheduleBackgroundAgentRecovery } from './orbitBackgroundServiceRecovery'
-import { BACKGROUND_SERVICE_WATCHDOG_RETRY_EXIT_CODE } from './orbitBackgroundServiceWatchdog'
+import { safeExternalHttpsUrl } from '@shared/externalUrl'
 import {
   getOrbitBackgroundServiceLoginItemInstallation
 } from './orbitBackgroundServiceLoginItem'
@@ -32,7 +32,9 @@ const isBackgroundAgentShutdown = hasOrbitProcessArgument(
   process.argv,
   ORBIT_AGENT_SHUTDOWN_ARGUMENT
 )
-const isHeadlessProcess = isBackgroundAgent || isBackgroundAgentShutdown
+const isHeadlessProcess = isBackgroundAgentShutdown
+// Old login entries now open the integrated app instead of spawning another agent.
+const startInBackground = isBackgroundAgent || process.argv.includes('--orbit-background')
 const MAINTENANCE_SHUTDOWN_TIMEOUT_MS = 8_000
 const MAINTENANCE_STOP_CONFIRMATIONS = 3
 
@@ -174,6 +176,9 @@ if (isHeadlessProcess) {
   app.commandLine.appendSwitch('disable-gpu')
   app.commandLine.appendSwitch('disable-software-rasterizer')
 } else {
+  // ORBIT is a controller-first media launcher. Title music begins from spatial
+  // navigation, which does not count as a Chromium pointer activation.
+  app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
   protocol.registerSchemesAsPrivileged([
     { scheme: 'orbit-image', privileges: { supportFetchAPI: true, bypassCSP: true, corsEnabled: true } },
     {
@@ -198,18 +203,12 @@ function createWindow(registerIpcHandlers: (window: BrowserWindow) => void): Bro
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+    if (!startInBackground) mainWindow.show()
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    try {
-      const parsed = new URL(url)
-      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
-        void shell.openExternal(parsed.toString())
-      }
-    } catch {
-      // Ignore malformed and non-web URLs from renderer content.
-    }
+    const safeUrl = safeExternalHttpsUrl(url)
+    if (safeUrl) void shell.openExternal(safeUrl)
     return { action: 'deny' }
   })
 
@@ -238,7 +237,10 @@ async function startOrbitUi(): Promise<void> {
     { startOrbitAppCommandServer },
     { revealOrbitWindow },
     { startupVideoService },
-    { homeWallpaperService }
+    { homeWallpaperService },
+    { launcherMusicService },
+    { customUiAudioService },
+    { handleTitleMusicMediaRequest }
   ] =
     await Promise.all([
       import('./ipcHandlers'),
@@ -246,7 +248,10 @@ async function startOrbitUi(): Promise<void> {
       import('./orbitAppCommands'),
       import('./orbitWindow'),
       import('./startupVideoService'),
-      import('./homeWallpaperService')
+      import('./homeWallpaperService'),
+      import('./launcherMusicService'),
+      import('./customUiAudioService'),
+      import('./titleMusic/titleMusicProtocol')
     ])
 
   // The AppX package already supplies the shell identity used by Xbox Mode.
@@ -263,10 +268,14 @@ async function startOrbitUi(): Promise<void> {
     return net.fetch(pathToFileURL(join(getCacheDir(), fileName)).toString())
   })
 
-  protocol.handle('orbit-media', (request) => {
+  protocol.handle('orbit-media', async (request) => {
+    const titleMusicResponse = handleTitleMusicMediaRequest(request)
+    if (titleMusicResponse) return titleMusicResponse
     const filePath =
       startupVideoService.resolveRequestPath(request.url) ??
-      homeWallpaperService.resolveRequestPath(request.url)
+      homeWallpaperService.resolveRequestPath(request.url) ??
+      await launcherMusicService.resolveRequestPath(request.url) ??
+      await customUiAudioService.resolveRequestPath(request.url)
     if (!filePath) return new Response(null, { status: 404 })
     return net.fetch(pathToFileURL(filePath).toString(), { headers: request.headers })
   })
@@ -279,7 +288,8 @@ async function startOrbitUi(): Promise<void> {
   const closeCommandServer = await startOrbitAppCommandServer(mainWindow)
   app.once('before-quit', () => void closeCommandServer())
 
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    if (argv.includes('--orbit-background') || hasOrbitProcessArgument(argv, ORBIT_AGENT_ARGUMENT)) return
     const window = BrowserWindow.getAllWindows()[0]
     if (window) void revealOrbitWindow(window)
   })
@@ -297,16 +307,6 @@ if (isBackgroundAgentShutdown) {
       else app.exit(2)
     })
     .catch(() => app.exit(2))
-} else if (isBackgroundAgent) {
-  void app.whenReady().then(async () => {
-    try {
-      const { startOrbitBackgroundAgent } = await import('./orbitBackgroundAgent')
-      await startOrbitBackgroundAgent()
-    } catch (error) {
-      console.error('[background-service] Failed to start:', error)
-      app.exit(BACKGROUND_SERVICE_WATCHDOG_RETRY_EXIT_CODE)
-    }
-  })
 } else {
   const hasSingleInstanceLock = app.requestSingleInstanceLock()
   if (!hasSingleInstanceLock) {

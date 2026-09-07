@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useGamepadNavigation } from '@renderer/hooks/useGamepadNavigation'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import { useAuthStore } from '@renderer/state/authStore'
 import { useEpicAuthStore } from '@renderer/state/epicAuthStore'
 import { usePlayStationStore } from '@renderer/state/playstationStore'
+import { useXboxAuthStore } from '@renderer/state/xboxAuthStore'
 import { useNavigationStore } from '@renderer/state/navigationStore'
 import { useLibraryCollectionsStore } from '@renderer/state/libraryCollectionsStore'
+import { useLibraryStore } from '@renderer/state/libraryStore'
+import { useStoreStore } from '@renderer/state/storeStore'
+import { useSyncStore } from '@renderer/state/syncStore'
 import { useAppUpdateStore } from '@renderer/state/appUpdateStore'
-import { OnboardingFlow } from '@renderer/views/Onboarding/OnboardingFlow'
-import { MainShell } from '@renderer/components/MainShell'
+import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 import { installPointerUiSounds } from '@renderer/lib/uiAudio'
 import { NotificationCenter } from '@renderer/components/NotificationCenter'
 import { StartupAnimation } from '@renderer/components/StartupAnimation'
@@ -18,14 +21,49 @@ import {
   readCachedStartupVideoUrl
 } from '@renderer/lib/startupAnimationPreference'
 import type { StartupAnimationMode } from '@shared/ipc'
-import { GamepadKeyboard } from '@renderer/components/GamepadKeyboard'
-import { MediaKeyboardOverlay } from '@renderer/components/MediaKeyboardOverlay'
+
+let onboardingFlowModulePromise:
+  | Promise<typeof import('@renderer/views/Onboarding/OnboardingFlow')>
+  | undefined
+let mainShellModulePromise: Promise<typeof import('@renderer/components/MainShell')> | undefined
+
+function loadOnboardingFlowModule(): Promise<
+  typeof import('@renderer/views/Onboarding/OnboardingFlow')
+> {
+  onboardingFlowModulePromise ??= import('@renderer/views/Onboarding/OnboardingFlow')
+  return onboardingFlowModulePromise
+}
+
+function loadMainShellModule(): Promise<typeof import('@renderer/components/MainShell')> {
+  mainShellModulePromise ??= import('@renderer/components/MainShell')
+  return mainShellModulePromise
+}
+
+const OnboardingFlow = lazy(() =>
+  loadOnboardingFlowModule().then((module) => ({
+    default: module.OnboardingFlow
+  }))
+)
+const MainShell = lazy(() =>
+  loadMainShellModule().then((module) => ({ default: module.MainShell }))
+)
+const GamepadKeyboard = lazy(() =>
+  import('@renderer/components/GamepadKeyboard').then((module) => ({
+    default: module.GamepadKeyboard
+  }))
+)
+const MediaKeyboardOverlay = lazy(() =>
+  import('@renderer/components/MediaKeyboardOverlay').then((module) => ({
+    default: module.MediaKeyboardOverlay
+  }))
+)
 
 const STARTUP_TOTAL_MS = 1_500
 const STARTUP_EXIT_MS = 180
 const STARTUP_MIN_VISIBLE_MS = STARTUP_TOTAL_MS - STARTUP_EXIT_MS
 const STARTUP_REDUCED_MOTION_MS = 100
 const CUSTOM_STARTUP_MAX_MS = 15_000
+const ACCOUNT_RESTORE_STARTUP_BUDGET_MS = 250
 
 type StartupPhase = 'playing' | 'leaving' | 'hidden'
 
@@ -53,8 +91,10 @@ function OrbitApp(): JSX.Element | null {
   const restoreAuth = useAuthStore((s) => s.restore)
   const restoreEpicAuth = useEpicAuthStore((s) => s.restore)
   const restorePlayStation = usePlayStationStore((s) => s.restore)
+  const restoreXboxAuth = useXboxAuthStore((s) => s.restore)
   const hydrateLibraryCollections = useLibraryCollectionsStore((s) => s.hydrate)
   const initAppUpdates = useAppUpdateStore((s) => s.init)
+  const initOrbitPlus = useOrbitPlusStore((s) => s.init)
   const phase = useNavigationStore((s) => s.phase)
   const setPhase = useNavigationStore((s) => s.setPhase)
 
@@ -62,19 +102,65 @@ function OrbitApp(): JSX.Element | null {
 
   useEffect(() => installPointerUiSounds(), [])
 
+  useEffect(
+    () => () => {
+      useOrbitPlusStore.getState().dispose()
+    },
+    []
+  )
+
+  useEffect(() => {
+    const syncAppearance = (): void => {
+      usePreferencesStore.getState().syncOrbitPlusAppearance()
+    }
+    syncAppearance()
+    return useOrbitPlusStore.subscribe((state, previousState) => {
+      if (state.snapshot !== previousState.snapshot) syncAppearance()
+    })
+  }, [])
+
   useEffect(() => {
     async function bootstrap(): Promise<void> {
+      const accountRestores = Promise.allSettled([
+        restoreAuth(),
+        restoreEpicAuth(),
+        restorePlayStation(),
+        restoreXboxAuth()
+      ])
       const [settings] = await Promise.all([
-        window.api.settings.get(),
         hydratePreferences(),
         hydrateLibraryCollections(),
         initAppUpdates(),
-        restoreAuth(),
-        restoreEpicAuth(),
-        restorePlayStation()
+        initOrbitPlus()
       ])
+      const accountRestoreState = await Promise.race([
+        accountRestores.then(() => 'ready' as const),
+        new Promise<'deferred'>((resolve) =>
+          window.setTimeout(() => resolve('deferred'), ACCOUNT_RESTORE_STARTUP_BUDGET_MS)
+        )
+      ])
+
+      if (settings.hasCompletedOnboarding) {
+        // Prepare the real first frame while the startup layer still owns the screen.
+        // These IPC reads hydrate local snapshots only; provider reconciliation and
+        // artwork continue asynchronously after the shell has become interactive.
+        const localSnapshotsReady = Promise.allSettled([
+          useLibraryStore.getState().init(),
+          useStoreStore.getState().init(),
+          useSyncStore.getState().init()
+        ])
+        await Promise.all([loadMainShellModule(), localSnapshotsReady])
+      } else {
+        await loadOnboardingFlowModule()
+      }
+
       setPhase(settings.hasCompletedOnboarding ? 'main' : 'onboarding')
       setReady(true)
+      if (accountRestoreState === 'deferred' && settings.hasCompletedOnboarding) {
+        // Slow/offline provider validation must not hold the first frame hostage.
+        // Reconcile once more when it finishes so no provider functionality is lost.
+        void accountRestores.then(() => useLibraryStore.getState().scheduleRefresh())
+      }
     }
     void bootstrap()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -134,7 +220,11 @@ function OrbitApp(): JSX.Element | null {
         className="orbit-app-content h-full w-full"
         aria-hidden={!ready || startupPhase !== 'hidden'}
       >
-        {ready && (phase === 'onboarding' ? <OnboardingFlow /> : <MainShell />)}
+        {ready && (
+          <Suspense fallback={<AppLoadingFallback />}>
+            {phase === 'onboarding' ? <OnboardingFlow /> : <MainShell />}
+          </Suspense>
+        )}
         {ready && <NotificationCenter />}
       </div>
 
@@ -147,14 +237,34 @@ function OrbitApp(): JSX.Element | null {
           onCustomVideoError={fallbackToOrbitStartup}
         />
       )}
-      <GamepadKeyboard />
+      <Suspense fallback={null}>
+        <GamepadKeyboard />
+      </Suspense>
     </div>
   )
 }
 
 function App(): JSX.Element | null {
   const mode = new URLSearchParams(window.location.search).get('orbitMode')
-  return mode === 'media-keyboard' ? <MediaKeyboardOverlay /> : <OrbitApp />
+  return mode === 'media-keyboard' ? (
+    <Suspense fallback={null}>
+      <MediaKeyboardOverlay />
+    </Suspense>
+  ) : (
+    <OrbitApp />
+  )
+}
+
+function AppLoadingFallback(): JSX.Element {
+  return (
+    <div
+      role="status"
+      aria-label="ORBIT"
+      className="flex h-full w-full items-center justify-center bg-base"
+    >
+      <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/15 border-t-accent" />
+    </div>
+  )
 }
 
 export default App

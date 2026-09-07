@@ -21,6 +21,7 @@ import {
 import {
   deriveEpicDownloadActivity,
   deriveSteamDownloadActivity,
+  hasEpicPendingDownloadSettled,
   isSteamDownloadComplete,
   isSteamDownloadFailed,
   parseEpicDownloadSample,
@@ -220,6 +221,7 @@ async function latestEpicDiskActivity(sample: EpicDownloadSample): Promise<numbe
 
 export class LauncherDownloadMonitor extends EventEmitter {
   private running = false
+  private pollingPaused = false
   private timer: ReturnType<typeof setTimeout> | undefined
   private steamAppsDirectories: string[] | undefined
   private steamDirectoriesCheckedAt = 0
@@ -255,6 +257,7 @@ export class LauncherDownloadMonitor extends EventEmitter {
   stop(): void {
     if (!this.running) return
     this.running = false
+    this.pollingPaused = false
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
     this.steamAppsDirectories = undefined
@@ -294,8 +297,25 @@ export class LauncherDownloadMonitor extends EventEmitter {
     }
   }
 
-  private schedule(delay: number): void {
+  setPollingPaused(paused: boolean): void {
+    if (this.pollingPaused === paused) return
+    this.pollingPaused = paused
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = undefined
     if (!this.running) return
+    if (paused) {
+      // The WinRT PackageCatalog bridge is a persistent PowerShell runtime.
+      // While a game owns the screen its current snapshot is sufficient; stop
+      // the helper completely and recover exact live events on return.
+      xboxPackageActivityMonitor.stop()
+      return
+    }
+    xboxPackageActivityMonitor.start()
+    this.schedule(350)
+  }
+
+  private schedule(delay: number): void {
+    if (!this.running || this.pollingPaused) return
     this.timer = setTimeout(() => void this.scanAndSchedule(), delay)
   }
 
@@ -356,10 +376,7 @@ export class LauncherDownloadMonitor extends EventEmitter {
 
     if (event.phase === 'completed' || event.phase === 'error') {
       this.xboxRequestedActivities.delete(id)
-      this.terminalActivities.set(
-        id,
-        terminalActivity(activity, event.phase === 'error' ? 'error' : 'completed', now)
-      )
+      this.setTerminalActivity(activity, event.phase === 'error' ? 'error' : 'completed', now)
     } else {
       this.terminalActivities.delete(id)
       this.xboxRequestedActivities.set(id, activity)
@@ -432,9 +449,10 @@ export class LauncherDownloadMonitor extends EventEmitter {
     if (state.terminal) {
       this.xboxActivities.delete(activity.id)
       this.xboxTransitionExpiries.delete(activity.id)
-      this.terminalActivities.set(
-        activity.id,
-        terminalActivity(activity, activity.phase === 'error' ? 'error' : 'completed', now)
+      this.setTerminalActivity(
+        activity,
+        activity.phase === 'error' ? 'error' : 'completed',
+        now
       )
     } else {
       this.terminalActivities.delete(activity.id)
@@ -513,10 +531,7 @@ export class LauncherDownloadMonitor extends EventEmitter {
                 const now = Date.now()
                 this.xboxActivities.delete(activityId)
                 this.xboxTransitionExpiries.delete(activityId)
-                this.terminalActivities.set(
-                  activityId,
-                  terminalActivity(activity, 'completed', now)
-                )
+                this.setTerminalActivity(activity, 'completed', now)
                 this.publish(now)
               }
             }
@@ -598,9 +613,9 @@ export class LauncherDownloadMonitor extends EventEmitter {
       const previous = this.steamActivities.get(sample.id)
       if (!previous) continue
       if (isSteamDownloadFailed(sample)) {
-        this.terminalActivities.set(sample.id, terminalActivity(previous, 'error', now))
+        this.setTerminalActivity(previous, 'error', now)
       } else if (isSteamDownloadComplete(sample)) {
-        this.terminalActivities.set(sample.id, terminalActivity(previous, 'completed', now))
+        this.setTerminalActivity(previous, 'completed', now)
       } else if (now - previous.updatedAt <= TRANSIENT_FILE_GRACE_MS) {
         next.set(previous.id, previous)
       }
@@ -634,11 +649,29 @@ export class LauncherDownloadMonitor extends EventEmitter {
 
     for (const previous of this.epicActivities.values()) {
       if (samples.has(previous.id)) continue
-      if (now - previous.updatedAt <= TRANSIENT_FILE_GRACE_MS) {
+      if (!hasEpicPendingDownloadSettled(previous.updatedAt, now, TRANSIENT_FILE_GRACE_MS)) {
         next.set(previous.id, previous)
+      } else {
+        // Epic removes the Pending manifest only after the install transaction
+        // settles. Treat that transition like Steam/Xbox completion so the
+        // durable library is reconciled without requiring an ORBIT restart.
+        this.setTerminalActivity(previous, 'completed', now)
       }
     }
     this.epicActivities = next
+  }
+
+  private setTerminalActivity(
+    activity: LauncherDownloadActivity,
+    phase: 'completed' | 'error',
+    now: number
+  ): void {
+    const previousPhase = this.terminalActivities.get(activity.id)?.activity.phase
+    const terminal = terminalActivity(activity, phase, now)
+    this.terminalActivities.set(activity.id, terminal)
+    if (phase === 'completed' && previousPhase !== 'completed') {
+      this.emit('completed', { ...terminal.activity })
+    }
   }
 
   private publish(now: number): void {

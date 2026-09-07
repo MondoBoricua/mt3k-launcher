@@ -1,3 +1,4 @@
+import { type Language, languageLocale } from '@shared/language'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -12,6 +13,7 @@ import {
   Layers3,
   LayoutTemplate,
   LibraryBig,
+  LockKeyhole,
   Loader2,
   Palette,
   Play,
@@ -33,6 +35,7 @@ import type {
   ThemeId,
   UiDensity
 } from '@shared/ipc'
+import { isOrbitPlusThemeId, orbitPlusHasFeature } from '@shared/ipc'
 import { latestLibraryActivity } from '@shared/libraryTime'
 import { FocusableButton } from '@renderer/components/FocusableButton'
 import { DiscordMark } from '@renderer/components/DiscordMark'
@@ -40,6 +43,7 @@ import { GameImage } from '@renderer/components/GameImage'
 import { HardwareControlPanel } from '@renderer/components/HardwareControlPanel'
 import { OrbitBackgroundServicePanel } from '@renderer/components/OrbitBackgroundServicePanel'
 import { OrbitWallpaperPanel } from '@renderer/components/OrbitWallpaperPanel'
+import { OrbitPlusPanel } from '@renderer/components/OrbitPlusPanel'
 import { ProfileAvatarPicker } from '@renderer/components/ProfileAvatar'
 import { useAutoFocus } from '@renderer/hooks/useAutoFocus'
 import { useBackHandler } from '@renderer/hooks/useBackHandler'
@@ -60,9 +64,10 @@ import {
 } from '@renderer/state/preferencesStore'
 import { useSyncStore } from '@renderer/state/syncStore'
 import { useControllerButtonLabels } from '@renderer/state/controllerStore'
+import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 import { OnboardingBackdrop, OrbitMark } from './OnboardingChrome'
 
-type SetupPage = 'libraries' | 'personalize' | 'hardware' | 'ready'
+type SetupPage = 'libraries' | 'personalize' | 'plus' | 'hardware' | 'ready'
 
 interface Props {
   syncBaselineStartedAt?: number
@@ -70,7 +75,7 @@ interface Props {
   onFinish: () => void
 }
 
-const PAGE_ORDER: SetupPage[] = ['libraries', 'personalize', 'hardware', 'ready']
+const PAGE_ORDER: SetupPage[] = ['libraries', 'personalize', 'plus', 'hardware', 'ready']
 const ORBIT_DISCORD_INVITE_URL = 'https://discord.gg/QdsbSwgxB6'
 
 const THEME_SWATCH: Record<ThemeId, string> = {
@@ -86,7 +91,13 @@ const THEME_SWATCH: Record<ThemeId, string> = {
   crimson: 'from-[#fb7185] to-[#f59e0b]',
   ice: 'from-[#bae6fd] to-[#60a5fa]',
   lime: 'from-[#a3e635] to-[#2dd4bf]',
-  monochrome: 'from-[#f4f4f5] to-[#71717a]'
+  monochrome: 'from-[#f4f4f5] to-[#71717a]',
+  cobalt: 'from-[#316fff] to-[#60d9ff]',
+  ultraviolet: 'from-[#8b5cf6] to-[#3b82f6]',
+  magenta: 'from-[#e879f9] to-[#fb7185]',
+  tangerine: 'from-[#f97316] to-[#facc15]',
+  mint: 'from-[#6ee7b7] to-[#7dd3fc]',
+  copper: 'from-[#d97757] to-[#fbbf24]'
 }
 
 const HOME_LAYOUT_SHORT_KEYS: Record<HomeLayoutId, TranslationKey> = {
@@ -144,8 +155,8 @@ function previewUrl(game: LibraryGame): string | undefined {
   )
 }
 
-function hours(minutes: number, language: 'en' | 'de'): string {
-  return new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', {
+function hours(minutes: number, language: Language): string {
+  return new Intl.NumberFormat(languageLocale(language), {
     maximumFractionDigits: minutes < 600 ? 1 : 0
   }).format(minutes / 60)
 }
@@ -529,6 +540,8 @@ export function OnboardingSuccess({
                 />
               )}
 
+              {page === 'plus' && <OrbitPlusPanel context="onboarding" />}
+
               {page === 'hardware' && <HardwarePage />}
 
               {page === 'ready' && (
@@ -861,7 +874,7 @@ interface PersonalizePageProps {
   gameCardSize: GameCardSize
   backdropIntensity: BackdropIntensity
   uiDensity: UiDensity
-  language: 'en' | 'de'
+  language: Language
   region: StoreRegionId
   audioPreset: AudioPreset
   onTheme: (value: ThemeId) => void
@@ -871,7 +884,7 @@ interface PersonalizePageProps {
   onGameCardSize: (value: GameCardSize) => void
   onBackdropIntensity: (value: BackdropIntensity) => void
   onDensity: (value: UiDensity) => void
-  onLanguage: (value: 'en' | 'de') => void
+  onLanguage: (value: Language) => void
   onRegion: (value: StoreRegionId) => void
   onAudio: (value: AudioPreset) => void
 }
@@ -901,6 +914,9 @@ function PersonalizePage({
   onAudio
 }: PersonalizePageProps): JSX.Element {
   const t = useT()
+  const appearanceUnlocked = useOrbitPlusStore((state) =>
+    orbitPlusHasFeature(state.snapshot, 'premium-appearance')
+  )
   return (
     <div className="space-y-4">
       <div className="onboarding-section-title">
@@ -956,35 +972,47 @@ function PersonalizePage({
           <SetupPanel icon={<Palette size={16} />} title={t('settings.theme.title')}>
             <div className="grid grid-cols-5 gap-2 sm:grid-cols-7">
               {THEME_OPTIONS.map((option) => {
-                const active = theme === option.id
+                const premium = isOrbitPlusThemeId(option.id)
+                const locked = premium && !appearanceUnlocked
+                const active = theme === option.id && !locked
                 return (
                   <button
                     key={option.id}
                     data-focusable
                     data-theme-choice
+                    data-disabled={locked ? 'true' : undefined}
                     type="button"
-                    title={option.label}
-                    aria-label={option.label}
+                    disabled={locked}
+                    title={premium ? `${option.label} · ORBIT Plus` : option.label}
+                    aria-label={premium ? `${option.label}, ORBIT Plus` : option.label}
+                    aria-disabled={locked || undefined}
                     aria-pressed={active}
                     onClick={() => onTheme(option.id)}
-                    className="group flex min-w-0 flex-col items-center gap-1.5 rounded-xl p-1.5"
+                    className={`group flex min-w-0 flex-col items-center gap-1.5 rounded-xl p-1.5 ${locked ? 'cursor-not-allowed opacity-65' : ''}`}
                   >
                     <span
                       className={`theme-swatch-orb relative h-10 w-10 rounded-full border bg-gradient-to-br ${THEME_SWATCH[option.id]} ${
                         active
                           ? 'border-white/90 shadow-[0_0_0_3px_rgb(var(--color-accent)/0.28)]'
-                          : 'border-white/15'
+                          : locked
+                            ? 'border-amber-200/35 grayscale-[0.2]'
+                            : 'border-white/15'
                       }`}
                     >
-                      {active && (
-                        <span className="absolute inset-0 flex items-center justify-center text-white drop-shadow-lg">
-                          <Check size={15} strokeWidth={3} />
+                      {(active || locked) && (
+                        <span className={`absolute inset-0 flex items-center justify-center drop-shadow-lg ${locked ? 'text-amber-100' : 'text-white'}`}>
+                          {locked ? <LockKeyhole size={14} /> : <Check size={15} strokeWidth={3} />}
                         </span>
                       )}
                     </span>
                     <span className="w-full truncate text-center text-[9px] text-white/48">
                       {option.label}
                     </span>
+                    {premium && (
+                      <span className="text-[7px] font-black uppercase tracking-wider text-amber-200/80">
+                        PLUS
+                      </span>
+                    )}
                   </button>
                 )
               })}

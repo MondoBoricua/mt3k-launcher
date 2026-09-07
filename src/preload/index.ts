@@ -26,7 +26,11 @@ import {
   type GameCompletionTimes,
   type GameAchievementsSnapshot,
   type GameLaunchStatus,
+  type GameMetadataSyncResult,
+  type GameMetadataUpdateInput,
+  type GeForceNowCatalogSnapshot,
   type HardwareControlStatus,
+  type HomeWallpaperAsset,
   type ImageOrientation,
   type ImageUpdate,
   type LibrarySnapshot,
@@ -36,10 +40,16 @@ import {
   type MediaKeyboardUpdatePayload,
   type MediaOverlayHintPayload,
   type LauncherDownloadSnapshot,
+  type CustomLauncherMusic,
+  type AudioCueId,
+  type CustomUiAudioCue,
+  type CustomUiAudioCues,
   type LocalGameBackupResult,
   type OrbitBackgroundServiceAction,
   type OrbitBackgroundServiceStatus,
   type OrbitApplicationSnapshot,
+  type OrbitPlusConnectionStatus,
+  type OrbitPlusSnapshot,
   type OrbitSettings,
   type OrbitWallpaperApplyResult,
   type PlayStationAccount,
@@ -68,7 +78,9 @@ import {
   type SystemSettingsTarget,
   type SystemStatusSnapshot,
   type SystemUpdateSnapshot,
-  type SystemSyncStatus
+  type SystemSyncStatus,
+  type XboxConnectionSnapshot,
+  type XboxLoginStatus
 } from '@shared/ipc'
 
 const orbitApi = {
@@ -77,14 +89,47 @@ const orbitApi = {
     set: (partial: Partial<OrbitSettings>): Promise<OrbitSettings> =>
       ipcRenderer.invoke(IPC.settingsSet, partial)
   },
+  orbitPlus: {
+    get: (): Promise<OrbitPlusSnapshot> => ipcRenderer.invoke(IPC.orbitPlusGet),
+    refresh: (): Promise<OrbitPlusSnapshot> => ipcRenderer.invoke(IPC.orbitPlusRefresh),
+    connectPatreon: (): Promise<OrbitPlusSnapshot> =>
+      ipcRenderer.invoke(IPC.orbitPlusPatreonConnect),
+    cancelPatreon: (): Promise<OrbitPlusSnapshot> =>
+      ipcRenderer.invoke(IPC.orbitPlusPatreonCancel),
+    setOwnerTestAccess: (enabled: boolean): Promise<OrbitPlusSnapshot> =>
+      ipcRenderer.invoke(IPC.orbitPlusOwnerTestSet, enabled),
+    disconnect: (): Promise<OrbitPlusSnapshot> => ipcRenderer.invoke(IPC.orbitPlusDisconnect),
+    onStatus: (callback: (status: OrbitPlusConnectionStatus) => void): (() => void) => {
+      const listener = (
+        _e: Electron.IpcRendererEvent,
+        status: OrbitPlusConnectionStatus
+      ): void => callback(status)
+      ipcRenderer.on(IPC.orbitPlusStatus, listener)
+      return () => ipcRenderer.removeListener(IPC.orbitPlusStatus, listener)
+    }
+  },
   profileAvatar: {
     getCustom: (): Promise<string | null> => ipcRenderer.invoke(IPC.profileAvatarGetCustom),
     selectCustom: (): Promise<string | null> => ipcRenderer.invoke(IPC.profileAvatarSelectCustom)
   },
   homeWallpaper: {
-    get: (): Promise<string | null> => ipcRenderer.invoke(IPC.homeWallpaperGet),
-    select: (): Promise<string | null> => ipcRenderer.invoke(IPC.homeWallpaperSelect),
+    get: (): Promise<HomeWallpaperAsset | null> => ipcRenderer.invoke(IPC.homeWallpaperGet),
+    select: (): Promise<HomeWallpaperAsset | null> => ipcRenderer.invoke(IPC.homeWallpaperSelect),
     clear: (): Promise<void> => ipcRenderer.invoke(IPC.homeWallpaperClear)
+  },
+  launcherMusic: {
+    getCustom: (): Promise<CustomLauncherMusic | null> =>
+      ipcRenderer.invoke(IPC.launcherMusicGetCustom),
+    selectCustom: (): Promise<CustomLauncherMusic | null> =>
+      ipcRenderer.invoke(IPC.launcherMusicSelectCustom),
+    clearCustom: (): Promise<void> => ipcRenderer.invoke(IPC.launcherMusicClearCustom)
+  },
+  uiAudio: {
+    getCustom: (): Promise<CustomUiAudioCues> => ipcRenderer.invoke(IPC.uiAudioGetCustom),
+    selectCustom: (cueId: AudioCueId): Promise<CustomUiAudioCue | null> =>
+      ipcRenderer.invoke(IPC.uiAudioSelectCustom, cueId),
+    clearCustom: (cueId: AudioCueId): Promise<void> =>
+      ipcRenderer.invoke(IPC.uiAudioClearCustom, cueId)
   },
   retroAchievements: {
     credentials: {
@@ -234,6 +279,19 @@ const orbitApi = {
       return () => ipcRenderer.removeListener(IPC.playstationLoginStatus, listener)
     }
   },
+  xbox: {
+    getConnection: (): Promise<XboxConnectionSnapshot> =>
+      ipcRenderer.invoke(IPC.xboxGetConnection),
+    startLogin: (): Promise<void> => ipcRenderer.invoke(IPC.xboxLoginStart),
+    cancelLogin: (): Promise<void> => ipcRenderer.invoke(IPC.xboxLoginCancel),
+    logout: (): Promise<void> => ipcRenderer.invoke(IPC.xboxLogout),
+    onStatus: (callback: (status: XboxLoginStatus) => void): (() => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, status: XboxLoginStatus): void =>
+        callback(status)
+      ipcRenderer.on(IPC.xboxLoginStatus, listener)
+      return () => ipcRenderer.removeListener(IPC.xboxLoginStatus, listener)
+    }
+  },
   friends: {
     get: (): Promise<FriendsSnapshot> => ipcRenderer.invoke(IPC.friendsGet),
     refresh: (): Promise<FriendsSnapshot> => ipcRenderer.invoke(IPC.friendsRefresh),
@@ -278,6 +336,12 @@ const orbitApi = {
       ipcRenderer.invoke(IPC.libraryGameExclude, gameId),
     restore: (gameId: string): Promise<LibrarySnapshot> =>
       ipcRenderer.invoke(IPC.libraryGameRestore, gameId),
+    metadata: {
+      update: (input: GameMetadataUpdateInput): Promise<LibrarySnapshot> =>
+        ipcRenderer.invoke(IPC.libraryGameMetadataUpdate, input),
+      sync: (gameId: string): Promise<GameMetadataSyncResult> =>
+        ipcRenderer.invoke(IPC.libraryGameMetadataSync, gameId)
+    },
     custom: {
       beginImport: (source: CustomGameImportSource): Promise<CustomGameDraft | null> =>
         ipcRenderer.invoke(IPC.customGameBeginImport, source),
@@ -344,6 +408,25 @@ const orbitApi = {
       return () => ipcRenderer.removeListener(IPC.libraryUpdated, listener)
     }
   },
+  geforceNow: {
+    getCatalog: (): Promise<GeForceNowCatalogSnapshot> =>
+      ipcRenderer.invoke(IPC.geforceNowCatalogGet),
+    refreshCatalog: (): Promise<GeForceNowCatalogSnapshot> =>
+      ipcRenderer.invoke(IPC.geforceNowCatalogRefresh),
+    launchGame: (gameId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.geforceNowGameLaunch, gameId),
+    openInBrowser: (): Promise<void> => ipcRenderer.invoke(IPC.geforceNowOpenBrowser),
+    onCatalogUpdated: (
+      callback: (snapshot: GeForceNowCatalogSnapshot) => void
+    ): (() => void) => {
+      const listener = (
+        _e: Electron.IpcRendererEvent,
+        snapshot: GeForceNowCatalogSnapshot
+      ): void => callback(snapshot)
+      ipcRenderer.on(IPC.geforceNowCatalogUpdated, listener)
+      return () => ipcRenderer.removeListener(IPC.geforceNowCatalogUpdated, listener)
+    }
+  },
   downloads: {
     get: (): Promise<LauncherDownloadSnapshot> => ipcRenderer.invoke(IPC.launcherDownloadsGet),
     onUpdated: (callback: (snapshot: LauncherDownloadSnapshot) => void): (() => void) => {
@@ -367,6 +450,10 @@ const orbitApi = {
       ipcRenderer.on(IPC.gameLaunchStatus, listener)
       return () => ipcRenderer.removeListener(IPC.gameLaunchStatus, listener)
     },
+    resolveTrailer: (gameId: string): Promise<import('../shared/gameTrailer').GameTrailer | null> =>
+      ipcRenderer.invoke(IPC.gameTrailerResolve, gameId),
+    resolveTitleMusic: (gameId: string): Promise<import('../shared/gameTitleMusic').GameTitleMusic | null> =>
+      ipcRenderer.invoke(IPC.gameTitleMusicResolve, gameId),
     resolveCompletionTimes: (gameId: string): Promise<GameCompletionTimes | null> =>
       ipcRenderer.invoke(IPC.gameCompletionTimesResolve, gameId),
     resolveAchievements: (

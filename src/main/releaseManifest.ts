@@ -16,6 +16,10 @@ export interface ReleaseManifest {
     autoDownload: boolean
     signerThumbprints: string[]
   }
+  integrations: {
+    /** Public native-app identifier. This is configuration, never a client secret. */
+    xboxClientId?: string
+  }
 }
 
 const fallbackManifest: ReleaseManifest = {
@@ -31,7 +35,8 @@ const fallbackManifest: ReleaseManifest = {
     checkIntervalHours: 6,
     autoDownload: true,
     signerThumbprints: []
-  }
+  },
+  integrations: {}
 }
 
 let cachedManifest: ReleaseManifest | null = null
@@ -46,6 +51,7 @@ export function getReleaseManifest(): ReleaseManifest {
   try {
     const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as Partial<ReleaseManifest>
     const updates = parsed.updates
+    const xboxClientId = parsed.integrations?.xboxClientId
     cachedManifest = {
       displayVersion: parsed.displayVersion || fallbackManifest.displayVersion,
       packageVersion: parsed.packageVersion || app.getVersion(),
@@ -83,6 +89,15 @@ export function getReleaseManifest(): ReleaseManifest {
               .map((thumbprint) => thumbprint.toUpperCase())
               .slice(0, 4)
           : []
+      },
+      integrations: {
+        xboxClientId:
+          typeof xboxClientId === 'string' &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            xboxClientId
+          )
+            ? xboxClientId
+            : undefined
       }
     }
   } catch {

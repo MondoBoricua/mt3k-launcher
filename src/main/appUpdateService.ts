@@ -1,8 +1,18 @@
-import { app, autoUpdater as electronAutoUpdater, type BrowserWindow } from 'electron'
+import { app, autoUpdater as electronAutoUpdater, net, type BrowserWindow } from 'electron'
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+  type FileHandle
+} from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { isAbsolute, join, resolve } from 'node:path'
 import electronUpdater, { type AppUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
@@ -14,7 +24,10 @@ import {
   type GameLaunchPhase
 } from '@shared/ipc'
 import {
+  appUpdateDownloadRetryDelay,
+  canRetryAppUpdateDownload,
   compareAppVersions,
+  isAllowedAppUpdateDownloadUrl,
   isValidAppUpdateContentRange,
   parseGitHubAppUpdateRelease,
   selectLatestBetaRelease,
@@ -45,6 +58,7 @@ const SIGNATURE_TIMEOUT_MS = 30_000
 const DOWNLOAD_CONNECT_TIMEOUT_MS = 30_000
 const DOWNLOAD_STALL_TIMEOUT_MS = 45_000
 const AUTOMATIC_RETRY_MS = 30 * 60 * 1_000
+const MAX_UPDATE_REDIRECTS = 5
 const PENDING_INSTALL_POLL_MS = 500
 const PENDING_INSTALL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000
 const INSTALLER_START_TOLERANCE_MS = 30_000
@@ -102,21 +116,6 @@ function safeReleaseNotes(value: unknown): string | undefined {
   return sanitized || undefined
 }
 
-function isAllowedDownloadResponseUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value)
-    const host = parsed.hostname.toLowerCase()
-    return (
-      parsed.protocol === 'https:' &&
-      (host === 'github.com' ||
-        host === 'objects.githubusercontent.com' ||
-        host.endsWith('.githubusercontent.com'))
-    )
-  } catch {
-    return false
-  }
-}
-
 async function fileSize(path: string): Promise<number> {
   try {
     return (await stat(path)).size
@@ -129,6 +128,75 @@ async function sha256File(path: string): Promise<string> {
   const hash = createHash('sha256')
   for await (const chunk of createReadStream(path)) hash.update(chunk)
   return hash.digest('hex')
+}
+
+async function writeCompleteChunk(file: FileHandle, chunk: Uint8Array): Promise<void> {
+  let offset = 0
+  while (offset < chunk.byteLength) {
+    const { bytesWritten } = await file.write(chunk, offset, chunk.byteLength - offset)
+    if (bytesWritten <= 0) throw new Error('Update download could not be written')
+    offset += bytesWritten
+  }
+}
+
+/** Electron 43 leaves Response.url empty after net.fetch follows a redirect. Resolve
+ * the short-lived GitHub asset URL with ClientRequest so every redirect hop can be
+ * validated, then use net.fetch with redirects disabled for the streamed request. */
+function resolveAllowedDownloadUrl(value: string, signal: AbortSignal): Promise<string> {
+  if (!isAllowedAppUpdateDownloadUrl(value)) {
+    return Promise.reject(new Error('Unsafe update download URL'))
+  }
+  return new Promise((resolvePromise, rejectPromise) => {
+    const request = net.request({
+      method: 'HEAD',
+      url: value,
+      redirect: 'manual',
+      credentials: 'omit'
+    })
+    let settled = false
+    let redirectCount = 0
+    let resolvedUrl = value
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort)
+    const fail = (error: Error): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      rejectPromise(error)
+    }
+    const onAbort = (): void => {
+      request.abort()
+      fail(new Error('Update download aborted'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    request.on('redirect', (_statusCode, method, redirectUrl) => {
+      redirectCount += 1
+      if (
+        redirectCount > MAX_UPDATE_REDIRECTS ||
+        method !== 'HEAD' ||
+        !isAllowedAppUpdateDownloadUrl(redirectUrl)
+      ) {
+        request.abort()
+        fail(new Error('Unsafe update download redirect'))
+        return
+      }
+      resolvedUrl = redirectUrl
+      request.followRedirect()
+    })
+    request.on('response', (response) => {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        request.abort()
+        fail(new Error('Update download URL could not be resolved'))
+        return
+      }
+      if (settled) return
+      settled = true
+      cleanup()
+      resolvePromise(resolvedUrl)
+    })
+    request.on('error', fail)
+    if (signal.aborted) onAbort()
+    else request.end()
+  })
 }
 
 function wait(milliseconds: number): Promise<void> {
@@ -153,6 +221,7 @@ export class AppUpdateService {
   private automaticCheckTimer: NodeJS.Timeout | null = null
   private installTimer: NodeJS.Timeout | null = null
   private downloadAbortController: AbortController | null = null
+  private appxPauseRequested = false
   private nsisDownloadToken: UpdaterCancellationToken | null = null
   private nsisCancellationExpected = false
   private checkInFlight: Promise<AppUpdateSnapshot> | null = null
@@ -230,7 +299,13 @@ export class AppUpdateService {
   }
 
   download(): AppUpdateSnapshot {
-    if (this.disposed || this.snapshot.stage !== 'available') return this.getSnapshot()
+    const retryingInterruptedDownload = canRetryAppUpdateDownload(this.snapshot)
+    if (
+      this.disposed ||
+      (this.snapshot.stage !== 'available' && !retryingInterruptedDownload)
+    ) {
+      return this.getSnapshot()
+    }
     if (this.mode === 'appx') {
       if (!this.release) {
         this.setError('release-invalid')
@@ -269,6 +344,16 @@ export class AppUpdateService {
 
   refreshBlockers(): void {
     this.publish()
+    if (
+      this.mode === 'appx' &&
+      this.snapshot.stage === 'downloading' &&
+      this.isDownloadBlocked() &&
+      this.downloadAbortController &&
+      !this.downloadAbortController.signal.aborted
+    ) {
+      this.appxPauseRequested = true
+      this.downloadAbortController.abort()
+    }
     if (
       this.mode === 'nsis' &&
       this.snapshot.stage === 'downloading' &&
@@ -694,10 +779,6 @@ export class AppUpdateService {
   }
 
   private async performAppxDownload(release: AppUpdateReleaseCandidate): Promise<void> {
-    await mkdir(this.updatesDirectory, { recursive: true })
-    const finalPath = this.updatePath(release.asset.name)
-    const partialPath = `${finalPath}.part`
-    await this.cleanupUpdateCache(new Set([release.asset.name, `${release.asset.name}.part`]))
     this.setSnapshot({
       stage: 'downloading',
       targetVersion: release.version,
@@ -710,6 +791,11 @@ export class AppUpdateService {
     this.lastProgressEmittedAt = 0
 
     try {
+      await mkdir(this.updatesDirectory, { recursive: true })
+      const finalPath = this.updatePath(release.asset.name)
+      const partialPath = `${finalPath}.part`
+      await this.cleanupUpdateCache(new Set([release.asset.name, `${release.asset.name}.part`]))
+
       if ((await fileSize(finalPath)) === release.asset.size) {
         this.setSnapshot({ stage: 'verifying', verification: 'verifying' })
         if (
@@ -743,109 +829,11 @@ export class AppUpdateService {
         this.markReady(release)
         return
       }
-      await this.waitWhileDownloadPaused()
-      this.downloadAbortController = new AbortController()
-      const headers: Record<string, string> = {
-        Accept: 'application/octet-stream',
-        'User-Agent': `ORBIT/${this.snapshot.currentVersion}`
-      }
-      if (transferred > 0) headers.Range = `bytes=${transferred}-`
-      const fetchDownload = async (requestHeaders: Record<string, string>): Promise<Response> => {
-        const timeout = setTimeout(
-          () => this.downloadAbortController?.abort(),
-          DOWNLOAD_CONNECT_TIMEOUT_MS
-        )
-        try {
-          return await fetchWithElectronNet(release.asset.downloadUrl, {
-            headers: requestHeaders,
-            signal: this.downloadAbortController?.signal
-          })
-        } finally {
-          clearTimeout(timeout)
-        }
-      }
-      let response = await fetchDownload(headers)
-      if (
-        transferred > 0 &&
-        (response.status !== 206 ||
-          !isValidAppUpdateContentRange(
-            response.headers.get('content-range'),
-            transferred,
-            release.asset.size
-          ))
-      ) {
-        await rm(partialPath, { force: true })
-        transferred = 0
-        response = await fetchDownload({
-          Accept: 'application/octet-stream',
-          'User-Agent': headers['User-Agent']
-        })
-      }
-      if (
-        response.status !== (transferred > 0 ? 206 : 200) ||
-        !response.body ||
-        !isAllowedDownloadResponseUrl(response.url)
-      ) {
-        throw new Error('Invalid GitHub release download response')
-      }
-      const contentLength = Number(response.headers.get('content-length'))
-      if (
-        Number.isFinite(contentLength) &&
-        contentLength > 0 &&
-        contentLength !== release.asset.size - transferred
-      ) {
-        throw new Error('GitHub release download length does not match manifest')
-      }
+      await this.transferAppxUpdateWithRetries(release, partialPath)
+      if (this.disposed) return
 
-      const file = await open(partialPath, transferred > 0 ? 'a' : 'w')
-      const reader = response.body.getReader()
-      const startedAt = Date.now()
-      const initialTransferred = transferred
-      try {
-        while (true) {
-          await this.waitWhileDownloadPaused()
-          const chunk = await new Promise<ReadableStreamReadResult<Uint8Array>>(
-            (resolveRead, rejectRead) => {
-              const timeout = setTimeout(() => {
-                this.downloadAbortController?.abort()
-                rejectRead(new Error('Update download stalled'))
-              }, DOWNLOAD_STALL_TIMEOUT_MS)
-              reader.read().then(
-                (result) => {
-                  clearTimeout(timeout)
-                  resolveRead(result)
-                },
-                (error) => {
-                  clearTimeout(timeout)
-                  rejectRead(error)
-                }
-              )
-            }
-          )
-          if (chunk.done) break
-          if (!chunk.value || chunk.value.byteLength === 0) continue
-          transferred += chunk.value.byteLength
-          if (transferred > release.asset.size) throw new Error('Update exceeds declared size')
-          await file.write(chunk.value)
-          const now = Date.now()
-          if (now - this.lastProgressEmittedAt >= PROGRESS_EMIT_INTERVAL_MS) {
-            const elapsedSeconds = Math.max(0.25, (now - startedAt) / 1_000)
-            this.lastProgressEmittedAt = now
-            this.setSnapshot({
-              stage: 'downloading',
-              transferredBytes: transferred,
-              totalBytes: release.asset.size,
-              percent: (transferred / release.asset.size) * 100,
-              bytesPerSecond: Math.round((transferred - initialTransferred) / elapsedSeconds)
-            })
-          }
-        }
-      } finally {
-        reader.releaseLock()
-        await file.close()
-      }
-
-      if (transferred !== release.asset.size) throw new Error('Update download is incomplete')
+      const downloadedSize = await fileSize(partialPath)
+      if (downloadedSize !== release.asset.size) throw new Error('Update download is incomplete')
       this.setSnapshot({ stage: 'verifying', verification: 'verifying', bytesPerSecond: undefined })
       const digest = await sha256File(partialPath)
       if (digest !== release.asset.digest) {
@@ -864,14 +852,193 @@ export class AppUpdateService {
       if (!this.disposed) this.setError('download-failed')
     } finally {
       this.downloadAbortController = null
+      this.appxPauseRequested = false
     }
   }
 
-  private async waitWhileDownloadPaused(): Promise<void> {
-    while (
-      !this.disposed &&
-      (this.options.getGameLaunchPhase() !== 'idle' || this.options.hasActiveLauncherDownload())
+  private async transferAppxUpdateWithRetries(
+    release: AppUpdateReleaseCandidate,
+    partialPath: string
+  ): Promise<void> {
+    let failedAttempts = 0
+    while (!this.disposed) {
+      await this.waitWhileDownloadPaused()
+      this.appxPauseRequested = false
+      try {
+        await this.transferAppxUpdateAttempt(release, partialPath)
+        return
+      } catch (error) {
+        this.downloadAbortController?.abort()
+        this.downloadAbortController = null
+        if (this.disposed) throw error
+        if (this.appxPauseRequested) {
+          this.appxPauseRequested = false
+          continue
+        }
+        const retryDelay = appUpdateDownloadRetryDelay(failedAttempts)
+        if (retryDelay === null) throw error
+        failedAttempts += 1
+        const transferred = Math.min(await fileSize(partialPath), release.asset.size)
+        this.setSnapshot({
+          stage: 'downloading',
+          transferredBytes: transferred,
+          totalBytes: release.asset.size,
+          percent: (transferred / release.asset.size) * 100,
+          bytesPerSecond: undefined,
+          error: undefined
+        })
+        await wait(retryDelay)
+      }
+    }
+    throw new Error('Update service disposed')
+  }
+
+  private async transferAppxUpdateAttempt(
+    release: AppUpdateReleaseCandidate,
+    partialPath: string
+  ): Promise<void> {
+    let transferred = await fileSize(partialPath)
+    if (transferred > release.asset.size) {
+      await rm(partialPath, { force: true })
+      transferred = 0
+    }
+    if (transferred === release.asset.size) return
+
+    this.setSnapshot({
+      stage: 'downloading',
+      transferredBytes: transferred,
+      totalBytes: release.asset.size,
+      percent: (transferred / release.asset.size) * 100,
+      bytesPerSecond: undefined
+    })
+    const controller = new AbortController()
+    this.downloadAbortController = controller
+    const headers: Record<string, string> = {
+      Accept: 'application/octet-stream',
+      'User-Agent': `ORBIT/${this.snapshot.currentVersion}`
+    }
+    if (transferred > 0) headers.Range = `bytes=${transferred}-`
+    const fetchDownload = async (requestHeaders: Record<string, string>): Promise<Response> => {
+      const timeout = setTimeout(() => controller.abort(), DOWNLOAD_CONNECT_TIMEOUT_MS)
+      try {
+        const resolvedUrl = await resolveAllowedDownloadUrl(
+          release.asset.downloadUrl,
+          controller.signal
+        )
+        return await fetchWithElectronNet(resolvedUrl, {
+          headers: requestHeaders,
+          signal: controller.signal,
+          credentials: 'omit',
+          redirect: 'error'
+        })
+      } finally {
+        clearTimeout(timeout)
+      }
+    }
+    let response = await fetchDownload(headers)
+    if (
+      transferred > 0 &&
+      (response.status !== 206 ||
+        !isValidAppUpdateContentRange(
+          response.headers.get('content-range'),
+          transferred,
+          release.asset.size
+        ))
     ) {
+      await response.body?.cancel().catch(() => undefined)
+      await rm(partialPath, { force: true })
+      transferred = 0
+      response = await fetchDownload({
+        Accept: 'application/octet-stream',
+        'User-Agent': headers['User-Agent']
+      })
+    }
+    if (
+      response.status !== (transferred > 0 ? 206 : 200) ||
+      !response.body
+    ) {
+      await response.body?.cancel().catch(() => undefined)
+      throw new Error('Invalid GitHub release download response')
+    }
+    const contentLength = Number(response.headers.get('content-length'))
+    if (
+      Number.isFinite(contentLength) &&
+      contentLength > 0 &&
+      contentLength !== release.asset.size - transferred
+    ) {
+      await response.body.cancel().catch(() => undefined)
+      throw new Error('GitHub release download length does not match manifest')
+    }
+
+    const file = await open(partialPath, transferred > 0 ? 'a' : 'w').catch(async (error) => {
+      await response.body?.cancel().catch(() => undefined)
+      throw error
+    })
+    const reader = response.body.getReader()
+    const startedAt = Date.now()
+    const initialTransferred = transferred
+    try {
+      while (true) {
+        if (this.isDownloadBlocked()) {
+          this.appxPauseRequested = true
+          controller.abort()
+          throw new Error('Update download paused')
+        }
+        const chunk = await new Promise<ReadableStreamReadResult<Uint8Array>>(
+          (resolveRead, rejectRead) => {
+            const timeout = setTimeout(() => {
+              controller.abort()
+              rejectRead(new Error('Update download stalled'))
+            }, DOWNLOAD_STALL_TIMEOUT_MS)
+            reader.read().then(
+              (result) => {
+                clearTimeout(timeout)
+                resolveRead(result)
+              },
+              (error) => {
+                clearTimeout(timeout)
+                rejectRead(error)
+              }
+            )
+          }
+        )
+        if (chunk.done) break
+        if (!chunk.value || chunk.value.byteLength === 0) continue
+        if (transferred + chunk.value.byteLength > release.asset.size) {
+          throw new Error('Update exceeds declared size')
+        }
+        await writeCompleteChunk(file, chunk.value)
+        transferred += chunk.value.byteLength
+        const now = Date.now()
+        if (now - this.lastProgressEmittedAt >= PROGRESS_EMIT_INTERVAL_MS) {
+          const elapsedSeconds = Math.max(0.25, (now - startedAt) / 1_000)
+          this.lastProgressEmittedAt = now
+          this.setSnapshot({
+            stage: 'downloading',
+            transferredBytes: transferred,
+            totalBytes: release.asset.size,
+            percent: (transferred / release.asset.size) * 100,
+            bytesPerSecond: Math.round((transferred - initialTransferred) / elapsedSeconds)
+          })
+        }
+      }
+    } catch (error) {
+      await reader.cancel().catch(() => undefined)
+      throw error
+    } finally {
+      reader.releaseLock()
+      await file.close()
+    }
+    if (transferred !== release.asset.size) throw new Error('Update download is incomplete')
+    if (this.downloadAbortController === controller) this.downloadAbortController = null
+  }
+
+  private isDownloadBlocked(): boolean {
+    return this.options.getGameLaunchPhase() !== 'idle' || this.options.hasActiveLauncherDownload()
+  }
+
+  private async waitWhileDownloadPaused(): Promise<void> {
+    while (!this.disposed && this.isDownloadBlocked()) {
       await wait(750)
     }
     if (this.disposed) throw new Error('Update service disposed')

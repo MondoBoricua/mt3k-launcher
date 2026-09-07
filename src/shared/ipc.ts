@@ -1,17 +1,46 @@
-export type ThemeId =
-  | 'midnight'
-  | 'coresense'
-  | 'aurora'
-  | 'violet'
-  | 'sakura'
-  | 'emerald'
-  | 'ocean'
-  | 'amber'
-  | 'sunset'
-  | 'crimson'
-  | 'ice'
-  | 'lime'
-  | 'monochrome'
+import type { Language } from './language'
+export type { Language } from './language'
+export type { CustomLauncherMusic, LauncherMusicSource } from './launcherMusic'
+
+export const FREE_THEME_IDS = [
+  'midnight',
+  'coresense',
+  'aurora',
+  'violet',
+  'sakura',
+  'emerald',
+  'ocean',
+  'amber',
+  'sunset',
+  'crimson',
+  'ice',
+  'lime',
+  'monochrome'
+] as const
+export const ORBIT_PLUS_THEME_IDS = [
+  'cobalt',
+  'ultraviolet',
+  'magenta',
+  'tangerine',
+  'mint',
+  'copper'
+] as const
+export const THEME_IDS = [...FREE_THEME_IDS, ...ORBIT_PLUS_THEME_IDS] as const
+export type ThemeId = (typeof THEME_IDS)[number]
+export const CORNER_STYLE_IDS = ['theme', 'square', 'soft', 'round'] as const
+export type CornerStyleId = (typeof CORNER_STYLE_IDS)[number]
+
+export function isThemeId(value: unknown): value is ThemeId {
+  return THEME_IDS.includes(value as ThemeId)
+}
+
+export function isOrbitPlusThemeId(value: ThemeId): boolean {
+  return ORBIT_PLUS_THEME_IDS.includes(value as (typeof ORBIT_PLUS_THEME_IDS)[number])
+}
+
+export function isCornerStyleId(value: unknown): value is CornerStyleId {
+  return CORNER_STYLE_IDS.includes(value as CornerStyleId)
+}
 export type UiDensity = 'standard' | 'compact'
 export const DOCK_THEME_IDS = ['standard', 'glass', 'neon', 'minimal'] as const
 export type DockThemeId = (typeof DOCK_THEME_IDS)[number]
@@ -24,13 +53,29 @@ export type StartupAnimationMode = (typeof STARTUP_ANIMATION_MODES)[number]
 export const CUSTOM_STARTUP_VIDEO_URL = 'orbit-media://startup.mp4'
 export type HomeLayoutId = 'orbit' | 'rolling' | 'float' | 'coresense' | 'xmode'
 export type GameCardSize = 'compact' | 'standard' | 'large'
+export const GAME_CARD_PRIMARY_ACTIONS = ['launch', 'details'] as const
+export type GameCardPrimaryAction = (typeof GAME_CARD_PRIMARY_ACTIONS)[number]
 export const LIBRARY_GRID_COLUMN_OPTIONS = [4, 5, 6, 7, 8] as const
 export type LibraryGridColumns = (typeof LIBRARY_GRID_COLUMN_OPTIONS)[number]
+export const UNINSTALLED_GAME_COLORS = [
+  'gray',
+  'blue',
+  'violet',
+  'green',
+  'amber',
+  'rose'
+] as const
+export type UninstalledGameColor = (typeof UNINSTALLED_GAME_COLORS)[number]
 export type BackdropIntensity = 'subtle' | 'balanced' | 'vivid'
 export const HOME_BACKDROP_MODES = ['focus', 'pinned', 'slideshow', 'custom'] as const
 export type HomeBackdropMode = (typeof HOME_BACKDROP_MODES)[number]
 export const HOME_BACKDROP_MOTIONS = ['still', 'drift', 'cinematic'] as const
 export type HomeBackdropMotion = (typeof HOME_BACKDROP_MOTIONS)[number]
+export type HomeWallpaperKind = 'image' | 'video'
+export interface HomeWallpaperAsset {
+  kind: HomeWallpaperKind
+  url: string
+}
 export const PROFILE_AVATAR_IDS = [
   'orbit',
   'nova',
@@ -46,16 +91,61 @@ export const NOTIFICATION_POSITIONS = ['top-right', 'top-center', 'bottom-right'
 export type NotificationPosition = (typeof NOTIFICATION_POSITIONS)[number]
 export const NOTIFICATION_MOTIONS = ['slide', 'lift', 'scale'] as const
 export type NotificationMotion = (typeof NOTIFICATION_MOTIONS)[number]
-export type Language = 'en' | 'de'
-export type AudioPreset =
-  | 'orbit'
-  | 'soft'
-  | 'deep'
-  | 'minimal'
-  | 'steam'
-  | 'xbox'
-  | 'playstation'
-  | 'off'
+
+export const AUDIO_PRESETS = [
+  'orbit',
+  'soft',
+  'deep',
+  'minimal',
+  'steam',
+  'xbox',
+  'playstation',
+  'manual',
+  'off'
+] as const
+export type AudioPreset = (typeof AUDIO_PRESETS)[number]
+export const AUDIO_CUE_IDS = [
+  'navigate',
+  'confirm',
+  'back',
+  'switch',
+  'open',
+  'close',
+  'error'
+] as const
+export type AudioCueId = (typeof AUDIO_CUE_IDS)[number]
+export interface CustomUiAudioCue {
+  /** Opaque orbit-media URL. The original local path never reaches the renderer. */
+  url: string
+  name: string
+}
+export type CustomUiAudioCues = Partial<Record<AudioCueId, CustomUiAudioCue>>
+
+export function isAudioCueId(value: unknown): value is AudioCueId {
+  return AUDIO_CUE_IDS.includes(value as AudioCueId)
+}
+
+export const AUDIO_CUE_PRESETS = [
+  'orbit',
+  'soft',
+  'deep',
+  'minimal',
+  'steam',
+  'xbox',
+  'playstation',
+  'off'
+] as const
+export type AudioCuePreset = (typeof AUDIO_CUE_PRESETS)[number]
+export type AudioCuePresets = Record<AudioCueId, AudioCuePreset>
+export const DEFAULT_AUDIO_CUE_PRESETS = {
+  navigate: 'orbit',
+  confirm: 'orbit',
+  back: 'orbit',
+  switch: 'orbit',
+  open: 'orbit',
+  close: 'orbit',
+  error: 'orbit'
+} as const satisfies AudioCuePresets
 export type StoreRegionId = 'eu' | 'us' | 'gb' | 'ca' | 'au'
 export type SystemPowerAction = 'sleep' | 'restart' | 'shutdown'
 export type SystemSettingsTarget = 'power' | 'wifi' | 'ethernet' | 'bluetooth'
@@ -316,6 +406,7 @@ export interface GameCollection {
 }
 
 export interface HardwareControlStatus {
+  detail?: string
   state: 'disabled' | 'starting' | 'ready' | 'unavailable'
   connectedControllers: number
   reason?: 'unsupported-platform' | 'monitor-failed' | 'service-not-running'
@@ -329,6 +420,10 @@ export interface HardwareControlStatus {
 export type OrbitBackgroundServiceAction = 'install' | 'repair' | 'restart' | 'remove'
 
 export interface OrbitBackgroundServiceStatus {
+  startsThroughXboxMode?: boolean
+  backgroundModeAvailable?: boolean
+  startWithWindows?: boolean
+  detail?: string
   installation: 'not-installed' | 'installed' | 'repair-needed' | 'unsupported'
   runtime: 'stopped' | 'starting' | 'running'
   hardwareControl: HardwareControlStatus
@@ -345,11 +440,18 @@ export interface OrbitBackgroundServiceStatus {
 }
 
 export interface OrbitSettings {
+  backgroundModeEnabled?: boolean
+  startWithWindows?: boolean
   theme: ThemeId
+  /** Optional shape override. Missing legacy values retain each theme's intended form. */
+  cornerStyle?: CornerStyleId
   profileAvatar: ProfileAvatarId
   homeLayout: HomeLayoutId
   gameCardSize: GameCardSize
   libraryGridColumns: LibraryGridColumns
+  uninstalledGameColor: UninstalledGameColor
+  /** Include Steam Family/session-shared titles in Library browsing surfaces. */
+  showSteamSharedGames: boolean
   favoriteGameIds: string[]
   customLibraries: GameCollection[]
   /** Games hidden from launcher surfaces by durable `<provider>:<providerGameId>` identity. */
@@ -364,14 +466,32 @@ export interface OrbitSettings {
   dockSize: DockSize
   dockMotion: DockMotion
   uiDensity: UiDensity
+  /** Global typography percentage. Missing legacy values use 100. */
+  textScale?: number
   language: Language
   audioPreset: AudioPreset
+  audioCuePresets: AudioCuePresets
   hasCompletedOnboarding: boolean
   storeRegion: StoreRegionId
   showStoreTab: boolean
   showFriendsHub: boolean
   showHomeBanners: boolean
   showAchievements: boolean
+  backgroundTrailers: boolean
+  /** Ambient music for launcher surfaces outside game-specific focus. */
+  launcherMusic?: boolean
+  /** Launcher ambient volume as a percentage. Missing legacy values use 10. */
+  launcherMusicVolume?: number
+  /** Built-in ORBIT ambience or a validated local audio copy. */
+  launcherMusicSource?: import('./launcherMusic').LauncherMusicSource
+  gameTitleMusic: boolean
+  /** Title-music output volume as a percentage. Missing legacy values use 10. */
+  gameTitleMusicVolume?: number
+  /** Stable game selection time before title music starts, in seconds. */
+  gameTitleMusicDelaySeconds?: number
+  /** Title-music fade duration in seconds. */
+  gameTitleMusicFadeSeconds?: number
+  gameCardPrimaryAction: GameCardPrimaryAction
   closeLaunchersAfterGame: boolean
   notificationsEnabled: boolean
   notificationPosition: NotificationPosition
@@ -429,6 +549,97 @@ export interface PlayStationAccount {
   avatarUrl?: string
 }
 
+export interface XboxAccount {
+  xuid: string
+  gamertag: string
+}
+
+export interface XboxConnectionSnapshot {
+  /** False until ORBIT has its own registered Microsoft public-client ID. */
+  available: boolean
+  account: XboxAccount | null
+}
+
+export type XboxLoginStatus =
+  | { state: 'idle' }
+  | { state: 'waiting-for-browser' }
+  | { state: 'success'; account: XboxAccount }
+  | { state: 'error'; message: string }
+
+export const ORBIT_PLUS_FEATURES = [
+  'manual-audio',
+  'cloud-gaming',
+  'background-motion',
+  'premium-appearance'
+] as const
+export type OrbitPlusFeature = (typeof ORBIT_PLUS_FEATURES)[number]
+export type OrbitPlusAccessSource = 'patreon' | 'annual-pass' | 'lifetime-key'
+export type OrbitPlusPlan = 'monthly' | 'annual' | 'lifetime'
+export type OrbitPlusAccessState = 'locked' | 'active' | 'grace'
+export type OrbitPlusIssue =
+  | 'service-not-configured'
+  | 'secure-storage-unavailable'
+  | 'network-unavailable'
+  | 'membership-required'
+  | 'owner-test-disabled'
+  | 'session-expired'
+  | 'verification-failed'
+  | 'cancelled'
+
+/** Provider-neutral premium access. Patreon is the first issuer; annual and
+ * lifetime licenses can grant the same feature IDs without changing callers. */
+export interface OrbitPlusEntitlement {
+  source: OrbitPlusAccessSource
+  plan: OrbitPlusPlan
+  features: OrbitPlusFeature[]
+  verifiedAt: number
+  expiresAt?: number
+  offlineUntil?: number
+}
+
+export interface OrbitPlusOwnerTestAccess {
+  available: true
+  enabled: boolean
+}
+
+/** Sanitized ORBIT Plus state. Provider IDs, OAuth codes and session tokens
+ * stay in the main-process credential boundary. */
+export interface OrbitPlusSnapshot {
+  access: OrbitPlusAccessState
+  /** Main-process deadline covering verification freshness and offline grace. */
+  accessUntil?: number
+  connected: boolean
+  serviceAvailable: boolean
+  secureStorageAvailable: boolean
+  purchaseUrl: string
+  accountName?: string
+  entitlement?: OrbitPlusEntitlement
+  ownerTestAccess?: OrbitPlusOwnerTestAccess
+  checkedAt?: number
+  issue?: OrbitPlusIssue
+}
+
+export type OrbitPlusConnectionStatus =
+  | { state: 'idle'; snapshot: OrbitPlusSnapshot }
+  | { state: 'opening-browser'; snapshot: OrbitPlusSnapshot }
+  | { state: 'waiting-for-browser'; snapshot: OrbitPlusSnapshot }
+  | { state: 'verifying'; snapshot: OrbitPlusSnapshot }
+  | { state: 'success'; snapshot: OrbitPlusSnapshot }
+  | { state: 'error'; snapshot: OrbitPlusSnapshot; issue: OrbitPlusIssue }
+
+export function orbitPlusHasFeature(
+  snapshot: OrbitPlusSnapshot,
+  feature: OrbitPlusFeature,
+  now = Date.now()
+): boolean {
+  return (
+    (snapshot.access === 'active' || snapshot.access === 'grace') &&
+    snapshot.ownerTestAccess?.enabled !== false &&
+    (snapshot.accessUntil === undefined || snapshot.accessUntil >= now) &&
+    Boolean(snapshot.entitlement?.features.includes(feature))
+  )
+}
+
 /** Path-free local Remote Play discovery state. Executable paths never cross
  * the Electron process boundary. */
 export interface PlayStationRemotePlayStatus {
@@ -443,7 +654,7 @@ export interface PlayStationRemotePlayStatus {
   checkedAt: number
 }
 
-export const FRIENDS_PROVIDERS = ['steam', 'discord', 'epic'] as const
+export const FRIENDS_PROVIDERS = ['steam', 'discord', 'epic', 'xbox'] as const
 export type FriendsProvider = (typeof FRIENDS_PROVIDERS)[number]
 export type FriendPresence = 'online' | 'away' | 'busy' | 'offline' | 'unknown'
 export type FriendsProviderState =
@@ -569,6 +780,9 @@ export type GameProvider =
   | 'ubisoft'
   | 'local'
 
+/** How the current account can access a provider library title. */
+export type LibraryAccessKind = 'owned' | 'shared'
+
 export type LauncherDownloadProvider = Extract<GameProvider, 'steam' | 'epic' | 'xbox'>
 export type LauncherDownloadPhase =
   | 'downloading'
@@ -635,6 +849,21 @@ export interface GameCompletionTimes {
   fetchedAt: number
 }
 
+/** License/entitlement evidence that ORBIT can present without inferring
+ * ownership from a locally installed package. */
+export type GameEntitlementKind = 'purchased' | 'subscription' | 'unknown'
+export type GameSubscription = 'xbox-game-pass'
+export type GameEntitlementEvidence = 'account-library' | 'local-cache' | 'local-install'
+
+export interface GameEntitlement {
+  kind: GameEntitlementKind
+  subscription?: GameSubscription
+  evidence: GameEntitlementEvidence
+  /** When ORBIT first observed the current subscription-catalog membership.
+   * This is intentionally not presented as Microsoft's original release date. */
+  membershipDetectedAt?: number
+}
+
 export interface GameAchievement {
   id: string
   name: string
@@ -648,6 +877,7 @@ export interface GameAchievement {
 }
 
 export interface GameAchievementsSnapshot {
+  language?: Language
   gameId: string
   provider: GameProvider
   state: 'available' | 'unavailable'
@@ -656,7 +886,7 @@ export interface GameAchievementsSnapshot {
   total: number
   fetchedAt: number
   reason?: 'private' | 'unsupported' | 'unavailable' | 'not-connected'
-  source?: 'steam-community' | 'steam-web-api' | 'retroachievements'
+  source?: 'steam-community' | 'steam-web-api' | 'retroachievements' | 'xbox-network'
 }
 
 /** Rich, provider-neutral metadata persisted with each library record. */
@@ -675,12 +905,28 @@ export interface GameMetadata {
   requiredAge?: number
   website?: string
   storeUrl?: string
+  /** Optional user-selected trailer. Direct video/HLS links play in ORBIT;
+   * ordinary HTTPS pages open in the system browser. */
+  trailerUrl?: string
+  /** Optional YouTube track used instead of ORBIT's automatic title-music search. */
+  titleMusicUrl?: string
+  /** Optional external achievement guide or provider achievement page. */
+  achievementsUrl?: string
   /** Validated provider launch target, such as a Windows AppsFolder AUMID. */
   launchUri?: string
   /** Validated provider executable used for direct launch and process identification. */
   launchExecutable?: string
   /** Provider-supplied argv parsed and validated in the main process. */
   launchArguments?: string[]
+  /** Store catalog identity when it differs from the durable provider game identity. */
+  providerStoreId?: string
+  /** Provider-native title identity used by account services such as Xbox achievements. */
+  providerTitleId?: string
+  /** Validated Windows package family used to reconcile launcher and network identities. */
+  providerPackageFamilyName?: string
+  /** Provider-neutral access classification backed by an explicit local or
+   * account signal. An installed package alone never becomes a purchase. */
+  entitlement?: GameEntitlement
   languages?: string[]
   controllerSupport?: string
   platforms?: GamePlatform[]
@@ -691,6 +937,62 @@ export interface GameMetadata {
   storeHeaderUrl?: string
   artwork?: GameArtworkCandidates
   completionTimes?: GameCompletionTimes
+}
+
+/** Metadata fields a user may safely override without changing provider
+ * identity, installation evidence or launch configuration. `null` deliberately
+ * hides a provider value; an absent key keeps the provider value. */
+export const EDITABLE_GAME_METADATA_KEYS = [
+  'summary',
+  'description',
+  'genres',
+  'features',
+  'developers',
+  'publishers',
+  'releaseDateText',
+  'comingSoon',
+  'criticScore',
+  'recommendationCount',
+  'requiredAge',
+  'website',
+  'storeUrl',
+  'trailerUrl',
+  'titleMusicUrl',
+  'achievementsUrl',
+  'languages',
+  'controllerSupport',
+  'platforms',
+  'achievementCount',
+  'contentDescriptorNotes',
+  'systemRequirements',
+  'completionTimes'
+] as const satisfies readonly (keyof GameMetadata)[]
+
+export type EditableGameMetadataKey = (typeof EDITABLE_GAME_METADATA_KEYS)[number]
+export type GameMetadataOverrides = Partial<{
+  [Key in EditableGameMetadataKey]: GameMetadata[Key] | null
+}>
+
+export interface GameMetadataUpdateInput {
+  gameId: string
+  /** Omit to keep the current manual title; null restores the provider title. */
+  name?: string | null
+  /** Patch semantics: omitted fields keep their current override. */
+  metadata?: GameMetadataOverrides
+  /** Restores every provider value before applying this payload's patches. */
+  resetAll?: boolean
+}
+
+export interface GameMetadataSyncResult {
+  snapshot: LibrarySnapshot
+  synchronizedAt: number
+  stages: {
+    library: 'complete' | 'failed' | 'skipped'
+    metadata: 'complete' | 'failed' | 'skipped'
+    artwork: 'queued'
+    completionTimes: 'complete' | 'failed' | 'skipped'
+    achievements: 'complete' | 'failed' | 'skipped'
+  }
 }
 
 export type LocalGameBackupState = 'never' | 'success' | 'failed'
@@ -894,6 +1196,10 @@ export interface LibraryGame {
   appId?: number
   name: string
   metadata: GameMetadata
+  /** Present when the displayed title is protected from provider refreshes. */
+  nameOverride?: string
+  /** Persisted manual values layered over provider metadata. */
+  metadataOverrides?: GameMetadataOverrides
   metadataRevision: number
   metadataUpdatedAt?: number
   metadataLocale?: string
@@ -906,12 +1212,38 @@ export interface LibraryGame {
   lastStartedAt?: number
   installed: boolean
   installDir?: string
+  /** `shared` covers Steam Family and other licenses exposed only by the active Steam session. */
+  libraryAccess?: LibraryAccessKind
   /** Locally detected provider update that has not finished downloading yet. */
   updateAvailable?: boolean
   local?: LocalGameConfig
   retro?: RetroGameConfig
   addedAt: number
   updatedAt: number
+}
+
+export type GeForceNowCatalogState = 'locked' | 'loading' | 'ready' | 'stale' | 'error'
+
+/** Exact store-identity match between one ORBIT title and NVIDIA's regional catalog. */
+export interface GeForceNowLibraryMatch {
+  gameId: string
+  geforceNowGameId: string
+  geforceNowTitle: string
+  cmsId: number
+  variantId: string
+  appStore: string
+  storeId: string
+  boxArtUrl?: string
+  playabilityState?: string
+}
+
+export interface GeForceNowCatalogSnapshot {
+  state: GeForceNowCatalogState
+  matches: GeForceNowLibraryMatch[]
+  catalogSize: number
+  region: 'DE' | 'US' | 'ES'
+  updatedAt?: number
+  issue?: 'catalog-unavailable'
 }
 
 export type LibraryStatusProvider =
@@ -954,6 +1286,8 @@ export type LibraryProviderIssue =
   | 'online-library-unavailable'
   | 'metadata-pending'
   | 'source-unavailable'
+  | 'supplemental-source-unavailable'
+  | 'local-source-unavailable'
   | 'authentication-failed'
   | 'remote-play-app-unavailable'
   | 'emulator-missing'
@@ -969,6 +1303,10 @@ export interface LibraryProviderStatus {
   installedCount: number
   installableCount: number
   pendingCount?: number
+  /** Sanitized active products and entitlement counts; no account IDs or raw
+   * provider product identifiers cross the process boundary. */
+  subscriptions?: GameSubscription[]
+  entitlementCounts?: Partial<Record<GameEntitlementKind, number>>
   issue?: LibraryProviderIssue
   lastCheckedAt?: number
 }
@@ -1044,6 +1382,10 @@ export interface GameLaunchStatus {
   endedAt?: number
   sessionDurationSeconds?: number
   totalPlaytimeSeconds?: number
+  /** Provider-specific identity that confirmed this session. */
+  trackingMethod?: import('./gameTracking').GameTrackingMethod
+  /** Zero is the provider's primary method; larger values are ordered fallbacks. */
+  trackingFallbackIndex?: number
   returnTask?: 'backing-up' | 'backup-complete' | 'backup-failed' | 'tracking-stopped'
   failureReason?: GameLaunchFailureReason
   message?: string
@@ -1079,6 +1421,7 @@ export interface StoreProduct {
   genres?: string[]
   developers?: string[]
   publishers?: string[]
+  metadataLocale?: string
   supportedLanguages?: string[]
   discoverEligible?: boolean
   artworkStatus?: 'available' | 'missing' | 'pending'
@@ -1261,6 +1604,18 @@ export const IPC = {
   playstationGetAccount: 'playstation:get-account',
   playstationRemotePlayGet: 'playstation:remote-play:get',
   playstationRemotePlayRefresh: 'playstation:remote-play:refresh',
+  xboxLoginStart: 'xbox:login:start',
+  xboxLoginCancel: 'xbox:login:cancel',
+  xboxLoginStatus: 'xbox:login:status',
+  xboxLogout: 'xbox:logout',
+  xboxGetConnection: 'xbox:get-connection',
+  orbitPlusGet: 'orbit-plus:get',
+  orbitPlusRefresh: 'orbit-plus:refresh',
+  orbitPlusPatreonConnect: 'orbit-plus:patreon:connect',
+  orbitPlusPatreonCancel: 'orbit-plus:patreon:cancel',
+  orbitPlusOwnerTestSet: 'orbit-plus:owner-test:set',
+  orbitPlusDisconnect: 'orbit-plus:disconnect',
+  orbitPlusStatus: 'orbit-plus:status',
   friendsGet: 'friends:get',
   friendsRefresh: 'friends:refresh',
   friendsConnect: 'friends:provider:connect',
@@ -1280,6 +1635,13 @@ export const IPC = {
   libraryUpdated: 'library:updated',
   libraryGameExclude: 'library:game:exclude',
   libraryGameRestore: 'library:game:restore',
+  libraryGameMetadataUpdate: 'library:game:metadata:update',
+  libraryGameMetadataSync: 'library:game:metadata:sync',
+  geforceNowCatalogGet: 'geforce-now:catalog:get',
+  geforceNowCatalogRefresh: 'geforce-now:catalog:refresh',
+  geforceNowCatalogUpdated: 'geforce-now:catalog:updated',
+  geforceNowGameLaunch: 'geforce-now:game:launch',
+  geforceNowOpenBrowser: 'geforce-now:browser:open',
   launcherDownloadsGet: 'launcher-downloads:get',
   launcherDownloadsUpdated: 'launcher-downloads:updated',
   customGameBeginImport: 'library:custom:import:begin',
@@ -1310,6 +1672,8 @@ export const IPC = {
   gameLaunchRevealLauncher: 'game:launch:reveal-launcher',
   gameLaunchStatus: 'game:launch:status',
   gameCompletionTimesResolve: 'game:completion-times:resolve',
+  gameTrailerResolve: 'game:trailer:resolve',
+  gameTitleMusicResolve: 'game:title-music:resolve',
   gameAchievementsResolve: 'game:achievements:resolve',
   gameAchievementsSync: 'game:achievements:sync',
   settingsGet: 'settings:get',
@@ -1325,6 +1689,12 @@ export const IPC = {
   homeWallpaperGet: 'home-wallpaper:get',
   homeWallpaperSelect: 'home-wallpaper:select',
   homeWallpaperClear: 'home-wallpaper:clear',
+  launcherMusicGetCustom: 'launcher-music:custom:get',
+  launcherMusicSelectCustom: 'launcher-music:custom:select',
+  launcherMusicClearCustom: 'launcher-music:custom:clear',
+  uiAudioGetCustom: 'ui-audio:custom:get',
+  uiAudioSelectCustom: 'ui-audio:custom:select',
+  uiAudioClearCustom: 'ui-audio:custom:clear',
   startupVideoGet: 'startup-video:get',
   startupVideoSelect: 'startup-video:select',
   applicationsGet: 'applications:get',

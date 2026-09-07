@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0-windows10.0.26100": {
+      "Microsoft.Gaming.XboxGameBar": {
+        "type": "Direct",
+        "requested": "[7.3.2607010, )",
+        "resolved": "7.3.2607010",
+        "contentHash": "cZfLSHk5MuqpLtc7uacy/83avBhU/VYbcFucD8OkmcC8bWiQGa0UWmBr2pigBpRhY6xlQNZPcJN0J1VCd4nIYA=="
+      },
+      "Microsoft.Windows.CsWinRT": {
+        "type": "Direct",
+        "requested": "[2.3.1, )",
+        "resolved": "2.3.1",
+        "contentHash": "ojoYrj8m8mAx6LVxofQXgfvsReDTv2LQFeDgXt5Lw99r5fv7dCR19ybd1JN0OueaWvL+BNqv0E7zZCgqptP9zA=="
+      }
+    },
+    "net10.0-windows10.0.26100/win-x64": {
+      "Microsoft.Gaming.XboxGameBar": {
+        "type": "Direct",
+        "requested": "[7.3.2607010, )",
+        "resolved": "7.3.2607010",
+        "contentHash": "cZfLSHk5MuqpLtc7uacy/83avBhU/VYbcFucD8OkmcC8bWiQGa0UWmBr2pigBpRhY6xlQNZPcJN0J1VCd4nIYA=="
+      }
+    }
+  }
+}

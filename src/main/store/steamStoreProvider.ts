@@ -78,7 +78,7 @@ function parseSupportedLanguages(value?: string): string[] {
 
 function hasSupportedInterfaceLanguage(languages: string[]): boolean {
   if (languages.length === 0) return true
-  return languages.some((language) => /^(english|german|deutsch)$/i.test(language))
+  return languages.some((language) => /^(english|german|deutsch|spanish(?: - (?:spain|latin america))?|español(?: - (?:españa|latinoamérica))?|inglés|alemán)$/i.test(language))
 }
 
 function hasUnsupportedTitleScript(name: string): boolean {
@@ -128,9 +128,10 @@ export async function fetchUpcomingSteamReleases(
   url.searchParams.set('count', '100')
   url.searchParams.set('filter', 'popularcomingsoon')
   url.searchParams.set('category1', '998')
-  url.searchParams.set('supportedlang', 'english,german')
+  url.searchParams.set('supportedlang', region.steamLanguage)
   url.searchParams.set('infinite', '1')
   url.searchParams.set('cc', region.countryCode)
+  // The release parser consumes English month names; UI dates use the selected locale.
   url.searchParams.set('l', 'english')
 
   const response = await fetchWithElectronNet(url, {
@@ -278,7 +279,7 @@ export async function fetchPersonalizedCandidateIds(
       url.searchParams.set('sort_by', 'Reviews_DESC')
       url.searchParams.set('tags', String(tagId))
       url.searchParams.set('category1', '998')
-      url.searchParams.set('supportedlang', 'english,german')
+      url.searchParams.set('supportedlang', region.steamLanguage)
       url.searchParams.set('infinite', '1')
       url.searchParams.set('cc', region.countryCode)
       url.searchParams.set('l', region.steamLanguage)
@@ -503,6 +504,7 @@ export async function fetchSteamProduct(
     genres: genres.length > 0 ? genres : existing?.genres,
     developers: developers.length > 0 ? developers : existing?.developers,
     publishers: publishers.length > 0 ? publishers : existing?.publishers,
+    metadataLocale: region.steamLanguage,
     supportedLanguages:
       supportedLanguages.length > 0 ? supportedLanguages : existing?.supportedLanguages,
     discoverEligible:

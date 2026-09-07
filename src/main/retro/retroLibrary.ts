@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
@@ -687,8 +688,8 @@ export class RetroLibraryService {
 
   async addDirectory(mainWindow: BrowserWindow): Promise<RetroLibraryStatus | null> {
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: settingsStore.store.language === 'de' ? 'ORBIT · ROM-Ordner auswählen' : 'ORBIT · Select ROM folder',
-      buttonLabel: settingsStore.store.language === 'de' ? 'ROMs erkennen' : 'Detect ROMs',
+      title: t("ORBIT · Select ROM folder"),
+      buttonLabel: t("Detect ROMs"),
       properties: ['openDirectory']
     })
     if (result.canceled || !result.filePaths[0]) return null

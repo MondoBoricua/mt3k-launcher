@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import { createHash } from 'node:crypto'
 import { app, clipboard, dialog, nativeImage, type BrowserWindow, type NativeImage } from 'electron'
 import { existsSync } from 'node:fs'
@@ -5,7 +6,6 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promis
 import { join } from 'node:path'
 import Store from 'electron-store'
 import type { ImageOrientation, ResolvedImage } from '@shared/ipc'
-import { settingsStore } from './settingsStore'
 import { fetchWithElectronNet } from './networkFetch'
 import { isSteamGridDbAssetUrl } from './steamGridDb'
 import { isPublicSteamArtworkUrl } from './publicArtworkSearchPolicy'
@@ -223,27 +223,19 @@ class CustomArtworkService {
     gameId: string,
     orientation: CustomArtworkOrientation = 'vertical'
   ): Promise<ResolvedImage | null> {
-    const german = settingsStore.store.language === 'de'
-    const labels = german
-      ? {
-          vertical: ['ORBIT · Cover auswählen', 'Cover verwenden'],
-          horizontal: ['ORBIT · Hintergrund auswählen', 'Hintergrund verwenden'],
-          logo: ['ORBIT · Logo auswählen', 'Logo verwenden'],
-          icon: ['ORBIT · Icon auswählen', 'Icon verwenden']
-        }
-      : {
-          vertical: ['ORBIT · Select cover', 'Use cover'],
-          horizontal: ['ORBIT · Select background', 'Use background'],
-          logo: ['ORBIT · Select logo', 'Use logo'],
-          icon: ['ORBIT · Select icon', 'Use icon']
-        }
+    const labels = {
+      vertical: [t('ORBIT · Select cover'), t('Use cover')],
+      horizontal: [t('ORBIT · Select background'), t('Use background')],
+      logo: [t('ORBIT · Select logo'), t('Use logo')],
+      icon: [t('ORBIT · Select icon'), t('Use icon')]
+    }
     const result = await dialog.showOpenDialog(mainWindow, {
       title: labels[orientation][0],
       buttonLabel: labels[orientation][1],
       properties: ['openFile'],
       filters: [
-        { name: german ? 'Bilder' : 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] },
-        { name: german ? 'Alle Dateien' : 'All files', extensions: ['*'] }
+        { name: t("Images"), extensions: ['png', 'jpg', 'jpeg', 'webp'] },
+        { name: t("All files"), extensions: ['*'] }
       ]
     })
     if (result.canceled || !result.filePaths[0]) return null

@@ -1,10 +1,10 @@
+import { t } from './i18n'
 import { createHash } from 'node:crypto'
 import { app, dialog, nativeImage, type BrowserWindow, type NativeImage } from 'electron'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import Store from 'electron-store'
-import { settingsStore } from './settingsStore'
 
 const CACHE_DIR = join(app.getPath('userData'), 'artwork-v2')
 const AVATAR_SIZE = 256
@@ -73,13 +73,12 @@ class ProfileAvatarService {
   }
 
   async select(mainWindow: BrowserWindow): Promise<string | null> {
-    const german = settingsStore.store.language === 'de'
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: german ? 'ORBIT · Avatar auswählen' : 'ORBIT · Select avatar',
-      buttonLabel: german ? 'Avatar verwenden' : 'Use avatar',
+      title: t("ORBIT · Select avatar"),
+      buttonLabel: t("Use avatar"),
       properties: ['openFile'],
       filters: [
-        { name: german ? 'Bilder' : 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }
+        { name: t("Images"), extensions: ['png', 'jpg', 'jpeg', 'webp'] }
       ]
     })
     if (result.canceled || !result.filePaths[0]) return null

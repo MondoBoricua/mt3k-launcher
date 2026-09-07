@@ -17,7 +17,10 @@ import {
   type PendingInstallJournal
 } from '../src/main/appUpdateInstallJournal.ts'
 import {
+  appUpdateDownloadRetryDelay,
+  canRetryAppUpdateDownload,
   compareAppVersions,
+  isAllowedAppUpdateDownloadUrl,
   isValidAppUpdateContentRange,
   parseGitHubAppUpdateRelease,
   selectLatestBetaRelease
@@ -58,6 +61,26 @@ assert.equal(isValidAppUpdateContentRange('bytes 500-999/1000', 500, 1000), true
 assert.equal(isValidAppUpdateContentRange('bytes 499-999/1000', 500, 1000), false)
 assert.equal(isValidAppUpdateContentRange('bytes 500-999/1001', 500, 1000), false)
 assert.equal(isValidAppUpdateContentRange('bytes */1000', 500, 1000), false)
+assert.equal(appUpdateDownloadRetryDelay(-1), null)
+assert.equal(appUpdateDownloadRetryDelay(0), 1_000)
+assert.equal(appUpdateDownloadRetryDelay(1), 3_000)
+assert.equal(appUpdateDownloadRetryDelay(2), 8_000)
+assert.equal(appUpdateDownloadRetryDelay(3), null)
+assert.equal(canRetryAppUpdateDownload({ stage: 'error', error: 'download-failed' }), true)
+assert.equal(canRetryAppUpdateDownload({ stage: 'error', error: 'verification-failed' }), false)
+assert.equal(canRetryAppUpdateDownload({ stage: 'available' }), false)
+assert.equal(
+  isAllowedAppUpdateDownloadUrl(
+    'https://github.com/toonymak1993/orbit/releases/download/v1.0.0/ORBIT.exe'
+  ),
+  true
+)
+assert.equal(
+  isAllowedAppUpdateDownloadUrl('https://release-assets.githubusercontent.com/download?id=42'),
+  true
+)
+assert.equal(isAllowedAppUpdateDownloadUrl('https://example.com/ORBIT.exe'), false)
+assert.equal(isAllowedAppUpdateDownloadUrl('http://github.com/ORBIT.exe'), false)
 assert.deepEqual(
   nsisInstallerArguments({
     installDirectory: 'C:\\Users\\Orbit\\App',
@@ -222,6 +245,18 @@ assert.doesNotMatch(builderConfig, /differentialPackage:\s*false/)
 const appUpdateService = readFileSync(resolve(root, 'src/main/appUpdateService.ts'), 'utf8')
 assert.match(appUpdateService, /isValidAppUpdateContentRange/)
 assert.match(appUpdateService, /DOWNLOAD_STALL_TIMEOUT_MS/)
+assert.match(appUpdateService, /transferAppxUpdateWithRetries/)
+assert.match(appUpdateService, /writeCompleteChunk/)
+assert.match(appUpdateService, /response\.body\?\.cancel|response\.body\.cancel/)
+assert.match(appUpdateService, /resolveAllowedDownloadUrl/)
+assert.match(appUpdateService, /redirect: 'manual'/)
+assert.match(appUpdateService, /request\.followRedirect\(\)/)
+assert.match(appUpdateService, /redirect: 'error'/)
+assert.doesNotMatch(appUpdateService, /response\.url/)
+assert.match(
+  appUpdateService,
+  /canRetryAppUpdateDownload\(this\.snapshot\)/
+)
 assert.match(appUpdateService, /pending-install\.json\.tmp|pendingInstallTempPath/)
 assert.match(appUpdateService, /pending-install-confirmed\.json/)
 assert.match(appUpdateService, /verification: 'verifying'/)
@@ -277,5 +312,12 @@ assert.ok(updateStartup >= 0 && backgroundStartup > updateStartup)
 const sharedIpc = readFileSync(resolve(root, 'src/shared/ipc.ts'), 'utf8')
 assert.match(sharedIpc, /appUpdateDownload: 'app:update:download'/)
 assert.match(sharedIpc, /appUpdateAutoDownload: boolean/)
+
+const appUpdateStatusChip = readFileSync(
+  resolve(root, 'src/renderer/src/components/AppUpdateStatusChip.tsx'),
+  'utf8'
+)
+assert.match(appUpdateStatusChip, /canRetryAppUpdateDownload\(snapshot\)/)
+assert.match(appUpdateStatusChip, /retryDownload[\s\S]{0,80}\? void download\(\)/)
 
 console.log('App update policy and packaging contracts verified.')

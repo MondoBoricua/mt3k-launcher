@@ -9,6 +9,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
   AppWindow,
   CircleAlert,
+  Cloud,
   Gamepad2,
   Loader2,
   Music2,
@@ -34,6 +35,8 @@ import { useT } from '@renderer/i18n/useT'
 import type { TranslationKey } from '@renderer/i18n/translations'
 import { focusElement } from '@renderer/lib/spatialNavigation'
 import { notify } from '@renderer/state/notificationStore'
+import { GEFORCE_NOW_APPLICATION_ID } from '@shared/geforceNow'
+import { openOrbitPlusSettings, useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 import eaIcon from '@renderer/assets/library-icons/ea.png'
 import epicIcon from '@renderer/assets/library-icons/epic.png'
 import gogIcon from '@renderer/assets/library-icons/gog.png'
@@ -136,6 +139,10 @@ export function ApplicationsView(): JSX.Element {
 
   async function launch(application: OrbitApplication): Promise<void> {
     if (launchingId) return
+    if (application.id === GEFORCE_NOW_APPLICATION_ID && !useOrbitPlusStore.getState().hasFeature('cloud-gaming')) {
+      openOrbitPlusSettings()
+      return
+    }
     if (!application.available) {
       notify({
         tone: 'info',
@@ -396,6 +403,9 @@ function ApplicationCard({
         className="relative flex min-w-0 flex-1 flex-col items-center justify-center p-[clamp(0.8rem,1.4vw,1.25rem)] text-center"
       >
         <ApplicationIcon application={application} />
+        {application.id === GEFORCE_NOW_APPLICATION_ID && (
+          <span className="absolute right-3 top-3 rounded-full border border-accent/25 bg-surface px-2 py-1 text-[0.65rem] font-black text-accent">ORBIT Plus</span>
+        )}
         <span className="absolute inset-x-3 bottom-3 flex min-w-0 items-center justify-center gap-2">
           <span className="truncate text-[clamp(0.9rem,1.25vw,1.1rem)] font-black text-white">
             {application.name}
@@ -484,6 +494,9 @@ function ApplicationIcon({ application }: { application: OrbitApplication }): JS
   } else if (application.id.includes('spotify')) {
     Icon = Music2
     style = 'bg-emerald-400/15 text-emerald-300'
+  } else if (application.id.includes('geforce-now')) {
+    Icon = Cloud
+    style = 'bg-[#76b900]/16 text-[#9ee34b]'
   }
   return (
     <span

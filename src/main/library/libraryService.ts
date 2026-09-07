@@ -10,6 +10,8 @@ import {
   type CustomGameSaveSource,
   type GameAchievementsSnapshot,
   type GameCompletionTimes,
+  type GameMetadataSyncResult,
+  type GameMetadataUpdateInput,
   type LibraryGame,
   type LibrarySnapshot,
   type LibraryStats,
@@ -43,6 +45,10 @@ import { retroSetupService } from '../retro/retroSetup'
 import { gogLibraryService } from '../gog/gogLibrary'
 import { eaLibraryService } from '../ea/eaLibrary'
 import { ubisoftLibraryService } from '../ubisoft/ubisoftLibrary'
+import type {
+  InstalledLibraryProvider,
+  InstalledLibraryRefreshTarget
+} from './libraryRefreshScheduler'
 
 const MAX_EXCLUDED_GAME_IDS = 10_000
 
@@ -64,6 +70,8 @@ export class UnifiedLibraryService extends EventEmitter {
   private refreshQueued = false
   private snapshotEmitTimer: ReturnType<typeof setTimeout> | undefined
   private playtimeSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private backgroundEnrichmentPaused = false
+  private backgroundEnrichmentPending = false
 
   constructor() {
     super()
@@ -83,16 +91,28 @@ export class UnifiedLibraryService extends EventEmitter {
   getSnapshot(): LibrarySnapshot {
     const snapshot = gameRepository.getSnapshot()
     const excludedGameIds = this.getExcludedGameIds()
+    // Repository games/providerGames currently share one user-visible projection.
+    // Process it once, while preserving the separate path if the repository ever
+    // introduces a genuinely different provider projection again.
     const games = projectLibraryVisibility(snapshot.games, excludedGameIds)
-    const providerGames = projectLibraryVisibility(snapshot.providerGames, excludedGameIds)
-    const excludedGames = [
-      ...new Map(
-        [...providerGames.excludedGames, ...games.excludedGames].map((game) => [game.id, game])
-      ).values()
-    ]
-    const visibleIds = new Set(games.visibleGames.map((game) => game.id))
+    const sharesProviderProjection = snapshot.providerGames === snapshot.games
+    const providerGames = sharesProviderProjection
+      ? games
+      : projectLibraryVisibility(snapshot.providerGames, excludedGameIds)
+    const excludedGames = sharesProviderProjection
+      ? games.excludedGames
+      : [
+          ...new Map(
+            [...providerGames.excludedGames, ...games.excludedGames].map((game) => [game.id, game])
+          ).values()
+        ]
+    const visibleGames = games.visibleGames
+    const visibleProviderGames = sharesProviderProjection
+      ? visibleGames
+      : providerGames.visibleGames
+    const visibleIds = new Set(visibleGames.map((game) => game.id))
     const recentGameIds = snapshot.recentGameIds.filter((gameId) => visibleIds.has(gameId))
-    const visibleGamesById = new Map(games.visibleGames.map((game) => [game.id, game]))
+    const visibleGamesById = new Map(visibleGames.map((game) => [game.id, game]))
     const currentContinueGameId = snapshot.activity?.continueGameId
     const continueGameId =
       currentContinueGameId && visibleIds.has(currentContinueGameId)
@@ -101,8 +121,8 @@ export class UnifiedLibraryService extends EventEmitter {
 
     return {
       ...snapshot,
-      games: games.visibleGames,
-      providerGames: providerGames.visibleGames,
+      games: visibleGames,
+      providerGames: visibleProviderGames,
       excludedGames,
       recentGameIds,
       activity: snapshot.activity
@@ -186,6 +206,46 @@ export class UnifiedLibraryService extends EventEmitter {
     })
     this.refreshInFlight = refresh
     return refresh
+  }
+
+  /** Refreshes only local installation evidence for lifecycle-triggered
+   * updates. Manual and startup synchronization continue to use refresh(). */
+  async refreshInstalledProviders(
+    targets: readonly InstalledLibraryRefreshTarget[]
+  ): Promise<LibrarySnapshot> {
+    const grouped = new Map<InstalledLibraryProvider, Set<string> | null>()
+    for (const target of targets) {
+      const providerGameId = target.providerGameId?.trim()
+      const current = grouped.get(target.provider)
+      if (!providerGameId) {
+        grouped.set(target.provider, null)
+      } else if (current !== null) {
+        const ids = current ?? new Set<string>()
+        ids.add(providerGameId)
+        grouped.set(target.provider, ids)
+      }
+    }
+
+    const refreshes: Promise<unknown>[] = []
+    for (const [provider, providerGameIds] of grouped) {
+      const ids = providerGameIds ? [...providerGameIds] : undefined
+      if (provider === 'steam') refreshes.push(steamLibraryService.refreshInstalledGames(ids))
+      else if (provider === 'epic') refreshes.push(epicLibraryService.refreshInstalledGames(ids))
+      else if (provider === 'xbox') refreshes.push(xboxLibraryService.refreshInstalledGames(ids))
+      else if (provider === 'gog') refreshes.push(gogLibraryService.refreshInstalledGames())
+      else if (provider === 'ea') refreshes.push(eaLibraryService.refreshInstalledGames())
+      else if (provider === 'ubisoft') {
+        refreshes.push(ubisoftLibraryService.refreshInstalledGames())
+      }
+    }
+    await Promise.allSettled(refreshes)
+    return this.getSnapshot()
+  }
+
+  setBackgroundEnrichmentPaused(paused: boolean): void {
+    if (this.backgroundEnrichmentPaused === paused) return
+    this.backgroundEnrichmentPaused = paused
+    if (!paused && this.backgroundEnrichmentPending) this.startBackgroundEnrichment()
   }
 
   async resolveCompletionTimes(gameId: string): Promise<GameCompletionTimes | null> {
@@ -419,6 +479,89 @@ export class UnifiedLibraryService extends EventEmitter {
     return this.getSnapshot()
   }
 
+  updateGameMetadata(input: GameMetadataUpdateInput): LibrarySnapshot {
+    if (!gameRepository.getGame(input.gameId)) throw new Error('Game is not available')
+    if (gameRepository.updateGameMetadata(input)) {
+      const game = gameRepository.getGame(input.gameId)
+      if (game) artworkService.syncProvider([game], game.provider)
+      this.emitSnapshot()
+    }
+    return this.getSnapshot()
+  }
+
+  async syncGameMetadata(gameId: string): Promise<GameMetadataSyncResult> {
+    const initial = gameRepository.getGame(gameId)
+    if (!initial) throw new Error('Game is not available')
+    const stages: GameMetadataSyncResult['stages'] = {
+      library: 'skipped',
+      metadata: 'skipped',
+      artwork: 'queued',
+      completionTimes: 'skipped',
+      achievements: 'skipped'
+    }
+
+    if (
+      initial.provider === 'steam' ||
+      initial.provider === 'epic' ||
+      initial.provider === 'xbox'
+    ) {
+      try {
+        await this.refreshInstalledProviders([
+          { provider: initial.provider, providerGameId: initial.providerGameId }
+        ])
+        stages.library = 'complete'
+      } catch {
+        stages.library = 'failed'
+      }
+    }
+
+    if (initial.provider === 'steam' && initial.appId) {
+      try {
+        stages.metadata = (await steamLibraryService.refreshMetadata(initial.appId))
+          ? 'complete'
+          : 'failed'
+      } catch {
+        stages.metadata = 'failed'
+      }
+    }
+
+    let current = gameRepository.getGame(gameId)
+    if (!current) throw new Error('Game is no longer available')
+    artworkService.syncProvider([current], current.provider)
+
+    const enrichmentTasks: Promise<void>[] = []
+    enrichmentTasks.push(
+      completionTimesService.resolve(current, true).then((completionTimes) => {
+        if (!completionTimes) {
+          stages.completionTimes = 'failed'
+          return
+        }
+        stages.completionTimes = 'complete'
+        gameRepository.applyEnrichmentDelta(gameId, { completionTimes }, completionTimes.fetchedAt)
+      }).catch(() => {
+        stages.completionTimes = 'failed'
+      })
+    )
+
+    if (
+      settingsStore.store.showAchievements &&
+      (current.provider === 'steam' || current.provider === 'retro' || current.provider === 'xbox')
+    ) {
+      enrichmentTasks.push(
+        achievementService.resolve(current, true).then(() => {
+          stages.achievements = 'complete'
+        }).catch(() => {
+          stages.achievements = 'failed'
+        })
+      )
+    }
+    await Promise.all(enrichmentTasks)
+    current = gameRepository.getGame(gameId) ?? current
+    artworkService.syncProvider([current], current.provider)
+    this.emitSnapshot()
+    return { snapshot: this.getSnapshot(), synchronizedAt: Date.now(), stages }
+  }
+
   private async doRefresh(): Promise<LibrarySnapshot> {
     const steamAccount = steamAuthManager.getAccount() ?? (await steamAuthManager.restoreSession())
     gameRepository.openProfile(steamAccount?.steamId)
@@ -435,15 +578,30 @@ export class UnifiedLibraryService extends EventEmitter {
       ubisoftLibraryService.refresh()
     ])
 
-    artworkService.syncProvider(gameRepository.getGamesByProvider('steam'), 'steam')
-    artworkService.syncProvider(gameRepository.getGamesByProvider('epic'), 'epic')
-    artworkService.syncProvider(gameRepository.getGamesByProvider('gog'), 'gog')
-    artworkService.syncProvider(gameRepository.getGamesByProvider('xbox'), 'xbox')
-    artworkService.syncProvider(gameRepository.getGamesByProvider('playstation'), 'playstation')
-    artworkService.syncProvider(gameRepository.getGamesByProvider('ea'), 'ea')
-    artworkService.syncProvider(gameRepository.getGamesByProvider('ubisoft'), 'ubisoft')
-    artworkService.syncProvider(gameRepository.getGamesByProvider('local'), 'local')
-    artworkService.syncProvider(gameRepository.getGamesByProvider('retro'), 'retro')
+    this.startBackgroundEnrichment()
+    this.emitSnapshot()
+    return this.getSnapshot()
+  }
+
+  private startBackgroundEnrichment(): void {
+    if (this.backgroundEnrichmentPaused) {
+      this.backgroundEnrichmentPending = true
+      return
+    }
+    this.backgroundEnrichmentPending = false
+    for (const provider of [
+      'steam',
+      'epic',
+      'gog',
+      'xbox',
+      'playstation',
+      'ea',
+      'ubisoft',
+      'local',
+      'retro'
+    ] as const) {
+      artworkService.syncProvider(gameRepository.getGamesByProvider(provider), provider)
+    }
     const startupTasks: Promise<unknown>[] = [
       achievementService.syncStartup(this.getSnapshot().games)
     ]
@@ -452,8 +610,6 @@ export class UnifiedLibraryService extends EventEmitter {
     // wishlist offers before the user leaves onboarding.
     if (steamAuthManager.getAccount()) startupTasks.push(storeService.refresh())
     void Promise.allSettled(startupTasks)
-    this.emitSnapshot()
-    return this.getSnapshot()
   }
 
   private getExcludedGameIds(): string[] {

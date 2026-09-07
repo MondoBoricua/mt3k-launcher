@@ -1,4 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { type Language, languageLocale } from '@shared/language'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FocusEvent,
+  type ReactNode,
+  type RefObject,
+  type UIEvent
+} from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
   Building2,
@@ -20,8 +31,10 @@ import { usePlayStationStore } from '@renderer/state/playstationStore'
 import { useStoreStore } from '@renderer/state/storeStore'
 import { useStoreNavigationStore } from '@renderer/state/storeNavigationStore'
 import { GameImage, preloadGameImage } from '@renderer/components/GameImage'
+import { HomeWallpaperMedia } from '@renderer/components/HomeWallpaperMedia'
 import { GameCard } from '@renderer/components/GameCard'
 import { GameCardMenuHint } from '@renderer/components/GameCardMenuHint'
+import { GameRunningIndicator } from '@renderer/components/GameRunningIndicator'
 import {
   HomeCardReflection,
   resolveHomeCardReflection
@@ -31,28 +44,37 @@ import { useT, type TFunction } from '@renderer/i18n/useT'
 import type {
   GameAchievementsSnapshot,
   GameCompletionTimes,
+  HomeWallpaperAsset,
   LibraryActivitySummary,
   LibraryActivityWindow,
   LibraryGame,
   StoreProduct
 } from '@shared/ipc'
 import { latestLibraryActivity, normalizeLibraryTimestamp } from '@shared/libraryTime'
-import { useLaunchGame } from '@renderer/hooks/useLaunchGame'
+import { useActivateGameCard } from '@renderer/hooks/useActivateGameCard'
 import { formatPlaytime } from '@renderer/lib/playtime'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import { useLibraryFilterStore } from '@renderer/state/libraryFilterStore'
 import { useGameDetailStore } from '@renderer/state/gameDetailStore'
 import { focusElement, HOME_SHOW_BANNERS_EVENT } from '@renderer/lib/spatialNavigation'
 import { LIBRARY_SEARCH_EVENT } from '@renderer/lib/librarySearch'
+import { useRunningGameId } from '@renderer/state/runningGameContext'
+import { useTitleMusicStore } from '@renderer/state/titleMusicStore'
+import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
+import { orbitPlusHasFeature } from '@shared/ipc'
 
 const HOME_ACHIEVEMENTS_DELAY_MS = 5_000
 const WISHLIST_ROTATION_MS = 15_000
 const XMODE_RECOMMENDATION_ROTATION_MS = 18_000
 const HOME_BACKDROP_SLIDESHOW_MS = 14_000
+const HOME_INITIAL_GAME_LIMIT = 12
+const HOME_GAME_RENDER_BATCH_SIZE = 12
+const HOME_GAME_PRELOAD_THRESHOLD = 4
+const CORESENSE_RECOMMENDATION_SLOT_COUNT = 6
 
-function formatHours(minutes: number, language: 'en' | 'de'): string {
+function formatHours(minutes: number, language: Language): string {
   const hours = minutes / 60
-  const value = new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', {
+  const value = new Intl.NumberFormat(languageLocale(language), {
     maximumFractionDigits: hours < 10 ? 1 : 0
   }).format(hours)
   return `${value} h`
@@ -78,13 +100,13 @@ function storeProductUrl(product: StoreProduct): string | undefined {
   )
 }
 
-function formatActivityDuration(seconds: number, language: 'en' | 'de'): string {
+function formatActivityDuration(seconds: number, language: Language): string {
   const totalSeconds = Math.round(Math.max(0, seconds))
   if (totalSeconds < 60) return `${totalSeconds} s`
   const totalMinutes = Math.floor(totalSeconds / 60)
   if (totalMinutes < 60) return `${totalMinutes} min`
   const hours = totalMinutes / 60
-  return `${new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', {
+  return `${new Intl.NumberFormat(languageLocale(language), {
     maximumFractionDigits: hours < 10 ? 1 : 0
   }).format(hours)} h`
 }
@@ -92,6 +114,7 @@ function formatActivityDuration(seconds: number, language: 'en' | 'de'): string 
 export function HomeView(): JSX.Element {
   const containerRef = useAutoFocus<HTMLDivElement>()
   const t = useT()
+  const runningGameId = useRunningGameId()
   const { games, recentGameIds, activity, loadedAt } = useLibraryStore((s) => s.snapshot)
   const account = useAuthStore((s) => s.account)
   const epicAccount = useEpicAuthStore((s) => s.account)
@@ -100,16 +123,19 @@ export function HomeView(): JSX.Element {
   const setMainView = useNavigationStore((s) => s.setMainView)
   const setLibrarySource = useLibraryFilterStore((s) => s.setSource)
   const setStorePage = useStoreNavigationStore((s) => s.setPage)
-  const launchGame = useLaunchGame()
+  const activateGameCard = useActivateGameCard()
   const language = usePreferencesStore((state) => state.language)
   const homeLayout = usePreferencesStore((state) => state.homeLayout)
   const homeBackdropMode = usePreferencesStore((state) => state.homeBackdropMode)
-  const customHomeWallpaperUrl = usePreferencesStore((state) => state.customHomeWallpaperUrl)
+  const customHomeWallpaper = usePreferencesStore((state) => state.customHomeWallpaper)
   const pinnedBackdropGameId = usePreferencesStore((state) => state.pinnedBackdropGameId)
   const configuredShowHomeBanners = usePreferencesStore((state) => state.showHomeBanners)
   const showHomeBanners = homeLayout === 'orbit' && configuredShowHomeBanners
   const detailGameId = useGameDetailStore((state) => state.gameId)
+  const setHomeTitleMusicGameId = useTitleMusicStore((state) => state.setHomeGameId)
+  const clearHomeTitleMusicGameId = useTitleMusicStore((state) => state.clearHomeGameId)
   const [focusedGame, setFocusedGame] = useState<LibraryGame | null>(null)
+  const [titleMusicGameId, setTitleMusicGameId] = useState<string | null>(null)
   const [focusDirection, setFocusDirection] = useState(1)
   const previousFocusedIndexRef = useRef<number | null>(null)
   const focusedHomeGameRef = useRef<LibraryGame | null>(null)
@@ -124,6 +150,7 @@ export function HomeView(): JSX.Element {
   // Start one step after the regular featured game so enabling Library Flow is
   // visible immediately instead of initially presenting the same artwork.
   const [backdropSlideshowIndex, setBackdropSlideshowIndex] = useState(1)
+  const [homeGameRenderLimit, setHomeGameRenderLimit] = useState(HOME_INITIAL_GAME_LIMIT)
 
   const installedGames = useMemo(
     () =>
@@ -138,17 +165,27 @@ export function HomeView(): JSX.Element {
     [games]
   )
 
+  const installedGamesById = useMemo(
+    () => new Map(installedGames.map((game) => [game.id, game])),
+    [installedGames]
+  )
+  const installedGameIndexById = useMemo(
+    () => new Map(installedGames.map((game, index) => [game.id, index])),
+    [installedGames]
+  )
   const featured = useMemo(() => {
-    const installedById = new Map(installedGames.map((game) => [game.id, game]))
     for (const gameId of [activity?.continueGameId, ...recentGameIds]) {
       if (!gameId) continue
-      const game = installedById.get(gameId)
+      const game = installedGamesById.get(gameId)
       if (game) return game
     }
     return installedGames[0] ?? null
-  }, [activity?.continueGameId, installedGames, recentGameIds])
+  }, [activity?.continueGameId, installedGames, installedGamesById, recentGameIds])
   const backdropRotationGames = installedGames.length > 0 ? installedGames : games
-  const backdropRotationSignature = backdropRotationGames.map((game) => game.id).join('|')
+  const backdropRotationSignature = useMemo(
+    () => backdropRotationGames.map((game) => game.id).join('|'),
+    [backdropRotationGames]
+  )
   const pinnedBackdropGame = pinnedBackdropGameId
     ? games.find((game) => game.id === pinnedBackdropGameId) ?? null
     : null
@@ -166,8 +203,128 @@ export function HomeView(): JSX.Element {
         : backdropGame ?? focusedGame ?? featured
   const featuredHasActivity = Boolean(featured && latestLibraryActivity(featured) > 0)
   const focusedGameIndex = focusedGame
-    ? installedGames.findIndex((game) => game.id === focusedGame.id)
+    ? (installedGameIndexById.get(focusedGame.id) ?? -1)
     : -1
+  const visibleHomeGames = useMemo(
+    () => installedGames.slice(0, homeGameRenderLimit),
+    [homeGameRenderLimit, installedGames]
+  )
+  const hasMoreHomeGames = visibleHomeGames.length < installedGames.length
+  useEffect(() => {
+    setHomeTitleMusicGameId(titleMusicGameId)
+    return () => clearHomeTitleMusicGameId(titleMusicGameId)
+  }, [clearHomeTitleMusicGameId, setHomeTitleMusicGameId, titleMusicGameId])
+
+  useEffect(() => {
+    let focusedCardId: string | null = null
+    let hoveredCardId: string | null = null
+
+    const gameCardId = (target: EventTarget | null): string | null => {
+      if (!(target instanceof Element)) return null
+      const root = containerRef.current
+      if (!root) return null
+      const card = target.closest<HTMLElement>('[data-game-card="true"][data-game-id]')
+      if (!card || !root.contains(card)) return null
+      return card.dataset.gameId ?? null
+    }
+
+    const publishFallback = (): void => {
+      setTitleMusicGameId(focusedCardId ?? hoveredCardId)
+    }
+
+    const handleFocusIn = (event: globalThis.FocusEvent): void => {
+      focusedCardId = gameCardId(event.target)
+      if (focusedCardId) {
+        setTitleMusicGameId(focusedCardId)
+        return
+      }
+      publishFallback()
+    }
+
+    const handleFocusOut = (event: globalThis.FocusEvent): void => {
+      focusedCardId = gameCardId(event.relatedTarget)
+      publishFallback()
+    }
+
+    const handleMouseOver = (event: MouseEvent): void => {
+      const nextCardId = gameCardId(event.target)
+      if (!nextCardId || nextCardId === gameCardId(event.relatedTarget)) return
+      hoveredCardId = nextCardId
+      setTitleMusicGameId(nextCardId)
+    }
+
+    const handleMouseOut = (event: MouseEvent): void => {
+      const currentCardId = gameCardId(event.target)
+      if (!currentCardId) return
+      const nextCardId = gameCardId(event.relatedTarget)
+      if (nextCardId === currentCardId) return
+      hoveredCardId = nextCardId
+      if (nextCardId) {
+        setTitleMusicGameId(nextCardId)
+        return
+      }
+      publishFallback()
+    }
+
+    document.addEventListener('focusin', handleFocusIn)
+    document.addEventListener('focusout', handleFocusOut)
+    document.addEventListener('mouseover', handleMouseOver)
+    document.addEventListener('mouseout', handleMouseOut)
+
+    const initialFocusId = gameCardId(document.activeElement)
+    const initiallyHoveredCard = containerRef.current?.querySelector<HTMLElement>(
+      '[data-game-card="true"][data-game-id]:hover'
+    )
+    focusedCardId = initialFocusId
+    hoveredCardId = initiallyHoveredCard?.dataset.gameId ?? null
+    publishFallback()
+
+    return () => {
+      document.removeEventListener('focusin', handleFocusIn)
+      document.removeEventListener('focusout', handleFocusOut)
+      document.removeEventListener('mouseover', handleMouseOver)
+      document.removeEventListener('mouseout', handleMouseOut)
+    }
+  }, [containerRef])
+
+  useEffect(() => {
+    setHomeGameRenderLimit((current) =>
+      Math.max(HOME_INITIAL_GAME_LIMIT, Math.min(current, installedGames.length))
+    )
+  }, [installedGames.length])
+
+  const revealMoreHomeGames = useCallback((): void => {
+    setHomeGameRenderLimit((current) =>
+      Math.min(installedGames.length, current + HOME_GAME_RENDER_BATCH_SIZE)
+    )
+  }, [installedGames.length])
+
+  const revealHomeGamesNearEdge = useCallback(
+    (event: FocusEvent<HTMLElement>): void => {
+      if (!hasMoreHomeGames) return
+      const card = (event.target as HTMLElement).closest<HTMLElement>(
+        '[data-grid-index], [data-rolling-index]'
+      )
+      const index = Number(card?.dataset.gridIndex ?? card?.dataset.rollingIndex)
+      if (
+        Number.isInteger(index) &&
+        index >= visibleHomeGames.length - HOME_GAME_PRELOAD_THRESHOLD
+      ) {
+        revealMoreHomeGames()
+      }
+    },
+    [hasMoreHomeGames, revealMoreHomeGames, visibleHomeGames.length]
+  )
+
+  const revealHomeGamesOnScroll = useCallback(
+    (event: UIEvent<HTMLElement>): void => {
+      if (!hasMoreHomeGames) return
+      const scroller = event.currentTarget
+      const remaining = scroller.scrollWidth - scroller.scrollLeft - scroller.clientWidth
+      if (remaining < scroller.clientWidth) revealMoreHomeGames()
+    },
+    [hasMoreHomeGames, revealMoreHomeGames]
+  )
 
   useEffect(() => {
     let active = true
@@ -193,61 +350,62 @@ export function HomeView(): JSX.Element {
     ? focusedCompletionTimes
     : featuredCompletionTimes
 
-  function activateGame(game: LibraryGame | null): void {
-    if (!game) {
-      setFocusedGame(null)
-      previousFocusedIndexRef.current = null
-      return
-    }
-    const nextIndex = installedGames.findIndex((candidate) => candidate.id === game.id)
-    const previousIndex = previousFocusedIndexRef.current
-    if (previousIndex !== null && nextIndex !== previousIndex) {
-      setFocusDirection(nextIndex > previousIndex ? 1 : -1)
-    }
-    previousFocusedIndexRef.current = nextIndex
-    setFocusedGame(game)
-  }
+  const activateGame = useCallback(
+    (game: LibraryGame | null): void => {
+      if (!game) {
+        setFocusedGame(null)
+        previousFocusedIndexRef.current = null
+        return
+      }
+      const nextIndex = installedGameIndexById.get(game.id) ?? -1
+      const previousIndex = previousFocusedIndexRef.current
+      if (previousIndex !== null && nextIndex !== previousIndex) {
+        setFocusDirection(nextIndex > previousIndex ? 1 : -1)
+      }
+      previousFocusedIndexRef.current = nextIndex
+      setFocusedGame(game)
+    },
+    [installedGameIndexById]
+  )
 
-  function updateHomeGameInteraction(
-    game: LibraryGame,
-    active: boolean,
-    source: 'focus' | 'pointer'
-  ): void {
-    // Opening the detail panel deliberately moves DOM focus into the dialog. Keep
-    // Home's visual selection frozen until that dialog is gone, otherwise the
-    // card blur briefly restores the banners/backdrop behind the slide animation.
-    if (!active && useGameDetailStore.getState().gameId) return
+  const updateHomeGameInteraction = useCallback(
+    (game: LibraryGame, active: boolean, source: 'focus' | 'pointer'): void => {
+      // Opening the detail panel deliberately moves DOM focus into the dialog. Keep
+      // Home's visual selection frozen until that dialog is gone, otherwise the
+      // card blur briefly restores the banners/backdrop behind the slide animation.
+      if (!active && useGameDetailStore.getState().gameId) return
 
-    const sourceGameRef =
-      source === 'focus' ? focusedHomeGameRef : hoveredHomeGameRef
+      const sourceGameRef = source === 'focus' ? focusedHomeGameRef : hoveredHomeGameRef
 
-    if (active) {
-      const alreadyActive =
-        sourceGameRef.current?.id === game.id && homeInteractionSourceRef.current === source
-      sourceGameRef.current = game
-      if (alreadyActive) return
-      homeInteractionSourceRef.current = source
-      activateGame(game)
-      return
-    }
+      if (active) {
+        const alreadyActive =
+          sourceGameRef.current?.id === game.id && homeInteractionSourceRef.current === source
+        sourceGameRef.current = game
+        if (alreadyActive) return
+        homeInteractionSourceRef.current = source
+        activateGame(game)
+        return
+      }
 
-    if (sourceGameRef.current?.id === game.id) sourceGameRef.current = null
-    if (source === 'focus') {
+      if (sourceGameRef.current?.id === game.id) sourceGameRef.current = null
+      if (source === 'focus') {
+        homeInteractionSourceRef.current = null
+        activateGame(null)
+        return
+      }
+      if (homeInteractionSourceRef.current !== source) return
+
+      if (focusedHomeGameRef.current) {
+        homeInteractionSourceRef.current = 'focus'
+        activateGame(focusedHomeGameRef.current)
+        return
+      }
+
       homeInteractionSourceRef.current = null
       activateGame(null)
-      return
-    }
-    if (homeInteractionSourceRef.current !== source) return
-
-    if (focusedHomeGameRef.current) {
-      homeInteractionSourceRef.current = 'focus'
-      activateGame(focusedHomeGameRef.current)
-      return
-    }
-
-    homeInteractionSourceRef.current = null
-    activateGame(null)
-  }
+    },
+    [activateGame]
+  )
 
   useEffect(() => {
     function showBannersAndFocusJumpBack(): void {
@@ -291,7 +449,10 @@ export function HomeView(): JSX.Element {
     [storeProducts]
   )
 
-  const wishlistSignature = wishlistProducts.map((product) => product.id).join('|')
+  const wishlistSignature = useMemo(
+    () => wishlistProducts.map((product) => product.id).join('|'),
+    [wishlistProducts]
+  )
 
   useEffect(() => {
     setWishlistIndex(0)
@@ -440,13 +601,15 @@ export function HomeView(): JSX.Element {
     return (
       <RollingHome
         containerRef={containerRef}
-        installedGames={installedGames}
+        installedGames={visibleHomeGames}
         libraryGameCount={games.length}
         selectedGame={focusedGame ?? featured}
         backdropGame={resolvedHomeBackdrop}
-        customBackdropUrl={homeBackdropMode === 'custom' ? customHomeWallpaperUrl : undefined}
+        customWallpaper={homeBackdropMode === 'custom' ? customHomeWallpaper : undefined}
         onSelectGame={activateGame}
-        onLaunchGame={(game) => launchGame(game.id)}
+        onLaunchGame={(game) => activateGameCard(game.id)}
+        onFocusNearEdge={revealHomeGamesNearEdge}
+        onScrollNearEdge={revealHomeGamesOnScroll}
         t={t}
       />
     )
@@ -459,10 +622,10 @@ export function HomeView(): JSX.Element {
         installedGames={installedGames}
         libraryGames={games}
         backdropGame={resolvedHomeBackdrop}
-        customBackdropUrl={homeBackdropMode === 'custom' ? customHomeWallpaperUrl : undefined}
+        customWallpaper={homeBackdropMode === 'custom' ? customHomeWallpaper : undefined}
         deals={xModeDeals}
         onSelectGame={activateGame}
-        onLaunchGame={(game) => launchGame(game.id)}
+        onLaunchGame={(game) => activateGameCard(game.id)}
         onOpenLibrary={() => openLibrary(false)}
         onOpenSearch={() => openLibrary(true)}
         onOpenDeal={openStoreProduct}
@@ -483,12 +646,12 @@ export function HomeView(): JSX.Element {
         libraryGames={games}
         selectedGame={focusedGame ?? featured}
         backdropGame={resolvedHomeBackdrop}
-        customBackdropUrl={homeBackdropMode === 'custom' ? customHomeWallpaperUrl : undefined}
+        customWallpaper={homeBackdropMode === 'custom' ? customHomeWallpaper : undefined}
         storeProducts={storeProducts}
         activity={activity}
         language={language}
         onSelectGame={activateGame}
-        onLaunchGame={(game) => launchGame(game.id)}
+        onLaunchGame={(game) => activateGameCard(game.id)}
         onOpenStoreProduct={openStoreProduct}
         t={t}
       />
@@ -505,7 +668,7 @@ export function HomeView(): JSX.Element {
         <div className="home-backdrop-art absolute inset-0">
           <HomeBackdrop
             game={resolvedHomeBackdrop}
-            customUrl={homeBackdropMode === 'custom' ? customHomeWallpaperUrl : undefined}
+            customWallpaper={homeBackdropMode === 'custom' ? customHomeWallpaper : undefined}
           />
         </div>
         <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/38 to-black/15" />
@@ -543,17 +706,41 @@ export function HomeView(): JSX.Element {
                 data-focusable
                 data-game-card="true"
                 data-game-id={featured.id}
+                data-home-game-card="true"
+                data-game-running={runningGameId === featured.id ? 'true' : undefined}
                 data-home-jump-back="true"
-                onClick={() => launchGame(featured.id)}
+                aria-label={
+                  runningGameId === featured.id
+                    ? `${featured.name}. ${t('launch.running')}`
+                    : featured.name
+                }
+                onClick={() => activateGameCard(featured.id)}
+                onMouseEnter={() => updateHomeGameInteraction(featured, true, 'pointer')}
+                onMouseLeave={(event) => {
+                  const next = event.relatedTarget
+                  if (next instanceof Element && next.closest('[data-home-game-card="true"]')) return
+                  updateHomeGameInteraction(featured, false, 'pointer')
+                }}
+                onFocus={() => updateHomeGameInteraction(featured, true, 'focus')}
+                onBlur={(event) => {
+                  const next = event.relatedTarget as HTMLElement | null
+                  if (next?.matches('[data-home-game-card="true"]')) return
+                  updateHomeGameInteraction(featured, false, 'focus')
+                }}
                 whileHover={{ scale: 1.012 }}
                 whileFocus={{ scale: 1.012 }}
                 transition={{ type: 'spring', stiffness: 360, damping: 30 }}
                 className="group relative h-full min-w-0 overflow-hidden rounded-xl2 border border-white/10 bg-black/30 text-left shadow-card"
               >
+                <GameRunningIndicator
+                  active={runningGameId === featured.id}
+                  className="bottom-4 right-[4.75rem]"
+                />
                 <div className="absolute inset-0 transition-transform duration-700 group-hover:scale-[1.025] group-data-[focused=true]:scale-[1.025]">
                   <GameImage
                     gameId={featured.id}
                     name={featured.name}
+                    decorative
                     orientation="horizontal"
                     className="h-full w-full object-cover"
                   />
@@ -666,10 +853,12 @@ export function HomeView(): JSX.Element {
           <div
             data-home-game-row="true"
             data-navigation-grid
-            data-grid-columns={installedGames.length}
+            data-grid-columns={visibleHomeGames.length}
+            onFocusCapture={revealHomeGamesNearEdge}
+            onScroll={revealHomeGamesOnScroll}
             className="home-game-row scrollbar-none flex gap-[var(--tile-gap)] overflow-x-auto overflow-y-hidden px-8 pb-8"
           >
-            {installedGames.map((game, index) => {
+            {visibleHomeGames.map((game, index) => {
               const reflection = resolveHomeCardReflection(index, focusedGameIndex)
               return (
                 <div key={game.id} className="home-game-tile shrink-0">
@@ -678,9 +867,7 @@ export function HomeView(): JSX.Element {
                     navigationIndex={index}
                     homeReflection={reflection}
                     variant={homeLayout === 'float' ? 'float' : 'home'}
-                    onActiveChange={(active, source) =>
-                      updateHomeGameInteraction(game, active, source)
-                    }
+                    onActiveChange={updateHomeGameInteraction}
                   />
                 </div>
               )
@@ -697,15 +884,34 @@ export function HomeView(): JSX.Element {
   )
 }
 
+function rollingRowStartInset(row: HTMLElement): number {
+  const inset = Number.parseFloat(getComputedStyle(row).paddingInlineStart)
+  return Number.isFinite(inset) ? inset : 0
+}
+
+function alignRollingCard(
+  row: HTMLElement,
+  card: HTMLElement,
+  viewportOffset: number
+): void {
+  const rowRect = row.getBoundingClientRect()
+  const cardRect = card.getBoundingClientRect()
+  const maxLeft = Math.max(0, row.scrollWidth - row.clientWidth)
+  const targetLeft = row.scrollLeft + cardRect.left - rowRect.left - viewportOffset
+  row.scrollLeft = Math.min(maxLeft, Math.max(0, targetLeft))
+}
+
 function RollingHome({
   containerRef,
   installedGames,
   libraryGameCount,
   selectedGame,
   backdropGame,
-  customBackdropUrl,
+  customWallpaper,
   onSelectGame,
   onLaunchGame,
+  onFocusNearEdge,
+  onScrollNearEdge,
   t
 }: {
   containerRef: RefObject<HTMLDivElement>
@@ -713,12 +919,15 @@ function RollingHome({
   libraryGameCount: number
   selectedGame: LibraryGame | null
   backdropGame: LibraryGame | null
-  customBackdropUrl?: string
+  customWallpaper?: HomeWallpaperAsset
   onSelectGame: (game: LibraryGame) => void
   onLaunchGame: (game: LibraryGame) => void
+  onFocusNearEdge: (event: FocusEvent<HTMLElement>) => void
+  onScrollNearEdge: (event: UIEvent<HTMLElement>) => void
   t: TFunction
 }): JSX.Element {
   const reduceMotion = Boolean(useReducedMotion())
+  const runningGameId = useRunningGameId()
   const rowRef = useRef<HTMLDivElement>(null)
   const selectedIndex = Math.max(
     0,
@@ -737,17 +946,14 @@ function RollingHome({
     const settleDuration = 90
     const rowRect = row.getBoundingClientRect()
     const initialViewportOffset = activeCard.getBoundingClientRect().left - rowRect.left
+    const safeViewportOffset = rollingRowStartInset(row)
 
     const alignToViewportOffset = (viewportOffset: number): void => {
-      const currentRowRect = row.getBoundingClientRect()
-      const currentCardRect = activeCard.getBoundingClientRect()
-      const contentOffset = row.scrollLeft + currentCardRect.left - currentRowRect.left
-      const maxLeft = Math.max(0, row.scrollWidth - row.clientWidth)
-      row.scrollLeft = Math.min(maxLeft, Math.max(0, contentOffset - viewportOffset))
+      alignRollingCard(row, activeCard, viewportOffset)
     }
 
     if (reduceMotion) {
-      alignToViewportOffset(0)
+      alignToViewportOffset(safeViewportOffset)
       return
     }
 
@@ -755,12 +961,14 @@ function RollingHome({
       const elapsed = now - startedAt
       const progress = Math.min(1, elapsed / movementDuration)
       const eased = 1 - Math.pow(1 - progress, 3)
-      alignToViewportOffset(initialViewportOffset * (1 - eased))
+      alignToViewportOffset(
+        initialViewportOffset + (safeViewportOffset - initialViewportOffset) * eased
+      )
 
       if (elapsed < movementDuration + settleDuration) {
         frame = requestAnimationFrame(alignActiveCard)
       } else {
-        alignToViewportOffset(0)
+        alignToViewportOffset(safeViewportOffset)
       }
     }
 
@@ -779,11 +987,7 @@ function RollingHome({
       const align = (now: number): void => {
         const activeCard = row.querySelector<HTMLElement>('[data-rolling-active="true"]')
         if (!activeCard) return
-        const rowRect = row.getBoundingClientRect()
-        const cardRect = activeCard.getBoundingClientRect()
-        const contentOffset = row.scrollLeft + cardRect.left - rowRect.left
-        const maxLeft = Math.max(0, row.scrollWidth - row.clientWidth)
-        row.scrollLeft = Math.min(maxLeft, Math.max(0, contentOffset))
+        alignRollingCard(row, activeCard, rollingRowStartInset(row))
         if (now - startedAt < 500) frame = requestAnimationFrame(align)
       }
       frame = requestAnimationFrame(align)
@@ -803,7 +1007,7 @@ function RollingHome({
     >
       <div className="absolute inset-0 overflow-hidden">
         <div className="rolling-backdrop-art home-backdrop-art absolute -inset-[4%]">
-          <HomeBackdrop game={backdropGame} customUrl={customBackdropUrl} />
+          <HomeBackdrop game={backdropGame} customWallpaper={customWallpaper} />
         </div>
         <div className="rolling-backdrop-veil absolute inset-0" />
       </div>
@@ -820,6 +1024,8 @@ function RollingHome({
             <div
               ref={rowRef}
               data-rolling-row="true"
+              onFocusCapture={onFocusNearEdge}
+              onScroll={onScrollNearEdge}
               className="rolling-game-row scrollbar-none flex min-h-0 shrink-0 items-start gap-[clamp(0.75rem,1.15vw,1.35rem)] overflow-x-auto overflow-y-hidden pb-2"
             >
               {installedGames.map((game, index) => {
@@ -836,16 +1042,25 @@ function RollingHome({
                     data-focusable
                     data-game-card="true"
                     data-game-id={game.id}
+                    data-game-running={runningGameId === game.id ? 'true' : undefined}
                     data-rolling-game="true"
                     data-rolling-index={index}
                     data-rolling-active={active ? 'true' : 'false'}
                     data-view-entry={active ? 'true' : undefined}
-                    aria-label={game.name}
+                    aria-label={
+                      runningGameId === game.id
+                        ? `${game.name}. ${t('launch.running')}`
+                        : game.name
+                    }
                     onClick={() => onLaunchGame(game)}
                     onFocus={() => onSelectGame(game)}
                     className="rolling-game-card group relative flex shrink-0 flex-col text-left outline-none"
                   >
                     <span className="rolling-game-art relative block w-full overflow-hidden rounded-xl2 border border-white/10 bg-surface-2 shadow-card">
+                      <GameRunningIndicator
+                        active={runningGameId === game.id}
+                        className="right-3 top-3"
+                      />
                       <GameImage
                         gameId={game.id}
                         name={game.name}
@@ -926,7 +1141,7 @@ function XModeHome({
   installedGames,
   libraryGames,
   backdropGame,
-  customBackdropUrl,
+  customWallpaper,
   deals,
   onSelectGame,
   onLaunchGame,
@@ -940,7 +1155,7 @@ function XModeHome({
   installedGames: LibraryGame[]
   libraryGames: LibraryGame[]
   backdropGame: LibraryGame | null
-  customBackdropUrl?: string
+  customWallpaper?: HomeWallpaperAsset
   deals: StoreProduct[]
   onSelectGame: (game: LibraryGame) => void
   onLaunchGame: (game: LibraryGame) => void
@@ -951,6 +1166,7 @@ function XModeHome({
   t: TFunction
 }): JSX.Element {
   const reduceMotion = Boolean(useReducedMotion())
+  const runningGameId = useRunningGameId()
   const launcherGames = installedGames.slice(0, 6)
   const launcherIds = useMemo(
     () => new Set(launcherGames.map((game) => game.id)),
@@ -986,8 +1202,8 @@ function XModeHome({
       <div className="absolute inset-0">
         <div className="home-backdrop-art absolute inset-0">
           <HomeBackdrop
-            game={customBackdropUrl ? null : backdropGame ?? recommendationPool[0] ?? null}
-            customUrl={customBackdropUrl}
+            game={customWallpaper ? null : backdropGame ?? recommendationPool[0] ?? null}
+            customWallpaper={customWallpaper}
           />
         </div>
         <div className="xmode-backdrop-veil absolute inset-0" />
@@ -1032,18 +1248,27 @@ function XModeHome({
                     data-focusable
                     data-game-card="true"
                     data-game-id={game.id}
+                    data-game-running={runningGameId === game.id ? 'true' : undefined}
                     data-grid-index={index}
                     data-xmode-launcher={game.id}
                     type="button"
                     onFocus={() => onSelectGame(game)}
                     onMouseEnter={() => onSelectGame(game)}
                     onClick={() => onLaunchGame(game)}
-                    aria-label={game.name}
+                    aria-label={
+                      runningGameId === game.id
+                        ? `${game.name}. ${t('launch.running')}`
+                        : game.name
+                    }
                     whileHover={reduceMotion ? undefined : { y: -3, scale: 1.018 }}
                     whileFocus={reduceMotion ? undefined : { y: -3, scale: 1.018 }}
                     transition={{ type: 'spring', stiffness: 410, damping: 30 }}
                     className="xmode-game-card group relative aspect-square min-w-0 overflow-hidden rounded-[clamp(0.7rem,1.15vw,1.15rem)] border border-white/12 bg-surface-2 text-left shadow-card outline-none"
                   >
+                    <GameRunningIndicator
+                      active={runningGameId === game.id}
+                      className="left-2 top-2"
+                    />
                     <GameImage
                       gameId={game.id}
                       name={game.name}
@@ -1447,7 +1672,7 @@ function relatedStoreProducts(
       seenBaseGames.add(identity)
       return true
     })
-    .slice(0, 6)
+    .slice(0, CORESENSE_RECOMMENDATION_SLOT_COUNT)
 }
 
 function relationshipLabel(relationship: CoreSenseRelationship, t: TFunction): string {
@@ -1463,7 +1688,7 @@ function CoreSenseHome({
   libraryGames,
   selectedGame,
   backdropGame,
-  customBackdropUrl,
+  customWallpaper,
   storeProducts,
   activity,
   language,
@@ -1477,16 +1702,17 @@ function CoreSenseHome({
   libraryGames: LibraryGame[]
   selectedGame: LibraryGame | null
   backdropGame: LibraryGame | null
-  customBackdropUrl?: string
+  customWallpaper?: HomeWallpaperAsset
   storeProducts: StoreProduct[]
   activity?: LibraryActivitySummary
-  language: 'en' | 'de'
+  language: Language
   onSelectGame: (game: LibraryGame) => void
   onLaunchGame: (game: LibraryGame) => void
   onOpenStoreProduct: (product: StoreProduct) => void
   t: TFunction
 }): JSX.Element {
   const reduceMotion = useReducedMotion()
+  const runningGameId = useRunningGameId()
   const [seriesStoreProducts, setSeriesStoreProducts] = useState<StoreProduct[]>([])
   const [launcherInteractionGameId, setLauncherInteractionGameId] = useState<string | null>(null)
   const focusedLauncherGameIdRef = useRef<string | null>(null)
@@ -1579,7 +1805,7 @@ function CoreSenseHome({
     >
       <div className="absolute inset-0">
         <div className="home-backdrop-art absolute inset-0">
-          <HomeBackdrop game={backdropGame} customUrl={customBackdropUrl} />
+          <HomeBackdrop game={backdropGame} customWallpaper={customWallpaper} />
         </div>
         <div className="coresense-backdrop-veil absolute inset-0" />
         <div className="home-backdrop-dim absolute inset-0" />
@@ -1637,11 +1863,16 @@ function CoreSenseHome({
                       data-focusable
                       data-game-card="true"
                       data-game-id={game.id}
+                      data-game-running={runningGameId === game.id ? 'true' : undefined}
                       data-grid-index={index}
                       data-home-game-card="true"
                       data-coresense-launcher="true"
                       data-active={active ? 'true' : undefined}
-                      aria-label={game.name}
+                      aria-label={
+                        runningGameId === game.id
+                          ? `${game.name}. ${t('launch.running')}`
+                          : game.name
+                      }
                       onFocus={() => {
                         onSelectGame(game)
                         updateLauncherInteraction(game.id, true, 'focus')
@@ -1686,6 +1917,10 @@ function CoreSenseHome({
                       <span
                         className="coresense-launcher-art home-card-convex relative isolate block overflow-hidden border border-white/10 bg-black/35 shadow-card"
                       >
+                        <GameRunningIndicator
+                          active={runningGameId === game.id}
+                          className="right-2 top-2"
+                        />
                         <GameImage
                           gameId={game.id}
                           name={game.name}
@@ -1718,13 +1953,23 @@ function CoreSenseHome({
                   data-focusable
                   data-game-card="true"
                   data-game-id={selectedGame.id}
+                  data-game-running={runningGameId === selectedGame.id ? 'true' : undefined}
                   data-coresense-primary="true"
+                  aria-label={
+                    runningGameId === selectedGame.id
+                      ? `${selectedGame.name}. ${t('launch.running')}`
+                      : selectedGame.name
+                  }
                   onClick={() => onLaunchGame(selectedGame)}
                   initial={{ opacity: 0, x: -18 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                  className="coresense-identity group flex max-w-[min(48rem,82vw)] items-center gap-[clamp(0.8rem,1.6vw,1.35rem)] rounded-[clamp(0.9rem,1.4vw,1.25rem)] border border-white/10 bg-black/35 p-[clamp(0.7rem,1.3vw,1rem)] pr-[clamp(1rem,2vw,1.6rem)] text-left shadow-[0_18px_50px_rgba(0,0,0,0.28)] backdrop-blur-xl"
+                  className="coresense-identity group relative flex max-w-[min(48rem,82vw)] items-center gap-[clamp(0.8rem,1.6vw,1.35rem)] rounded-[clamp(0.9rem,1.4vw,1.25rem)] border border-white/10 bg-black/35 p-[clamp(0.7rem,1.3vw,1rem)] pr-[clamp(1rem,2vw,1.6rem)] text-left shadow-[0_18px_50px_rgba(0,0,0,0.28)] backdrop-blur-xl"
                 >
+                  <GameRunningIndicator
+                    active={runningGameId === selectedGame.id}
+                    className="right-2 top-2"
+                  />
                   <span className="coresense-identity-logo block shrink-0">
                     <GameImage
                       gameId={selectedGame.id}
@@ -1773,7 +2018,7 @@ function CoreSenseHome({
                   data-grid-columns={recommendations.length}
                   data-grid-exit-y="true"
                   style={{
-                    gridTemplateColumns: `repeat(${recommendations.length}, minmax(0, 1fr))`
+                    gridTemplateColumns: `repeat(${CORESENSE_RECOMMENDATION_SLOT_COUNT}, minmax(0, 1fr))`
                   }}
                   className="coresense-recommendation-grid grid w-full min-w-0 px-1 pb-2 pt-1"
                 >
@@ -1845,7 +2090,7 @@ function ActivityMetric({
   label: string
   activity: LibraryActivityWindow
   hasHistory: boolean
-  language: 'en' | 'de'
+  language: Language
   t: TFunction
 }): JSX.Element {
   return (
@@ -1877,7 +2122,7 @@ function ActivityInline({
   label: string
   activity: LibraryActivityWindow
   hasHistory: boolean
-  language: 'en' | 'de'
+  language: Language
 }): JSX.Element {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/35 px-2.5 py-1 backdrop-blur-lg">
@@ -1892,33 +2137,46 @@ function ActivityInline({
 
 type HomeBackdropFrame =
   | { key: string; type: 'game'; game: LibraryGame }
-  | { key: string; type: 'custom'; url: string }
+  | { key: string; type: 'custom'; asset: HomeWallpaperAsset }
 
 function createHomeBackdropFrame(
   game: LibraryGame | null,
-  customUrl?: string
+  customWallpaper?: HomeWallpaperAsset
 ): HomeBackdropFrame | null {
-  if (customUrl) return { key: `custom:${customUrl}`, type: 'custom', url: customUrl }
+  if (customWallpaper) {
+    return {
+      key: `custom:${customWallpaper.kind}:${customWallpaper.url}`,
+      type: 'custom',
+      asset: customWallpaper
+    }
+  }
   if (game) return { key: `game:${game.id}`, type: 'game', game }
   return null
 }
 
 function HomeBackdrop({
   game,
-  customUrl
+  customWallpaper
 }: {
   game: LibraryGame | null
-  customUrl?: string
+  customWallpaper?: HomeWallpaperAsset
 }): JSX.Element {
   const homeBackdropMode = usePreferencesStore((state) => state.homeBackdropMode)
   const homeBackdropMotion = usePreferencesStore((state) => state.homeBackdropMotion)
+  const backgroundMotionUnlocked = useOrbitPlusStore((state) =>
+    orbitPlusHasFeature(state.snapshot, 'background-motion')
+  )
+  const fallbackFromCustomHomeWallpaper = usePreferencesStore(
+    (state) => state.fallbackFromCustomHomeWallpaper
+  )
   const reduceMotion = Boolean(useReducedMotion())
-  const incoming = createHomeBackdropFrame(game, customUrl)
+  const incoming = createHomeBackdropFrame(game, customWallpaper)
   const [current, setCurrent] = useState<HomeBackdropFrame | null>(incoming)
   const [outgoing, setOutgoing] = useState<HomeBackdropFrame | null>(null)
   const transitionMs = homeBackdropMode === 'slideshow' ? 1_100 : 240
   const transitionSeconds = transitionMs / 1_000
-  const effectiveMotion = reduceMotion ? 'still' : homeBackdropMotion
+  const effectiveMotion =
+    reduceMotion || !backgroundMotionUnlocked ? 'still' : homeBackdropMotion
 
   useEffect(() => {
     if (incoming?.key === current?.key) return undefined
@@ -1932,16 +2190,17 @@ function HomeBackdrop({
 
   const renderArtwork = (frame: HomeBackdropFrame): JSX.Element =>
     frame.type === 'custom' ? (
-      <img
-        src={frame.url}
-        alt=""
-        draggable={false}
+      <HomeWallpaperMedia
+        asset={frame.asset}
+        decorative
+        onError={() => void fallbackFromCustomHomeWallpaper(frame.asset.url)}
         className="h-full w-full object-cover"
       />
     ) : (
       <GameImage
         gameId={frame.game.id}
         name={frame.game.name}
+        decorative
         orientation="horizontal"
         className="h-full w-full object-cover"
       />
@@ -1958,7 +2217,6 @@ function HomeBackdrop({
           data-home-backdrop-frame="outgoing"
           data-backdrop-motion={effectiveMotion}
           className="home-backdrop-frame absolute inset-0"
-          style={{ willChange: 'opacity, transform' }}
         >
           {renderArtwork(outgoing)}
         </motion.div>
@@ -1974,7 +2232,6 @@ function HomeBackdrop({
           data-backdrop-game-id={current.type === 'game' ? current.game.id : undefined}
           data-backdrop-motion={effectiveMotion}
           className="home-backdrop-frame absolute inset-0"
-          style={{ willChange: 'opacity, transform' }}
         >
           {renderArtwork(current)}
         </motion.div>
@@ -1993,7 +2250,7 @@ function GameFocusSummary({
 }: {
   game: LibraryGame
   completionTimes: GameCompletionTimes | null
-  language: 'en' | 'de'
+  language: Language
   direction: number
   flat: boolean
   t: TFunction
@@ -2308,6 +2565,7 @@ function XModeLibraryRecommendations({
   t: TFunction
 }): JSX.Element {
   const reduceMotion = Boolean(useReducedMotion())
+  const runningGameId = useRunningGameId()
   const progressRef = useRef<HTMLSpanElement>(null)
   const focusedRef = useRef(false)
   const hoveredRef = useRef(false)
@@ -2374,17 +2632,24 @@ function XModeLibraryRecommendations({
           data-grid-index={1}
           data-game-card="true"
           data-game-id={recommendation.id}
+          data-game-running={runningGameId === recommendation.id ? 'true' : undefined}
           data-xmode-recommendation-offer={recommendation.id}
           type="button"
           onFocus={() => onSelectGame(recommendation)}
           onMouseEnter={() => onSelectGame(recommendation)}
           onClick={() => onLaunchGame(recommendation)}
-          aria-label={`${label}: ${recommendation.name}`}
+          aria-label={`${label}: ${recommendation.name}${
+            runningGameId === recommendation.id ? `. ${t('launch.running')}` : ''
+          }`}
           whileHover={reduceMotion ? undefined : { scale: 1.008 }}
           whileFocus={reduceMotion ? undefined : { scale: 1.008 }}
           transition={{ type: 'spring', stiffness: 380, damping: 30 }}
           className="xmode-recommendation-offer group relative min-h-0 min-w-0 overflow-hidden rounded-xl2 border border-white/10 bg-black/35 text-left shadow-card outline-none"
         >
+          <GameRunningIndicator
+            active={runningGameId === recommendation.id}
+            className="right-3 top-3"
+          />
           <AnimatePresence initial={false} mode="wait">
             <motion.span
               key={recommendation.id}
@@ -2444,17 +2709,24 @@ function XModeLibraryRecommendations({
           data-grid-index={3}
           data-game-card="true"
           data-game-id={recentGame.id}
+          data-game-running={runningGameId === recentGame.id ? 'true' : undefined}
           data-xmode-recently-added={recentGame.id}
           type="button"
           onFocus={() => onSelectGame(recentGame)}
           onMouseEnter={() => onSelectGame(recentGame)}
           onClick={() => (recentGame.installed ? onLaunchGame(recentGame) : onOpenLibrary())}
-          aria-label={`${t('home.xmode.recentlyAdded')}: ${recentGame.name}`}
+          aria-label={`${t('home.xmode.recentlyAdded')}: ${recentGame.name}${
+            runningGameId === recentGame.id ? `. ${t('launch.running')}` : ''
+          }`}
           whileHover={reduceMotion ? undefined : { scale: 1.008 }}
           whileFocus={reduceMotion ? undefined : { scale: 1.008 }}
           transition={{ type: 'spring', stiffness: 380, damping: 30 }}
           className="xmode-recently-added-tile group relative min-h-0 min-w-0 overflow-hidden rounded-xl2 border border-white/10 bg-black/35 text-left shadow-card outline-none"
         >
+          <GameRunningIndicator
+            active={runningGameId === recentGame.id}
+            className="right-3 top-3"
+          />
           <GameImage
             gameId={recentGame.id}
             name={recentGame.name}

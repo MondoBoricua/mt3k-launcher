@@ -4,6 +4,7 @@ import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path
 import { pathToFileURL } from 'node:url'
 import type { GameMetadata } from '@shared/ipc'
 import { normalizeXboxPackageFamilyName } from './xboxPackageIdentity'
+import { normalizeXboxTitleId } from './xboxTitleIdentity'
 
 const XBOX_SCAN_TIMEOUT_MS = 30_000
 const MAX_SCAN_OUTPUT_BYTES = 8 * 1024 * 1024
@@ -13,6 +14,7 @@ interface XboxPackageRecord {
   packageFamilyName?: string
   packageVersion?: string
   storeId?: string
+  titleId?: string
   applicationId?: string
   name?: string
   publisher?: string
@@ -75,11 +77,14 @@ $records = @(
     $gameConfigPath = Join-Path $installLocation 'MicrosoftGame.config'
     $gameConfig = $null
     $storeId = $null
+    $titleId = $null
     $configuredExecutable = $null
     if (Test-Path -LiteralPath $gameConfigPath) {
       try {
         [xml]$gameConfig = [System.IO.File]::ReadAllText($gameConfigPath)
         $candidateStoreId = ([string]$gameConfig.Game.StoreId).Trim().ToUpperInvariant()
+        $candidateTitleId = ([string]$gameConfig.Game.TitleId).Trim()
+        if ($candidateTitleId -match '^(0x)?[0-9A-Fa-f]{1,8}$') { $titleId = $candidateTitleId }
         $configuredExecutable = @($gameConfig.Game.ExecutableList.Executable |
           Where-Object { $_.Name -and (-not $_.TargetDeviceFamily -or $_.TargetDeviceFamily -eq 'PC') } |
           ForEach-Object { [string]$_.Name } |
@@ -160,6 +165,7 @@ $records = @(
         packageFamilyName = [string]$package.PackageFamilyName
         packageVersion = [string]$package.Version
         storeId = $storeId
+        titleId = $titleId
         applicationId = [string]$application.Id
         name = $name
         publisher = $publisher
@@ -283,6 +289,9 @@ async function scanInstalledXboxGamesInternal(
       storeUrl: `ms-windows-store://pdp/?PFN=${encodeURIComponent(family)}`,
       launchUri: `shell:AppsFolder\\${applicationIdentity}`,
       launchExecutable: safeText(record.executable),
+      providerStoreId: xboxProductId(record.storeId),
+      providerTitleId: normalizeXboxTitleId(record.titleId, true),
+      providerPackageFamilyName: family,
       backgroundUrl: splash ? pathToFileURL(splash).href : undefined,
       iconUrl: logo ? pathToFileURL(logo).href : undefined,
       artwork: {
