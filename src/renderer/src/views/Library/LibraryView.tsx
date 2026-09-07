@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
   ChevronLeft,
   CircleAlert,
+  Cloud,
   Download,
   Folder,
   FolderOpen,
@@ -14,8 +15,10 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  Sparkles,
   Star,
   Trash2,
+  UsersRound,
   X
 } from 'lucide-react'
 import { useAutoFocus } from '@renderer/hooks/useAutoFocus'
@@ -36,6 +39,9 @@ import { usePlayStationStore } from '@renderer/state/playstationStore'
 import { useNavigationStore } from '@renderer/state/navigationStore'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import { GameCard } from '@renderer/components/GameCard'
+import { GeForceNowPanel } from '@renderer/components/GeForceNowPanel'
+import { CloudGamingPlusPanel } from '@renderer/components/CloudGamingPlusPanel'
+import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 import { LibraryProviderBadge } from '@renderer/components/LibraryProviderBadge'
 import { LibrarySelect, type LibrarySelectOption } from '@renderer/components/LibrarySelect'
 import { RetroSystemHub } from '@renderer/components/RetroSystemHub'
@@ -58,8 +64,13 @@ import {
   RETRO_SYSTEM_SWAY_ROTATION
 } from '@renderer/lib/retroSystemMotion'
 import { useLibraryCollectionsStore } from '@renderer/state/libraryCollectionsStore'
+import { useGeForceNowStore } from '@renderer/state/geForceNowStore'
 
 import { shouldShowSteamSyncNotice } from '@shared/steamSyncPolicy'
+import {
+  isSteamSharedLibraryGame,
+  projectSteamSharedVisibility
+} from '@shared/steamLibraryAccess'
 import { retroSystemById } from '@shared/retroSystems'
 import type {
   GameCollection,
@@ -68,12 +79,21 @@ import type {
   RetroLibraryStatus,
   RetroSystemId
 } from '@shared/ipc'
+import { isNewXboxGamePassMembership } from '@shared/xboxGamePassHistory'
 
-const INITIAL_RENDER_LIMIT = 30
+const INITIAL_RENDER_LIMIT = 18
 const RENDER_BATCH_SIZE = 18
+type XboxEntitlementFilter = 'all' | 'subscription' | 'purchased' | 'unknown'
 
 function libraryProviderFromSource(source: LibrarySource): GameProvider | null {
-  if (source === 'favorites' || source === 'all' || source.startsWith('collection:')) return null
+  if (
+    source === 'favorites' ||
+    source === 'all' ||
+    source === 'geforce-now' ||
+    source.startsWith('collection:')
+  ) {
+    return null
+  }
   return source as GameProvider
 }
 
@@ -92,6 +112,21 @@ function LibrarySourceMark({
         size="compact"
         className={`transition-transform duration-150 ${active ? 'scale-105' : 'opacity-80'}`}
       />
+    )
+  }
+
+  if (source === 'geforce-now') {
+    return (
+      <span
+        aria-hidden="true"
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[0.56rem] border transition-colors ${
+          active
+            ? 'border-[#9ee34b]/55 bg-[#76b900]/20 text-[#b7f16f]'
+            : 'border-[#76b900]/25 bg-[#76b900]/10 text-[#9ee34b]/80'
+        }`}
+      >
+        <Cloud size={15} />
+      </span>
     )
   }
 
@@ -205,11 +240,18 @@ export function LibraryView(): JSX.Element {
   const isActive = useNavigationStore((s) => s.mainView === 'library')
   const gridColumns = usePreferencesStore((s) => s.libraryGridColumns)
   const language = usePreferencesStore((s) => s.language)
+  const showSteamSharedGames = usePreferencesStore((s) => s.showSteamSharedGames)
+  const setShowSteamSharedGames = usePreferencesStore((s) => s.setShowSteamSharedGames)
+  const geForceNowSnapshot = useGeForceNowStore((s) => s.snapshot)
+  const cloudGamingUnlocked = useOrbitPlusStore((s) => s.hasFeature('cloud-gaming'))
+  const geForceNowMatchesByGameId = useGeForceNowStore((s) => s.matchesByGameId)
   const retroSystemColumns = Math.min(5, Math.max(3, gridColumns))
   const favoriteGameIds = useLibraryCollectionsStore((s) => s.favoriteGameIds)
   const collections = useLibraryCollectionsStore((s) => s.collections)
   const preloadCardThreshold = gridColumns * 2
   const [query, setQuery] = useState('')
+  const [xboxEntitlementFilter, setXboxEntitlementFilter] =
+    useState<XboxEntitlementFilter>('all')
   const [showCustomWizard, setShowCustomWizard] = useState(false)
   const [showRetroLibrary, setShowRetroLibrary] = useState(false)
   const [activeRetroSystem, setActiveRetroSystem] = useState<RetroSystemId | null>(null)
@@ -255,7 +297,7 @@ export function LibraryView(): JSX.Element {
     expand: expandSearch,
     collapse: collapseSearch
   } = useExpandableViewSearch({
-    active: isActive,
+    active: isActive && (source !== 'geforce-now' || cloudGamingUnlocked),
     containerRef,
     eventName: LIBRARY_SEARCH_EVENT,
     onCollapse: () => setQuery('')
@@ -269,6 +311,10 @@ export function LibraryView(): JSX.Element {
   const steamSyncMessage =
     steamStatus?.issue === 'metadata-pending'
       ? t('library.sync.pending', { count: steamStatus.pendingCount ?? 0 })
+      : steamStatus?.issue === 'supplemental-source-unavailable'
+        ? t('library.sync.supplemental')
+        : steamStatus?.issue === 'local-source-unavailable'
+          ? t('library.sync.local')
       : steamStatus?.issue === 'online-library-unavailable' ||
           steamStatus?.issue === 'no-games-found'
         ? t('library.sync.visibility')
@@ -281,6 +327,52 @@ export function LibraryView(): JSX.Element {
     }
     return [...byId.values()]
   }, [games, providerGames])
+  const steamSharedGameCount = useMemo(
+    () => availableGames.filter(isSteamSharedLibraryGame).length,
+    [availableGames]
+  )
+  const visibleAvailableGames = useMemo(
+    () => projectSteamSharedVisibility(availableGames, showSteamSharedGames),
+    [availableGames, showSteamSharedGames]
+  )
+  const visibleGames = useMemo(
+    () => projectSteamSharedVisibility(games, showSteamSharedGames),
+    [games, showSteamSharedGames]
+  )
+  const visibleProviderGames = useMemo(
+    () => projectSteamSharedVisibility(providerGames, showSteamSharedGames),
+    [providerGames, showSteamSharedGames]
+  )
+  const geForceNowGames = useMemo(
+    () => cloudGamingUnlocked
+      ? visibleAvailableGames.filter((game) => Boolean(geForceNowMatchesByGameId[game.id]))
+      : [],
+    [cloudGamingUnlocked, geForceNowMatchesByGameId, visibleAvailableGames]
+  )
+  useEffect(() => {
+    if (source !== 'geforce-now' || !isActive || document.activeElement !== document.body) return
+    focusElement(containerRef.current?.querySelector<HTMLElement>(
+      '[data-cloud-gaming-unlock], [data-library-source="geforce-now"]'
+    ) ?? null)
+  }, [cloudGamingUnlocked, containerRef, isActive, source])
+  const newGamePassGames = useMemo(
+    () =>
+      visibleProviderGames
+        .filter(
+          (game) =>
+            game.provider === 'xbox' &&
+            game.metadata.entitlement?.kind === 'subscription' &&
+            isNewXboxGamePassMembership(game.metadata.entitlement.membershipDetectedAt)
+        )
+        .sort(
+          (left, right) =>
+            (right.metadata.entitlement?.membershipDetectedAt ?? 0) -
+              (left.metadata.entitlement?.membershipDetectedAt ?? 0) ||
+            titleCollator.compare(left.name, right.name)
+        )
+        .slice(0, 8),
+    [titleCollator, visibleProviderGames]
+  )
 
   const favoriteIds = useMemo(() => new Set(favoriteGameIds), [favoriteGameIds])
   const activeCollectionId = collectionIdFromLibrarySource(source)
@@ -289,8 +381,8 @@ export function LibraryView(): JSX.Element {
     : undefined
 
   const retroGames = useMemo(
-    () => providerGames.filter((game) => game.provider === 'retro'),
-    [providerGames]
+    () => visibleProviderGames.filter((game) => game.provider === 'retro'),
+    [visibleProviderGames]
   )
   const activeRetroGames = useMemo(
     () =>
@@ -408,41 +500,45 @@ export function LibraryView(): JSX.Element {
 
   const sourceCounts = useMemo(
     () => ({
-      favorites: availableGames.filter((game) => favoriteIds.has(game.id)).length,
-      all: games.length,
-      steam: providerGames.filter((game) => game.provider === 'steam').length,
-      epic: providerGames.filter((game) => game.provider === 'epic').length,
-      gog: providerGames.filter((game) => game.provider === 'gog').length,
-      xbox: providerGames.filter((game) => game.provider === 'xbox').length,
-      playstation: providerGames.filter((game) => game.provider === 'playstation').length,
-      ea: providerGames.filter((game) => game.provider === 'ea').length,
-      ubisoft: providerGames.filter((game) => game.provider === 'ubisoft').length,
-      retro: providerGames.filter((game) => game.provider === 'retro').length,
-      local: providerGames.filter((game) => game.provider === 'local').length
+      favorites: visibleAvailableGames.filter((game) => favoriteIds.has(game.id)).length,
+      all: visibleGames.length,
+      'geforce-now': geForceNowGames.length,
+      steam: visibleProviderGames.filter((game) => game.provider === 'steam').length,
+      epic: visibleProviderGames.filter((game) => game.provider === 'epic').length,
+      gog: visibleProviderGames.filter((game) => game.provider === 'gog').length,
+      xbox: visibleProviderGames.filter((game) => game.provider === 'xbox').length,
+      playstation: visibleProviderGames.filter((game) => game.provider === 'playstation').length,
+      ea: visibleProviderGames.filter((game) => game.provider === 'ea').length,
+      ubisoft: visibleProviderGames.filter((game) => game.provider === 'ubisoft').length,
+      retro: visibleProviderGames.filter((game) => game.provider === 'retro').length,
+      local: visibleProviderGames.filter((game) => game.provider === 'local').length
     }),
-    [availableGames, favoriteIds, games.length, providerGames]
+    [favoriteIds, geForceNowGames.length, visibleAvailableGames, visibleGames, visibleProviderGames]
   )
 
   const selectedGames = useMemo(() => {
     const collectionIds = new Set(activeCollection?.gameIds ?? [])
     return source === 'favorites'
-      ? availableGames.filter((game) => favoriteIds.has(game.id))
+      ? visibleAvailableGames.filter((game) => favoriteIds.has(game.id))
       : activeCollection
-        ? availableGames.filter((game) => collectionIds.has(game.id))
+        ? visibleAvailableGames.filter((game) => collectionIds.has(game.id))
         : source === 'all'
-          ? games
-          : source === 'retro' && activeRetroSystem
-            ? retroGames.filter((game) => game.retro?.systemId === activeRetroSystem)
-            : providerGames.filter((game) => game.provider === source)
+          ? visibleGames
+          : source === 'geforce-now'
+            ? geForceNowGames
+            : source === 'retro' && activeRetroSystem
+              ? retroGames.filter((game) => game.retro?.systemId === activeRetroSystem)
+              : visibleProviderGames.filter((game) => game.provider === source)
   }, [
     activeCollection,
     activeRetroSystem,
-    availableGames,
     favoriteIds,
-    games,
-    providerGames,
+    geForceNowGames,
     retroGames,
-    source
+    source,
+    visibleAvailableGames,
+    visibleGames,
+    visibleProviderGames
   ])
 
   const categoryOptions = useMemo<LibrarySelectOption<string>[]>(() => {
@@ -467,6 +563,23 @@ export function LibraryView(): JSX.Element {
     if (category !== activeCategory) setCategory(activeCategory)
   }, [activeCategory, category, setCategory])
 
+  const xboxEntitlementOptions = useMemo<LibrarySelectOption<XboxEntitlementFilter>[]>(() => {
+    const count = (kind: Exclude<XboxEntitlementFilter, 'all'>): number =>
+      selectedGames.filter((game) => (game.metadata.entitlement?.kind ?? 'unknown') === kind).length
+    return [
+      { value: 'all', label: t('library.access.all') },
+      {
+        value: 'subscription',
+        label: `${t('library.access.gamePass')} · ${count('subscription')}`
+      },
+      {
+        value: 'purchased',
+        label: `${t('library.access.purchased')} · ${count('purchased')}`
+      },
+      { value: 'unknown', label: `${t('library.access.unknown')} · ${count('unknown')}` }
+    ]
+  }, [selectedGames, t])
+
   const filtered = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase(language)
     return selectedGames
@@ -481,8 +594,23 @@ export function LibraryView(): JSX.Element {
         (game) =>
           !normalizedQuery || game.name.toLocaleLowerCase(language).includes(normalizedQuery)
       )
+      .filter(
+        (game) =>
+          source !== 'xbox' ||
+          xboxEntitlementFilter === 'all' ||
+          (game.metadata.entitlement?.kind ?? 'unknown') === xboxEntitlementFilter
+      )
       .sort((left, right) => compareLibraryGames(left, right, sortOrder, titleCollator))
-  }, [activeCategory, language, query, selectedGames, sortOrder, titleCollator])
+  }, [
+    activeCategory,
+    language,
+    query,
+    selectedGames,
+    sortOrder,
+    source,
+    titleCollator,
+    xboxEntitlementFilter
+  ])
 
   useEffect(() => {
     setCollectionIds(collections.map((collection) => collection.id))
@@ -560,7 +688,15 @@ export function LibraryView(): JSX.Element {
     setRenderLimit(Math.min(INITIAL_RENDER_LIMIT, filtered.length))
     // `filtered.length` is deliberately handled by the non-resetting effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCategory, activeRetroSystem, query, sortOrder, source])
+  }, [
+    activeCategory,
+    activeRetroSystem,
+    query,
+    showSteamSharedGames,
+    sortOrder,
+    source,
+    xboxEntitlementFilter
+  ])
 
   useEffect(() => {
     setRenderLimit((current) => {
@@ -609,6 +745,7 @@ export function LibraryView(): JSX.Element {
 
   function sourceLabel(value: LibrarySource): string {
     if (value === 'favorites') return t('library.source.favorites')
+    if (value === 'geforce-now') return t('library.source.geforceNow')
     if (value === 'steam') return t('library.source.steam')
     if (value === 'epic') return t('library.source.epic')
     if (value === 'gog') return t('library.source.gog')
@@ -662,7 +799,7 @@ export function LibraryView(): JSX.Element {
                   data-library-source={value}
                   data-search-focus-fallback={active ? 'true' : undefined}
                   type="button"
-                  aria-label={`${label}: ${count}`}
+                  aria-label={value === 'geforce-now' && !cloudGamingUnlocked ? `${label} · ORBIT Plus` : `${label}: ${count}`}
                   aria-pressed={active}
                   onClick={() => {
                     if (value === 'retro') setActiveRetroSystem(null)
@@ -676,6 +813,9 @@ export function LibraryView(): JSX.Element {
                   }`}
                 >
                   <LibrarySourceMark source={value} active={active} />
+                  {value === 'geforce-now' && !cloudGamingUnlocked && (
+                    <Sparkles aria-hidden="true" size={12} className="mx-1 shrink-0 text-amber-200" />
+                  )}
                   <AnimatePresence initial={false}>
                     {active && (
                       <motion.span
@@ -752,7 +892,7 @@ export function LibraryView(): JSX.Element {
             className="mx-1 flex h-7 min-w-7 shrink-0 items-center justify-center rounded-md border border-white/15 bg-black/20 px-1.5 text-[10px] font-black text-white/55"
           />
         </div>
-        <div className="col-start-1 flex min-w-0 items-center justify-center gap-2 2xl:col-start-3 2xl:row-start-1 2xl:justify-self-end">
+        {(source !== 'geforce-now' || cloudGamingUnlocked) && <div className="col-start-1 flex min-w-0 items-center justify-center gap-2 2xl:col-start-3 2xl:row-start-1 2xl:justify-self-end">
           <motion.div
             layout
             transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
@@ -820,32 +960,36 @@ export function LibraryView(): JSX.Element {
               <span className="hidden sm:inline">{t('library.collection.deleteShort')}</span>
             </button>
           )}
-          <button
-            data-focusable
-            type="button"
-            onClick={() => setShowRetroLibrary(true)}
-            className="flex shrink-0 items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-3.5 py-2.5 text-sm font-bold text-accent transition-colors hover:bg-accent/15"
-          >
-            <Gamepad2 size={17} />
-            <span className="hidden sm:inline">{t('retro.manageAction')}</span>
-          </button>
-          <button
-            data-focusable
-            type="button"
-            onClick={() => setShowCustomWizard(true)}
-            className="flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-sm font-bold text-black shadow-[0_10px_28px_rgb(var(--color-accent)/0.18)] transition-transform hover:scale-[1.02]"
-          >
-            <Plus size={17} strokeWidth={2.7} />
-            <span className="hidden sm:inline">{t('customGame.addAction')}</span>
-          </button>
-        </div>
-        {isLoadingMetadata && (
+          {source !== 'geforce-now' && (
+            <>
+              <button
+                data-focusable
+                type="button"
+                onClick={() => setShowRetroLibrary(true)}
+                className="flex shrink-0 items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-3.5 py-2.5 text-sm font-bold text-accent transition-colors hover:bg-accent/15"
+              >
+                <Gamepad2 size={17} />
+                <span className="hidden sm:inline">{t('retro.manageAction')}</span>
+              </button>
+              <button
+                data-focusable
+                type="button"
+                onClick={() => setShowCustomWizard(true)}
+                className="flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-sm font-bold text-black shadow-[0_10px_28px_rgb(var(--color-accent)/0.18)] transition-transform hover:scale-[1.02]"
+              >
+                <Plus size={17} strokeWidth={2.7} />
+                <span className="hidden sm:inline">{t('customGame.addAction')}</span>
+              </button>
+            </>
+          )}
+        </div>}
+        {source !== 'geforce-now' && isLoadingMetadata && (
           <div className="col-span-full flex items-center justify-center gap-2 text-xs text-muted">
             <Loader2 size={14} className="animate-spin" />
             {t('library.loadingMetadata')}
           </div>
         )}
-        {(source !== 'retro' || activeRetroSystem !== null) && (
+        {(source !== 'geforce-now' || cloudGamingUnlocked) && (source !== 'retro' || activeRetroSystem !== null) && (
           <div
             role="group"
             className="col-span-full flex flex-wrap items-center gap-3"
@@ -865,6 +1009,55 @@ export function LibraryView(): JSX.Element {
               onChange={setCategory}
               className="w-full sm:w-[clamp(13rem,21vw,19rem)]"
             />
+            {source === 'xbox' && (
+              <LibrarySelect
+                label={t('library.access.label')}
+                value={xboxEntitlementFilter}
+                options={xboxEntitlementOptions}
+                onChange={setXboxEntitlementFilter}
+                className="w-full sm:w-[clamp(13rem,21vw,19rem)]"
+              />
+            )}
+            {account && steamSharedGameCount > 0 && source !== 'retro' && (
+              <button
+                data-focusable
+                type="button"
+                aria-pressed={showSteamSharedGames}
+                aria-label={`${t('library.filters.steamShared')}. ${t('library.filters.steamSharedDescription')}`}
+                title={t('library.filters.steamSharedDescription')}
+                onClick={() => void setShowSteamSharedGames(!showSteamSharedGames)}
+                className={`flex h-[3.05rem] w-full items-center gap-2.5 rounded-xl border px-3.5 text-left transition-colors sm:w-auto ${
+                  showSteamSharedGames
+                    ? 'border-accent/35 bg-accent/10 text-white'
+                    : 'border-white/[0.08] bg-white/[0.035] text-white/55 hover:bg-white/[0.07] hover:text-white'
+                }`}
+              >
+                <UsersRound
+                  size={17}
+                  className={showSteamSharedGames ? 'text-accent' : 'text-white/45'}
+                />
+                <span className="min-w-0">
+                  <span className="block text-xs font-bold">
+                    {t('library.filters.steamShared')}
+                  </span>
+                  <span className="block text-[10px] text-white/45">
+                    {t('library.filters.steamSharedCount', { count: steamSharedGameCount })}
+                  </span>
+                </span>
+                <span
+                  aria-hidden="true"
+                  className={`relative ml-auto h-5 w-9 rounded-full transition-colors ${
+                    showSteamSharedGames ? 'bg-accent' : 'bg-white/15'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                      showSteamSharedGames ? 'translate-x-[1.125rem]' : 'translate-x-0.5'
+                    }`}
+                  />
+                </span>
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -892,7 +1085,88 @@ export function LibraryView(): JSX.Element {
         </div>
       )}
 
-      {source === 'retro' && activeRetroSystem === null ? (
+      {source === 'xbox' && (
+        <section className="relative min-h-[9rem] shrink-0 overflow-hidden rounded-xl2 border border-[#52c75a]/20 bg-[#071208] p-[clamp(1.25rem,2vw,1.75rem)] shadow-card">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_8%_0%,rgba(82,199,90,0.16),transparent_38%)]" />
+          <div className="relative flex flex-wrap items-end justify-between gap-3">
+            <div className="min-w-0">
+              <p className="flex items-center gap-2.5 text-lg font-black leading-tight text-white">
+                <Sparkles size={19} className="shrink-0 text-[#79e381]" />
+                {t('library.gamePass.newTitle')}
+              </p>
+              <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-white/55">
+                {t('library.gamePass.newBody')}
+              </p>
+            </div>
+            {newGamePassGames.length > 0 && (
+              <span className="rounded-full border border-[#52c75a]/25 bg-[#107c10]/15 px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#8bea91]">
+                {t('library.gamePass.newCount', { count: newGamePassGames.length })}
+              </span>
+            )}
+          </div>
+          {newGamePassGames.length > 0 ? (
+            <div
+              data-navigation-grid
+              className="relative mt-4 grid gap-[clamp(0.8rem,1.4vw,1.15rem)]"
+              style={{
+                gridTemplateColumns: `repeat(${Math.min(gridColumns, 8)}, minmax(0, 1fr))`
+              }}
+            >
+              {newGamePassGames.map((game) => (
+                <GameCard key={`game-pass-new:${game.id}`} game={game} />
+              ))}
+            </div>
+          ) : (
+            <div className="relative mt-4 rounded-xl border border-white/[0.07] bg-white/[0.035] px-4 py-3">
+              <p className="text-sm font-bold text-white/75">
+                {t('library.gamePass.newEmptyTitle')}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-white/42">
+                {t('library.gamePass.newEmptyBody')}
+              </p>
+            </div>
+          )}
+        </section>
+      )}
+
+      {source === 'geforce-now' ? (
+        !cloudGamingUnlocked ? <CloudGamingPlusPanel /> : <>
+          <GeForceNowPanel matchCount={geForceNowGames.length} />
+          {geForceNowSnapshot.state === 'loading' && geForceNowGames.length === 0 ? (
+            <div role="status" className="flex min-h-48 items-center justify-center gap-2 text-sm font-semibold text-white/55">
+              <Loader2 size={18} className="animate-spin text-[#9ee34b]" />
+              {t('library.geforceNow.catalog.loading')}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex min-h-48 flex-col items-center justify-center text-center">
+              <Cloud size={34} className="text-[#9ee34b]/65" />
+              <p className="mt-3 max-w-xl text-sm leading-relaxed text-white/55">
+                {query.trim() || activeCategory !== ALL_LIBRARY_CATEGORIES
+                  ? t('library.geforceNow.catalog.noResults')
+                  : geForceNowSnapshot.state === 'error'
+                    ? t('library.geforceNow.catalog.unavailableBody')
+                    : t('library.geforceNow.catalog.empty')}
+              </p>
+            </div>
+          ) : (
+            <div
+              data-navigation-grid
+              data-grid-columns={gridColumns}
+              className="-mx-2 grid gap-[clamp(0.9rem,1.8vw,1.5rem)] px-2 pb-8 pt-2"
+              style={{ gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))` }}
+            >
+              {filtered.slice(0, renderLimit).map((game, index) => (
+                <GameCard
+                  key={game.id}
+                  game={game}
+                  navigationIndex={index}
+                  activationTarget="geforce-now"
+                />
+              ))}
+            </div>
+          )}
+        </>
+      ) : source === 'retro' && activeRetroSystem === null ? (
         <RetroSystemHub
           games={retroGames}
           columns={retroSystemColumns}
@@ -1015,32 +1289,37 @@ export function LibraryView(): JSX.Element {
               <p className="text-sm font-semibold text-white/70">
                 {games.length === 0 && loadedAt === 0
                   ? t('library.loading')
-                  : query.trim() || activeCategory !== ALL_LIBRARY_CATEGORIES
+                  : query.trim() ||
+                      activeCategory !== ALL_LIBRARY_CATEGORIES ||
+                      (source === 'xbox' && xboxEntitlementFilter !== 'all')
                     ? t('library.filters.empty')
                     : source === 'favorites'
                       ? t('library.favorites.empty')
                       : activeCollection
                         ? t('library.collection.empty')
                         : source === 'local'
-                          ? t('customGame.empty')
-                          : source === 'retro' && activeRetroSystem
-                            ? t('retro.systems.empty')
-                            : source === 'retro'
-                              ? t('retro.empty')
-                              : !account &&
-                                  !epicAccount &&
-                                  !playStationAccount &&
-                                  games.length === 0
-                                ? t('library.noAccount')
-                                : t('library.empty')}
+                            ? t('customGame.empty')
+                            : source === 'retro' && activeRetroSystem
+                              ? t('retro.systems.empty')
+                              : source === 'retro'
+                                ? t('retro.empty')
+                                : !account &&
+                                    !epicAccount &&
+                                    !playStationAccount &&
+                                    games.length === 0
+                                  ? t('library.noAccount')
+                                  : t('library.empty')}
               </p>
-              {(query.trim() || activeCategory !== ALL_LIBRARY_CATEGORIES) && (
+              {(query.trim() ||
+                activeCategory !== ALL_LIBRARY_CATEGORIES ||
+                (source === 'xbox' && xboxEntitlementFilter !== 'all')) && (
                 <button
                   data-focusable
                   type="button"
                   onClick={() => {
                     setQuery('')
                     setCategory(ALL_LIBRARY_CATEGORIES)
+                    setXboxEntitlementFilter('all')
                   }}
                   className="mt-4 rounded-full border border-white/[0.12] bg-white/[0.06] px-4 py-2.5 text-sm font-bold text-white/75 transition-colors hover:bg-white/10 hover:text-white"
                 >

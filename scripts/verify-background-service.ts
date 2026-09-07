@@ -31,7 +31,8 @@ import {
 import {
   BACKGROUND_AGENT_STABLE_MS,
   backgroundAgentRestartDelayMs,
-  classifyWindowsLoginItem
+  classifyWindowsLoginItem,
+  shouldRunBackgroundAgent
 } from '../src/main/orbitBackgroundServicePolicy.ts'
 import {
   backgroundAgentSuspensionPath,
@@ -264,6 +265,10 @@ assert.equal(backgroundAgentRestartDelayMs(5), 48_000)
 assert.equal(backgroundAgentRestartDelayMs(6), 60_000)
 assert.equal(backgroundAgentRestartDelayMs(100), 60_000)
 assert.equal(BACKGROUND_AGENT_STABLE_MS, 30_000)
+assert.equal(shouldRunBackgroundAgent('installed', true), true)
+assert.equal(shouldRunBackgroundAgent('installed', false), false)
+assert.equal(shouldRunBackgroundAgent('installed', true, true), false)
+assert.equal(shouldRunBackgroundAgent('not-installed', true), false)
 
 assert.equal(backgroundServiceWatchdogRestartDelayMs(-1), 1_500)
 assert.equal(backgroundServiceWatchdogRestartDelayMs(0), 1_500)
@@ -434,6 +439,7 @@ assert.ok(
 assert.match(backgroundAgentSource, /'installed' \| 'disabled' \| 'unavailable'/)
 assert.match(backgroundAgentSource, /isBackgroundAgentSuspended\(userDataPath\)/)
 assert.match(backgroundAgentSource, /shutdownScheduled \|\| shuttingDown/)
+assert.match(backgroundAgentSource, /!settingsStore\.store\.hardwareControlEnabled/)
 
 const suspensionDirectory = mkdtempSync(join(tmpdir(), 'orbit-background-suspension-'))
 try {

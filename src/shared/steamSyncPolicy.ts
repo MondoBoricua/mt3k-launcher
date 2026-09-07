@@ -29,9 +29,13 @@ export function decideSteamSyncHealth(input: SteamSyncHealthInput): SteamSyncHea
     return { state: 'partial', issue: 'metadata-pending' }
   }
   if (input.primaryLibraryAvailable) {
-    return input.supplementalSourcesComplete && input.localLibraryComplete
-      ? { state: 'ready' }
-      : { state: 'partial', issue: 'source-unavailable' }
+    if (!input.localLibraryComplete) {
+      return { state: 'partial', issue: 'local-source-unavailable' }
+    }
+    if (!input.supplementalSourcesComplete) {
+      return { state: 'partial', issue: 'supplemental-source-unavailable' }
+    }
+    return { state: 'ready' }
   }
 
   const hasUsableLibrary = input.fallbackLibraryAvailable || input.cachedGameCount > 0
@@ -63,5 +67,10 @@ export function shouldShowSteamSyncNotice(status?: LibraryProviderStatus): boole
   if (status.issue === 'metadata-pending') return false
   const retainedOnlineLibrary =
     status.methods.includes('cached-data') && status.installableCount > 0
-  return status.issue === 'source-unavailable' || !retainedOnlineLibrary
+  return (
+    status.issue === 'source-unavailable' ||
+    status.issue === 'supplemental-source-unavailable' ||
+    status.issue === 'local-source-unavailable' ||
+    !retainedOnlineLibrary
+  )
 }

@@ -1,9 +1,11 @@
+import { type Language, languageLocale } from '@shared/language'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ChevronDown,
   CircleAlert,
   ExternalLink,
+  Gamepad2,
   Globe2,
   Inbox,
   Loader2,
@@ -18,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useAuthStore } from '@renderer/state/authStore'
 import { useEpicAuthStore } from '@renderer/state/epicAuthStore'
+import { useXboxAuthStore } from '@renderer/state/xboxAuthStore'
 import { useFriendsStore, type FriendsFilter } from '@renderer/state/friendsStore'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import { useT, type TFunction } from '@renderer/i18n/useT'
@@ -34,18 +37,20 @@ import {
   useDiscordChatStore
 } from '@renderer/state/discordChatStore'
 
-const FILTERS: FriendsFilter[] = ['all', 'steam', 'discord', 'epic']
+const FILTERS: FriendsFilter[] = ['all', 'steam', 'discord', 'epic', 'xbox']
 
 const providerIcon: Record<FriendsProvider, typeof Waypoints> = {
   steam: Waypoints,
   discord: MessageCircle,
-  epic: Shield
+  epic: Shield,
+  xbox: Gamepad2
 }
 
 const providerColor: Record<FriendsProvider, string> = {
   steam: 'bg-[#1b2838] text-[#66c0f4]',
   discord: 'bg-[#5865f2] text-white',
-  epic: 'bg-[#2a2a2a] text-white'
+  epic: 'bg-[#2a2a2a] text-white',
+  xbox: 'bg-[#107c10] text-white'
 }
 
 const presenceColor: Record<FriendPresence, string> = {
@@ -90,6 +95,9 @@ export function FriendsView(): JSX.Element {
   const epicAccount = useEpicAuthStore((state) => state.account)
   const epicLoginStatus = useEpicAuthStore((state) => state.status)
   const startEpicLogin = useEpicAuthStore((state) => state.startLogin)
+  const xboxAccount = useXboxAuthStore((state) => state.account)
+  const xboxLoginStatus = useXboxAuthStore((state) => state.status)
+  const startXboxLogin = useXboxAuthStore((state) => state.startLogin)
   const snapshot = useFriendsStore((state) => state.snapshot)
   const initialized = useFriendsStore((state) => state.initialized)
   const filter = useFriendsStore((state) => state.filter)
@@ -115,7 +123,7 @@ export function FriendsView(): JSX.Element {
 
   useEffect(() => {
     if (initialized) void refresh()
-  }, [account?.steamId, epicAccount?.accountId, initialized, refresh])
+  }, [account?.steamId, epicAccount?.accountId, xboxAccount?.xuid, initialized, refresh])
 
   useEffect(() => {
     const content = contentRef.current
@@ -144,7 +152,7 @@ export function FriendsView(): JSX.Element {
   }, [consumeOpenRequest, requestedUserId, snapshot.friends])
 
   const visibleProviders = useMemo<FriendsProvider[]>(
-    () => (filter === 'all' ? ['steam', 'discord', 'epic'] : [filter]),
+    () => (filter === 'all' ? ['steam', 'discord', 'epic', 'xbox'] : [filter]),
     [filter]
   )
   const onlineCount = snapshot.friends.filter((friend) => onlinePresence(friend.presence)).length
@@ -265,11 +273,14 @@ export function FriendsView(): JSX.Element {
                       ? steamLoginStatus.state === 'waiting-for-browser'
                       : provider === 'epic'
                         ? epicLoginStatus.state === 'waiting-for-browser'
-                        : false
+                        : provider === 'xbox'
+                          ? xboxLoginStatus.state === 'waiting-for-browser'
+                          : false
                   }
                   handoffError={handoffError === provider}
                   onConnectSteam={() => void startSteamLogin()}
                   onConnectEpic={() => void startEpicLogin()}
+                  onConnectXbox={() => void startXboxLogin()}
                   onConnectDiscord={() => void runDiscordAction('connect')}
                   onDisconnectDiscord={() => void runDiscordAction('disconnect')}
                   onOpenProvider={() => void openProviderSafely(provider)}
@@ -330,6 +341,7 @@ function ProviderSection({
   handoffError,
   onConnectSteam,
   onConnectEpic,
+  onConnectXbox,
   onConnectDiscord,
   onDisconnectDiscord,
   onOpenProvider,
@@ -350,6 +362,7 @@ function ProviderSection({
   handoffError: boolean
   onConnectSteam: () => void
   onConnectEpic: () => void
+  onConnectXbox: () => void
   onConnectDiscord: () => void
   onDisconnectDiscord: () => void
   onOpenProvider: () => void
@@ -360,7 +373,7 @@ function ProviderSection({
   unreadByUser: Record<string, number>
   unreadCount: number
   t: TFunction
-  language: 'en' | 'de'
+  language: Language
 }): JSX.Element {
   const Icon = providerIcon[provider]
   const [offlineExpanded, setOfflineExpanded] = useState(false)
@@ -488,6 +501,7 @@ function ProviderSection({
           loginPending={loginPending}
           onConnectSteam={onConnectSteam}
           onConnectEpic={onConnectEpic}
+          onConnectXbox={onConnectXbox}
           onConnectDiscord={onConnectDiscord}
           onOpenProvider={onOpenProvider}
           onRetry={onRetry}
@@ -519,6 +533,7 @@ function ProviderStateCard({
   loginPending,
   onConnectSteam,
   onConnectEpic,
+  onConnectXbox,
   onConnectDiscord,
   onOpenProvider,
   onRetry,
@@ -530,6 +545,7 @@ function ProviderStateCard({
   loginPending: boolean
   onConnectSteam: () => void
   onConnectEpic: () => void
+  onConnectXbox: () => void
   onConnectDiscord: () => void
   onOpenProvider: () => void
   onRetry: () => void
@@ -584,6 +600,28 @@ function ProviderStateCard({
     )
     action = status.issue === 'authentication-failed' ? t('friends.epic.connect') : t('friends.retry')
     onAction = status.issue === 'authentication-failed' ? onConnectEpic : onRetry
+  } else if (provider === 'xbox' && status.state === 'not-connected') {
+    icon = <UserRoundPlus size={26} />
+    title = t('friends.xbox.connectTitle')
+    body = t('friends.xbox.connectBody')
+    action = loginPending ? t('friends.xbox.connecting') : t('friends.xbox.connect')
+    onAction = onConnectXbox
+  } else if (provider === 'xbox' && status.state === 'error') {
+    icon = <CircleAlert size={26} />
+    title = t(
+      status.issue === 'private-profile'
+        ? 'friends.xbox.privateTitle'
+        : 'friends.error.title'
+    )
+    body = t(
+      status.issue === 'private-profile'
+        ? 'friends.xbox.privateBody'
+        : status.issue === 'authentication-failed'
+          ? 'friends.xbox.sessionBody'
+          : 'friends.error.body'
+    )
+    action = status.issue === 'authentication-failed' ? t('friends.xbox.connect') : t('friends.retry')
+    onAction = status.issue === 'authentication-failed' ? onConnectXbox : onRetry
   } else if (provider === 'discord' && status.state === 'not-connected') {
     icon = <UserRoundPlus size={26} />
     title = t('friends.discord.connectTitle')
@@ -647,7 +685,7 @@ function FriendCard({
 }: {
   friend: OrbitFriend
   t: TFunction
-  language: 'en' | 'de'
+  language: Language
   onMessage: (friend: OrbitFriend) => void
   unread: number
 }): JSX.Element {
@@ -658,7 +696,7 @@ function FriendCard({
     ? t('friends.playing', { game: friend.activity })
     : friend.presence === 'offline' && friend.lastSeenAt
       ? t('friends.lastSeen', {
-          date: new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', {
+          date: new Intl.DateTimeFormat(languageLocale(language), {
             dateStyle: 'medium'
           }).format(new Date(friend.lastSeenAt))
         })

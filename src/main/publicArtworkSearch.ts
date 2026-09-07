@@ -2,7 +2,7 @@ import type { ArtworkNetworkAttempt } from './artworkNetworkPolicy'
 import { isTransientArtworkStatus, runArtworkNetworkAttempt } from './artworkNetworkPolicy'
 import { fetchWithElectronNet } from './networkFetch'
 import { settingsStore } from './settingsStore'
-import { STORE_REGIONS } from './store/storeRegions'
+import { localizedStoreRegion } from './store/storeRegions'
 import {
   isPublicSteamArtworkUrl,
   parsePublicSteamSearchItems,
@@ -102,7 +102,7 @@ export async function searchPublicSteamArtwork(
   return runArtworkNetworkAttempt<PublicSteamArtworkCandidate[]>(
     'artwork-picker:store.steampowered.com',
     async () => {
-      const region = STORE_REGIONS[settingsStore.store.storeRegion]
+      const region = localizedStoreRegion(settingsStore.store.storeRegion, settingsStore.store.language)
       const url = new URL('https://store.steampowered.com/api/storesearch/')
       url.searchParams.set('term', query)
       url.searchParams.set('l', region.steamLanguage)

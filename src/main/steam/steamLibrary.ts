@@ -3,11 +3,14 @@ import { watch, type FSWatcher } from 'node:fs'
 import { app } from 'electron'
 import type {
   GameCompletionTimes,
+  LibraryAccessKind,
   LibraryDetectionMethod,
+  LibraryProviderIssue,
   LibraryProviderStatus,
   LibrarySnapshot
 } from '@shared/ipc'
 import { canPruneSteamOwnedRecords, decideSteamSyncHealth } from '@shared/steamSyncPolicy'
+import { classifySteamSessionAccess } from '@shared/steamLibraryAccess'
 import { isConfirmedNonGameSteamAppType } from '@shared/libraryContentPolicy'
 import type { SteamAuthManager } from './steamAuth'
 import { settingsStore } from '../settingsStore'
@@ -37,7 +40,7 @@ import { syncCoordinator } from '../sync/syncCoordinator'
 import type { LibraryProviderAdapter } from '../library/libraryProvider'
 import { completionTimesService } from '../completionTimes'
 
-const STEAM_API_LANGUAGE: Record<string, string> = { en: 'english', de: 'german' }
+const STEAM_API_LANGUAGE: Record<string, string> = { en: 'english', de: 'german', es: 'spanish' }
 const LOCAL_MANIFEST_SETTLE_MS = 900
 
 type SteamSyncSource =
@@ -65,6 +68,7 @@ function reportSteamSourceFailure(source: SteamSyncSource, error: unknown): void
 interface MetadataUpdate {
   metadata: SteamAppMetadata
   allowCreate: boolean
+  libraryAccess?: LibraryAccessKind
 }
 
 function localInstallFingerprint(installed: Iterable<InstalledSteamApp>): string {
@@ -87,7 +91,10 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
   private localManifestTimer: ReturnType<typeof setTimeout> | undefined
   private localInstallState = ''
   private watchedSteamId?: string
-  private synchronizedSourcesComplete = false
+  private synchronizedSourceIssue?: Extract<
+    LibraryProviderIssue,
+    'supplemental-source-unavailable' | 'local-source-unavailable'
+  >
   private providerStatus: LibraryProviderStatus = {
     provider: 'steam',
     state: 'idle',
@@ -104,28 +111,32 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
       gameRepository.setMetadataLoading('steam', true)
       this.emitSnapshot()
     })
-    steamMetadataService.on('updated', ({ metadata, allowCreate }: MetadataUpdate) => {
-      const wasPending = this.pendingMetadataIds.has(metadata.appId)
-      if (metadata.type !== 'game') {
-        const removed =
-          isConfirmedNonGameSteamAppType(metadata.type) &&
-          gameRepository.removeProviderContent('steam', String(metadata.appId))
-        if (wasPending) this.resolvePendingMetadata(metadata.appId)
-        else if (removed) this.emitSnapshot()
-        return
+    steamMetadataService.on(
+      'updated',
+      ({ metadata, allowCreate, libraryAccess }: MetadataUpdate) => {
+        const wasPending = this.pendingMetadataIds.has(metadata.appId)
+        if (metadata.type !== 'game') {
+          const removed =
+            isConfirmedNonGameSteamAppType(metadata.type) &&
+            gameRepository.removeProviderContent('steam', String(metadata.appId))
+          if (wasPending) this.resolvePendingMetadata(metadata.appId)
+          else if (removed) this.emitSnapshot()
+          return
+        }
+        const changed = gameRepository.applyMetadataDelta(
+          metadata,
+          Boolean(allowCreate && wasPending),
+          libraryAccess
+        )
+        const game = gameRepository
+          .getGamesByProvider('steam')
+          .find((candidate) => candidate.id === `steam:${metadata.appId}`)
+        if (wasPending && game) this.resolvePendingMetadata(metadata.appId)
+        if (!changed) return
+        if (game) artworkService.syncProvider([game], 'steam')
+        this.emitSnapshot()
       }
-      const changed = gameRepository.applyMetadataDelta(
-        metadata,
-        Boolean(allowCreate && wasPending)
-      )
-      const game = gameRepository
-        .getGamesByProvider('steam')
-        .find((candidate) => candidate.id === `steam:${metadata.appId}`)
-      if (wasPending && game) this.resolvePendingMetadata(metadata.appId)
-      if (!changed) return
-      if (game) artworkService.syncProvider([game], 'steam')
-      this.emitSnapshot()
-    })
+    )
     steamMetadataService.on('idle', () => {
       gameRepository.setMetadataLoading('steam', false)
       if (
@@ -228,6 +239,69 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
     return true
   }
 
+  refreshMetadata(appId: number): Promise<boolean> {
+    const language = STEAM_API_LANGUAGE[settingsStore.get('language')] ?? 'english'
+    return steamMetadataService.refreshGame(appId, language)
+  }
+
+  /** Reconciles newly installed Steam manifests without repeating account,
+   * wishlist or full-library metadata requests. */
+  async refreshInstalledGames(providerGameIds?: readonly string[]): Promise<LibrarySnapshot> {
+    const activeRefresh = this.refreshInFlight
+    if (activeRefresh) await activeRefresh.catch(() => undefined)
+
+    const requestedAppIds = providerGameIds
+      ? new Set(
+          providerGameIds
+            .map((providerGameId) => Number(providerGameId))
+            .filter((appId) => Number.isInteger(appId) && appId > 0)
+        )
+      : undefined
+    syncCoordinator.begin('library', 1, 0, 'steam-local', 'steam')
+    const installedSnapshot = scanInstalledSteamAppsSnapshot(this.watchedSteamId)
+    const installed = [...installedSnapshot.games.values()].filter(
+      (game) => !requestedAppIds || requestedAppIds.has(game.appId)
+    )
+    const changedInstalled = installed.filter((game) => {
+      const existing = gameRepository.getGame(`steam:${game.appId}`)
+      return (
+        !existing?.installed ||
+        existing.installDir !== game.installDir ||
+        existing.name !== game.name ||
+        Boolean(existing.updateAvailable) !== game.updateAvailable
+      )
+    })
+    if (changedInstalled.length > 0) {
+      gameRepository.applyInstalledProviderPatch(
+        'steam',
+        changedInstalled.map((game) => ({
+          providerGameId: String(game.appId),
+          appId: game.appId,
+          name: game.name,
+          installDir: game.installDir,
+          updateAvailable: game.updateAvailable,
+          playtimeSeconds: game.playtimeSeconds,
+          lastPlayedTimestamp: game.lastPlayedTimestamp
+        }))
+      )
+    }
+
+    const games = changedInstalled
+      .map((game) => gameRepository.getGame(`steam:${game.appId}`))
+      .filter((game): game is NonNullable<typeof game> => Boolean(game))
+    if (games.length > 0) {
+      artworkService.syncProvider(games, 'steam')
+      steamMetadataService.syncLibrary(
+        changedInstalled.map((game) => ({ appId: game.appId, allowCreate: false })),
+        STEAM_API_LANGUAGE[settingsStore.get('language')] ?? 'english'
+      )
+    }
+    if (installedSnapshot.complete) syncCoordinator.complete('library', 'steam-local', 'steam')
+    else syncCoordinator.fail('library', 'steam-local', 'steam')
+    if (changedInstalled.length > 0) this.emitSnapshot()
+    return this.getSnapshot()
+  }
+
   async refresh(auth: SteamAuthManager): Promise<LibrarySnapshot> {
     if (this.refreshInFlight) return this.refreshInFlight
     this.refreshInFlight = this.doRefresh(auth)
@@ -244,7 +318,7 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
 
     gameRepository.openProfile(account?.steamId)
     this.pendingMetadataIds.clear()
-    this.synchronizedSourcesComplete = false
+    this.synchronizedSourceIssue = undefined
     this.setProviderStatus({
       state: 'scanning',
       connection: account ? 'connected' : 'not-connected',
@@ -314,9 +388,20 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
     const addMethod = (method: LibraryDetectionMethod): void => {
       if (!methods.includes(method)) methods.push(method)
     }
-    const metadataByAppId = new Map<number, boolean>()
-    const addMetadataTarget = (appId: number, allowCreate: boolean): void => {
-      metadataByAppId.set(appId, Boolean(metadataByAppId.get(appId) || allowCreate))
+    const metadataByAppId = new Map<
+      number,
+      { allowCreate: boolean; libraryAccess?: LibraryAccessKind }
+    >()
+    const addMetadataTarget = (
+      appId: number,
+      allowCreate: boolean,
+      libraryAccess?: LibraryAccessKind
+    ): void => {
+      const current = metadataByAppId.get(appId)
+      metadataByAppId.set(appId, {
+        allowCreate: Boolean(current?.allowCreate || allowCreate),
+        libraryAccess: libraryAccess ?? current?.libraryAccess
+      })
     }
     const mergeOwnedGame = (target: Map<number, SteamOwnedGame>, game: SteamOwnedGame): void => {
       const current = target.get(game.appId)
@@ -340,6 +425,7 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
 
     let authoritativeOwned: Map<number, SteamOwnedGame> | undefined
     const supplementalOwned = new Map<number, SteamOwnedGame>()
+    const sharedSessionGames = new Map<number, SteamOwnedGame>()
     let clientGames = new Map<number, { appId: number; name: string }>()
     let clientSourceAvailable = false
     let ownedResponseWasEmpty = false
@@ -370,11 +456,18 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
       syncCoordinator.progress('library', 2, 3, 'steam-community', 'steam')
     }
 
+    const authoritativeOwnedAppIds = authoritativeOwned
+      ? new Set(authoritativeOwned.keys())
+      : undefined
     for (const clientGame of clientGames.values()) {
-      mergeOwnedGame(authoritativeOwned ?? supplementalOwned, {
-        appId: clientGame.appId,
-        name: clientGame.name
-      })
+      const access = classifySteamSessionAccess(clientGame.appId, authoritativeOwnedAppIds)
+      mergeOwnedGame(
+        access === 'shared' ? sharedSessionGames : (authoritativeOwned ?? supplementalOwned),
+        {
+          appId: clientGame.appId,
+          name: clientGame.name
+        }
+      )
     }
 
     if (!authoritativeOwned) {
@@ -418,7 +511,7 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
         if (authoritativeOwned.has(appId)) continue
         const cached = cachedByAppId.get(appId)
         if (!cached) continue
-        authoritativeOwned.set(appId, {
+        sharedSessionGames.set(appId, {
           appId,
           name: cached.name,
           iconUrl: cached.metadata.iconUrl,
@@ -431,30 +524,58 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
       // mark-and-sweep is safe only after both additive session sources were
       // also structurally available; otherwise keep cached provider records.
       if (canPruneOwnedRecords) {
-        gameRepository.applyAuthoritativeOwnedDelta(authoritativeOwned.values())
+        gameRepository.applyAuthoritativeOwnedDelta(
+          authoritativeOwned.values(),
+          sharedSessionGames.values()
+        )
       } else {
         gameRepository.applyNonAuthoritativeOwnedDelta(authoritativeOwned.values())
+        gameRepository.applyNonAuthoritativeSharedDelta(sharedSessionGames.values())
       }
-      for (const appId of authoritativeOwned.keys()) addMetadataTarget(appId, false)
+      for (const appId of authoritativeOwned.keys()) addMetadataTarget(appId, false, 'owned')
+      for (const appId of sharedSessionGames.keys()) addMetadataTarget(appId, false, 'shared')
     } else if (supplementalOwned.size > 0) {
-      gameRepository.applyNonAuthoritativeOwnedDelta(supplementalOwned.values())
+      gameRepository.applyNonAuthoritativeUnclassifiedDelta(supplementalOwned.values())
       for (const appId of supplementalOwned.keys()) addMetadataTarget(appId, false)
     }
 
-    const unresolved = gameRepository.applyNonAuthoritativeOwnedIds(dynamicOwnedIds)
+    const dynamicOwnedAppIds = authoritativeOwned
+      ? dynamicOwnedIds.filter((appId) => authoritativeOwned?.has(appId))
+      : []
+    const dynamicSharedAppIds = authoritativeOwned
+      ? dynamicOwnedIds.filter((appId) => !authoritativeOwned?.has(appId))
+      : []
+    const dynamicUnclassifiedAppIds = authoritativeOwned ? [] : dynamicOwnedIds
+    const unresolved = [
+      ...gameRepository.applyNonAuthoritativeOwnedIds(dynamicOwnedAppIds, 'owned'),
+      ...gameRepository.applyNonAuthoritativeOwnedIds(dynamicSharedAppIds, 'shared'),
+      ...gameRepository.applyNonAuthoritativeOwnedIds(dynamicUnclassifiedAppIds)
+    ]
     const unresolvedSet = new Set(unresolved)
-    for (const appId of dynamicOwnedIds) addMetadataTarget(appId, unresolvedSet.has(appId))
-    this.synchronizedSourcesComplete = canPruneOwnedRecords && installedSnapshot.complete
+    for (const appId of dynamicOwnedIds) {
+      addMetadataTarget(
+        appId,
+        unresolvedSet.has(appId),
+        classifySteamSessionAccess(appId, authoritativeOwnedAppIds)
+      )
+    }
+    this.synchronizedSourceIssue = !installedSnapshot.complete
+      ? 'local-source-unavailable'
+      : !clientSourceAvailable || !dynamicSourceAvailable
+        ? 'supplemental-source-unavailable'
+        : undefined
     gameRepository.applyProviderActivityDelta('steam', localActivity)
     if (dynamicSourceAvailable) gameRepository.setRecentSteamAppIds(dynamicRecentIds)
 
     // Revalidate retained records as well. This lets cached provider metadata
     // purge DLC/tools left behind by an older or partial client-list sync.
     for (const game of this.getSnapshot().providerGames) {
-      if (game.provider === 'steam' && game.appId) addMetadataTarget(game.appId, false)
+      if (game.provider === 'steam' && game.appId) {
+        addMetadataTarget(game.appId, false, game.libraryAccess)
+      }
     }
     let metadataTargets: MetadataSyncTarget[] = [...metadataByAppId].map(
-      ([appId, allowCreate]) => ({ appId, allowCreate })
+      ([appId, target]) => ({ appId, ...target })
     )
     const librarySucceeded = Boolean(
       authoritativeOwned || supplementalOwned.size > 0 || dynamicOwnedIds.length > 0
@@ -494,9 +615,17 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
     if (metadataTargets.length === 0) {
       metadataTargets = snapshot.providerGames
         .filter((game) => game.provider === 'steam')
-        .map((game) => game.appId)
-        .filter((appId): appId is number => Number.isInteger(appId))
-        .map((appId) => ({ appId, allowCreate: false }))
+        .flatMap((game) =>
+          Number.isInteger(game.appId)
+            ? [
+                {
+                  appId: game.appId as number,
+                  allowCreate: false,
+                  libraryAccess: game.libraryAccess
+                }
+              ]
+            : []
+        )
     }
     // These two provider-neutral pipelines always run after the game delta,
     // including during onboarding. Fresh records count as completed instantly.
@@ -521,10 +650,10 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
       return
     }
     this.setProviderStatus({
-      state: this.synchronizedSourcesComplete ? 'ready' : 'partial',
+      state: this.synchronizedSourceIssue ? 'partial' : 'ready',
       connection: 'connected',
       methods: this.providerStatus.methods,
-      issue: this.synchronizedSourcesComplete ? undefined : 'source-unavailable',
+      issue: this.synchronizedSourceIssue,
       lastCheckedAt: this.providerStatus.lastCheckedAt ?? Date.now()
     })
   }
@@ -599,12 +728,12 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
         this.emitSnapshot()
       }
       if (!installedSnapshot.complete && this.providerStatus.state !== 'scanning') {
-        this.synchronizedSourcesComplete = false
+        this.synchronizedSourceIssue = 'local-source-unavailable'
         this.setProviderStatus({
           state: 'partial',
           connection: this.providerStatus.connection,
           methods: this.providerStatus.methods,
-          issue: 'source-unavailable',
+          issue: 'local-source-unavailable',
           lastCheckedAt: Date.now()
         })
       }

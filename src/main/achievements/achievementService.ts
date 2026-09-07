@@ -1,3 +1,4 @@
+import { steamLanguage, normalizeLanguage } from '@shared/language'
 import { app } from 'electron'
 import Store from 'electron-store'
 import type { GameAchievementsSnapshot, LibraryGame } from '@shared/ipc'
@@ -11,6 +12,8 @@ import { settingsStore } from '../settingsStore'
 import { steamAuthManager } from '../steam/steamAuth'
 import { steamWebApiCredentials } from '../steam/steamWebApiCredentials'
 import { syncCoordinator } from '../sync/syncCoordinator'
+import { xboxAuthManager } from '../xbox/xboxAuth'
+import { fetchXboxAchievements } from './xboxAchievements'
 import {
   parseSteamCommunityAchievements,
   parseSteamWebApiAchievements
@@ -21,7 +24,7 @@ interface AchievementDatabase {
   snapshots: Record<string, GameAchievementsSnapshot>
 }
 
-const ACHIEVEMENT_SCHEMA_VERSION = 4
+const ACHIEVEMENT_SCHEMA_VERSION = 5
 const AVAILABLE_TTL_MS = 6 * 60 * 60 * 1000
 const PRIVATE_TTL_MS = 6 * 60 * 60 * 1000
 const UNSUPPORTED_TTL_MS = 30 * 24 * 60 * 60 * 1000
@@ -41,7 +44,7 @@ let databasePersistTimer: ReturnType<typeof setTimeout> | undefined
 
 if (databaseState.schemaVersion < 3) databaseState.snapshots = {}
 if (databaseState.schemaVersion < ACHIEVEMENT_SCHEMA_VERSION) {
-  // Versions through 3 cached every network/session failure as a definitive
+  // Earlier versions cached every network/session failure as a definitive
   // seven-day miss. Preserve successful data, but let false negatives join
   // the repaired background sync immediately.
   for (const [gameId, snapshot] of Object.entries(databaseState.snapshots)) {
@@ -144,7 +147,7 @@ async function fetchSteamAchievements(game: LibraryGame): Promise<GameAchievemen
   if (!game.appId) return unavailable(game, 'unavailable')
   const account = steamAuthManager.getAccount() ?? (await steamAuthManager.restoreSession())
   if (!account) return unavailable(game, 'not-connected')
-  const language = settingsStore.store.language === 'de' ? 'german' : 'english'
+  const language = steamLanguage(settingsStore.store.language)
   const apiKey = steamWebApiCredentials.getApiKey()
 
   if (apiKey) {
@@ -165,9 +168,10 @@ async function fetchSteamAchievements(game: LibraryGame): Promise<GameAchievemen
 async function fetchProviderAchievements(game: LibraryGame): Promise<GameAchievementsSnapshot> {
   if (game.provider === 'steam') return fetchSteamAchievements(game)
   if (game.provider === 'retro') return fetchRetroAchievements(game)
+  if (game.provider === 'xbox') return fetchXboxAchievements(game)
   // Epic achievement state requires game-specific EOS credentials. The adapter
   // remains explicit instead of pretending that an Epic web login grants access
-  // to EOS player data. Xbox and PlayStation need their own account adapters too.
+  // to EOS player data. PlayStation needs its own achievement adapter too.
   return unavailable(game, 'unsupported')
 }
 
@@ -191,19 +195,33 @@ export class AchievementService {
     return { unlocked, total }
   }
 
+  clearProvider(provider: LibraryGame['provider']): void {
+    for (const [gameId, snapshot] of Object.entries(databaseState.snapshots)) {
+      if (snapshot.provider === provider) delete databaseState.snapshots[gameId]
+    }
+    flushDatabase()
+  }
+
   resolve(game: LibraryGame, force = false): Promise<GameAchievementsSnapshot> {
     const cached = this.get(game.id)
-    if (!force && cached && fresh(cached)) return Promise.resolve(cached)
-    const active = this.inFlight.get(game.id)
+    const language = normalizeLanguage(settingsStore.store.language)
+    if (!force && cached && cached.language === language && fresh(cached)) {
+      return Promise.resolve(cached)
+    }
+    const requestKey = `${game.id}:${language}`
+    const active = this.inFlight.get(requestKey)
     if (active) return active
     const request = fetchProviderAchievements(game)
       .then((snapshot) => {
-        databaseState.snapshots[game.id] = snapshot
-        scheduleDatabasePersist()
+        snapshot.language = language
+        if (language === normalizeLanguage(settingsStore.store.language)) {
+          databaseState.snapshots[game.id] = snapshot
+          scheduleDatabasePersist()
+        }
         return snapshot
       })
-      .finally(() => this.inFlight.delete(game.id))
-    this.inFlight.set(game.id, request)
+      .finally(() => this.inFlight.delete(requestKey))
+    this.inFlight.set(requestKey, request)
     return request
   }
 
@@ -228,6 +246,7 @@ export class AchievementService {
 
     const steamConnected = Boolean(steamAuthManager.getAccount())
     const retroConnected = hasRetroAchievementsCredentials()
+    const xboxConnected = Boolean(xboxAuthManager.getAccount())
     const candidates = games
       .filter(
         (game) =>
@@ -236,7 +255,12 @@ export class AchievementService {
               this.get(game.id)?.state === 'available')) ||
           (retroConnected &&
             game.provider === 'retro' &&
-            Boolean(game.retro?.retroAchievementsGameId))
+            Boolean(game.retro?.retroAchievementsGameId)) ||
+          (xboxConnected &&
+            game.provider === 'xbox' &&
+            (game.installed ||
+              Boolean(game.metadata.providerTitleId) ||
+              this.get(game.id)?.state === 'available'))
       )
       .sort((a, b) => latestLibraryActivity(b) - latestLibraryActivity(a))
 
@@ -244,6 +268,7 @@ export class AchievementService {
       const cached = this.get(game.id)
       return (
         !cached ||
+        cached.language !== normalizeLanguage(settingsStore.store.language) ||
         !fresh(cached) ||
         (forceUnavailable && cached.state === 'unavailable')
       )

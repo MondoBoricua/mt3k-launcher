@@ -20,6 +20,14 @@ export default {
         card: 'var(--shadow-card)'
       },
       borderRadius: {
+        sm: 'var(--radius-sm)',
+        DEFAULT: 'var(--radius-base)',
+        md: 'var(--radius-md)',
+        lg: 'var(--radius-lg)',
+        xl: 'var(--radius-xl)',
+        '2xl': 'var(--radius-2xl)',
+        '3xl': 'var(--radius-3xl)',
+        full: 'var(--radius-full)',
         xl2: 'var(--radius-card)'
       }
     }

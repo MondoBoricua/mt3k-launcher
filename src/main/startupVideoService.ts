@@ -1,9 +1,9 @@
+import { t } from './i18n'
 import { app, dialog, type BrowserWindow } from 'electron'
 import { existsSync, statSync } from 'node:fs'
 import { copyFile, mkdir, open, rename, stat, unlink } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { CUSTOM_STARTUP_VIDEO_URL } from '@shared/ipc'
-import { settingsStore } from './settingsStore'
 
 const STARTUP_MEDIA_DIR = join(app.getPath('userData'), 'startup-media')
 const STARTUP_VIDEO_FILE = 'startup.mp4'
@@ -79,12 +79,11 @@ class StartupVideoService {
   }
 
   async select(mainWindow: BrowserWindow): Promise<string | null> {
-    const german = settingsStore.store.language === 'de'
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: german ? 'ORBIT · Startup-Video auswählen' : 'ORBIT · Select startup video',
-      buttonLabel: german ? 'Video verwenden' : 'Use video',
+      title: t("ORBIT · Select startup video"),
+      buttonLabel: t("Use video"),
       properties: ['openFile'],
-      filters: [{ name: 'MP4 Video', extensions: ['mp4'] }]
+      filters: [{ name: t('MP4 Video'), extensions: ['mp4'] }]
     })
     if (result.canceled || !result.filePaths[0]) return null
 

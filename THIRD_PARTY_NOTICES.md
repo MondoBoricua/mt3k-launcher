@@ -31,6 +31,31 @@ PlayStation. Its license and source are available at:
 
 - <https://github.com/achievements-app/psn-api>
 
+## hls.js
+
+ORBIT uses the Apache-2.0-licensed `hls.js` package to play supported HLS game
+trailers in the Chromium renderer.
+
+- <https://github.com/video-dev/hls.js>
+
+## YouTube.js
+
+ORBIT uses the MIT-licensed `youtubei.js` package to find and resolve optional
+game title music. YouTube.js is a community-maintained InnerTube client and is
+not affiliated with or endorsed by YouTube or Google.
+
+- <https://github.com/LuanRT/YouTube.js>
+
+## BgUtils and GoogleVideo
+
+ORBIT uses the MIT-licensed `bgutils-js` and `googlevideo` packages to obtain
+YouTube playback attestation and consume the audio-only side of YouTube's SABR
+transport for optional game title music. Both packages are community-maintained
+and are not affiliated with or endorsed by YouTube or Google.
+
+- <https://github.com/LuanRT/BgUtils>
+- <https://github.com/LuanRT/GoogleVideo>
+
 ## RetroArch Systematic system artwork
 
 ORBIT includes selected system illustrations from the `systematic` XMB theme

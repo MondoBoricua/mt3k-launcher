@@ -16,6 +16,12 @@ import {
 } from '@renderer/lib/controllerProfile'
 import { useControllerStore } from '@renderer/state/controllerStore'
 import { useGameDetailStore } from '@renderer/state/gameDetailStore'
+import { ORBIT_PERFORMANCE_MODE_EVENT } from '@renderer/lib/performanceMode'
+import { resolveGameCardSecondaryActivation } from '@renderer/lib/gameCardActivation'
+import {
+  installPointerCursorRestoration,
+  setControllerCursorMode
+} from '@renderer/lib/controllerCursorMode'
 import {
   dispatchGamepadKeyboardShortcut,
   isGamepadKeyboardOpen,
@@ -29,6 +35,8 @@ const REPEAT_DELAY_MS = 420
 const REPEAT_RATE_MS = 130
 const CATEGORY_REPEAT_DELAY_MS = 220
 const CATEGORY_REPEAT_RATE_MS = 170
+const IDLE_GAMEPAD_POLL_MS = 250
+const BACKGROUND_GAMEPAD_POLL_MS = 1_000
 
 // Standard gamepad mapping (Xbox/PlayStation layout under the W3C Gamepad API)
 const BTN_A = 0
@@ -76,11 +84,25 @@ function confirmFocused(source: ConfirmSource): void {
   active.click()
 }
 
-function openGameDetails(card: HTMLElement | null): boolean {
+function activateGameCardSecondary(card: HTMLElement | null): boolean {
   const gameId = card?.dataset.gameId
   if (!gameId) return false
-  playUiSound('open')
-  useGameDetailStore.getState().openGame(gameId)
+  const target = card?.dataset.gameActivationTarget === 'geforce-now' ? 'geforce-now' : 'default'
+  const activation = resolveGameCardSecondaryActivation(
+    usePreferencesStore.getState().gameCardPrimaryAction,
+    target
+  )
+  if (activation.kind === 'details') {
+    playUiSound('open')
+    useGameDetailStore.getState().openGame(gameId, activation.preferredAction)
+    return true
+  }
+  playUiSound('confirm')
+  const launch =
+    activation.target === 'geforce-now'
+      ? window.api.geforceNow.launchGame(gameId)
+      : window.api.game.launch(gameId)
+  void launch.catch(() => playUiSound('error'))
   return true
 }
 
@@ -166,19 +188,53 @@ export function useGamepadNavigation(): void {
     const previousInputSignatures = new Map<string, string>()
     let activeGamepadKey: string | null = null
     let rafId = 0
+    let pollTimer = 0
+
+    function cancelScheduledPoll(): void {
+      cancelAnimationFrame(rafId)
+      window.clearTimeout(pollTimer)
+      rafId = 0
+      pollTimer = 0
+    }
+
+    function scheduleNextPoll(hasGamepads: boolean): void {
+      cancelScheduledPoll()
+      if (document.hidden || !document.hasFocus()) {
+        pollTimer = window.setTimeout(
+          () => pollGamepads(performance.now()),
+          BACKGROUND_GAMEPAD_POLL_MS
+        )
+        return
+      }
+      if (!hasGamepads) {
+        pollTimer = window.setTimeout(
+          () => pollGamepads(performance.now()),
+          IDLE_GAMEPAD_POLL_MS
+        )
+        return
+      }
+      rafId = requestAnimationFrame(pollGamepads)
+    }
+
+    function wakePolling(): void {
+      cancelScheduledPoll()
+      rafId = requestAnimationFrame(pollGamepads)
+    }
 
     function gamepadKey(gamepad: Gamepad): string {
       return `${gamepad.index}:${gamepad.id}`
     }
 
-    function updateActiveController(pads: Gamepad[]): void {
+    function updateActiveController(pads: Gamepad[]): boolean {
       const connectedKeys = new Set<string>()
       let padWithNewActivity: Gamepad | undefined
+      let hasControllerActivity = false
 
       for (const pad of pads) {
         const key = gamepadKey(pad)
         const signature = getGamepadInputSignature(pad)
         connectedKeys.add(key)
+        if (signature) hasControllerActivity = true
         if (signature && signature !== previousInputSignatures.get(key)) padWithNewActivity = pad
         previousInputSignatures.set(key, signature)
       }
@@ -191,7 +247,7 @@ export function useGamepadNavigation(): void {
       const nextActivePad = padWithNewActivity ?? activePadStillConnected ?? pads[0]
       if (!nextActivePad) {
         activeGamepadKey = null
-        return
+        return hasControllerActivity
       }
 
       const nextKey = gamepadKey(nextActivePad)
@@ -205,6 +261,7 @@ export function useGamepadNavigation(): void {
         activeGamepadKey = nextKey
         controllerState.setActiveController(family, nextActivePad.id)
       }
+      return hasControllerActivity
     }
 
     function handleDirection(direction: NavDirection, now: number): void {
@@ -257,7 +314,7 @@ export function useGamepadNavigation(): void {
       const pads = Array.from(navigator.getGamepads?.() ?? []).filter(
         (pad): pad is Gamepad => pad !== null
       )
-      updateActiveController(pads)
+      const hasControllerActivity = updateActiveController(pads)
       const anyButtonPressed = (buttonIndex: number): boolean =>
         pads.some((pad) => isPressed(pad.buttons[buttonIndex]))
 
@@ -298,8 +355,12 @@ export function useGamepadNavigation(): void {
         releaseDirection('down')
         releaseDirection('left')
         releaseDirection('right')
-        rafId = requestAnimationFrame(pollGamepads)
+        scheduleNextPoll(pads.length > 0)
         return
+      }
+
+      if (hasControllerActivity) {
+        setControllerCursorMode(document.documentElement, true)
       }
 
       // Browsers can expose one physical controller more than once (for example
@@ -350,7 +411,7 @@ export function useGamepadNavigation(): void {
         if (startPressed && !prevButtons[BTN_START]) dispatchGamepadKeyboardShortcut('done')
         prevButtons[BTN_START] = startPressed
 
-        rafId = requestAnimationFrame(pollGamepads)
+        scheduleNextPoll(pads.length > 0)
         return
       }
 
@@ -370,14 +431,20 @@ export function useGamepadNavigation(): void {
       const startPressed = anyButtonPressed(BTN_START)
       if (startPressed && !prevButtons[BTN_START]) {
         const active = document.activeElement as HTMLElement | null
-        openGameDetails(active?.closest<HTMLElement>('[data-game-card="true"]') ?? null)
+        activateGameCardSecondary(
+          active?.closest<HTMLElement>('[data-game-card="true"]') ?? null
+        )
       }
       prevButtons[BTN_START] = startPressed
 
-      rafId = requestAnimationFrame(pollGamepads)
+      scheduleNextPoll(pads.length > 0)
     }
 
-    rafId = requestAnimationFrame(pollGamepads)
+    const removePointerCursorRestoration = installPointerCursorRestoration(
+      document.documentElement,
+      window
+    )
+    wakePolling()
 
     function isEditingText(): boolean {
       const active = document.activeElement
@@ -393,6 +460,14 @@ export function useGamepadNavigation(): void {
       const editing = isEditingText()
 
       if (editing) {
+        if (
+          document.activeElement?.matches('input[type="range"]') &&
+          (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+        ) {
+          e.preventDefault()
+          if (moveFocus(e.key === 'ArrowRight' ? 'right' : 'left')) playUiSound('navigate')
+          return
+        }
         // Let text inputs keep native caret/selection behaviour; only Escape and
         // vertical moves (leave the field) are still handled by ORBIT's navigation.
         if (e.key === 'Escape') {
@@ -416,7 +491,7 @@ export function useGamepadNavigation(): void {
       if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
         const active = document.activeElement as HTMLElement | null
         const card = active?.closest<HTMLElement>('[data-game-card="true"]') ?? null
-        if (openGameDetails(card)) e.preventDefault()
+        if (activateGameCardSecondary(card)) e.preventDefault()
         return
       }
 
@@ -488,18 +563,28 @@ export function useGamepadNavigation(): void {
       if (!card) return
       e.preventDefault()
       card.focus({ preventScroll: true })
-      openGameDetails(card)
+      activateGameCardSecondary(card)
     }
 
     window.addEventListener('keydown', handleKeyDown)
     window.addEventListener('keyup', handleKeyUp)
     window.addEventListener('blur', handleBlur)
+    window.addEventListener('focus', wakePolling)
+    window.addEventListener('gamepadconnected', wakePolling)
+    window.addEventListener(ORBIT_PERFORMANCE_MODE_EVENT, wakePolling)
+    document.addEventListener('visibilitychange', wakePolling)
     window.addEventListener('contextmenu', handleContextMenu)
     return () => {
-      cancelAnimationFrame(rafId)
+      cancelScheduledPoll()
+      removePointerCursorRestoration()
+      setControllerCursorMode(document.documentElement, false)
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
       window.removeEventListener('blur', handleBlur)
+      window.removeEventListener('focus', wakePolling)
+      window.removeEventListener('gamepadconnected', wakePolling)
+      window.removeEventListener(ORBIT_PERFORMANCE_MODE_EVENT, wakePolling)
+      document.removeEventListener('visibilitychange', wakePolling)
       window.removeEventListener('contextmenu', handleContextMenu)
     }
   }, [])

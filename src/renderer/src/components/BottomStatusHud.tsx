@@ -1,18 +1,22 @@
+import { languageLocale } from '@shared/language'
+import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import { useEffect, useState } from 'react'
 import { AppUpdateStatusChip } from './AppUpdateStatusChip'
 import { SyncStatusIndicator } from './SyncStatusIndicator'
 
-function currentClock(): string {
-  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+function currentClock(language: string): string {
+  return new Date().toLocaleTimeString(languageLocale(language), { hour: '2-digit', minute: '2-digit' })
 }
 
 export function BottomStatusHud(): JSX.Element {
-  const [clock, setClock] = useState(currentClock)
+  const language = usePreferencesStore((s) => s.language)
+  const [clock, setClock] = useState(() => currentClock(language))
 
   useEffect(() => {
-    const id = window.setInterval(() => setClock(currentClock()), 15_000)
+    setClock(currentClock(language))
+    const id = window.setInterval(() => setClock(currentClock(language)), 15_000)
     return () => window.clearInterval(id)
-  }, [])
+  }, [language])
 
   return (
     <aside className="absolute bottom-3 left-4 z-30 flex items-center gap-2 text-sm text-muted xl:bottom-4 xl:left-8">

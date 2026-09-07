@@ -24,6 +24,18 @@ export interface WindowsLoginItemExpectation {
   args: string[]
 }
 
+/** The background host exists solely for Hardware Control. Keeping an Electron
+ * process resident while that feature is disabled wastes memory without
+ * providing a user-visible capability. The login item remains installed so
+ * enabling Hardware Control can wake it immediately. */
+export function shouldRunBackgroundAgent(
+  installation: OrbitBackgroundServiceStatus['installation'],
+  hardwareControlEnabled: boolean,
+  lifecycleBlocked = false
+): boolean {
+  return installation === 'installed' && hardwareControlEnabled && !lifecycleBlocked
+}
+
 function normalizedWindowsArgument(value: string): string {
   return value.trim().replace(/^"|"$/g, '').toLowerCase()
 }

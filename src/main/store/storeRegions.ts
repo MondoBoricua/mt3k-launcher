@@ -1,3 +1,4 @@
+import { steamLanguage, languageLocale } from '../../shared/language'
 import type { StoreRegionId } from '@shared/ipc'
 
 export interface StoreRegionConfig {
@@ -5,6 +6,7 @@ export interface StoreRegionConfig {
   countryCode: string
   currency: string
   locale: string
+  contentLocale?: string
   steamLanguage: string
 }
 
@@ -21,4 +23,9 @@ export function formatStorePrice(priceMinor: number, region: StoreRegionConfig):
     style: 'currency',
     currency: region.currency
   }).format(priceMinor / 100)
+}
+
+// Display language does not change the selected market, currency or prices.
+export function localizedStoreRegion(region: StoreRegionId, language: unknown): StoreRegionConfig {
+  return { ...STORE_REGIONS[region], steamLanguage: steamLanguage(language), contentLocale: languageLocale(language) }
 }

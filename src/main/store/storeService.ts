@@ -11,7 +11,7 @@ import { settingsStore } from '../settingsStore'
 import { steamAuthManager } from '../steam/steamAuth'
 import { syncCoordinator } from '../sync/syncCoordinator'
 import { gameRepository } from '../library/gameRepository'
-import { STORE_REGIONS } from './storeRegions'
+import { localizedStoreRegion } from './storeRegions'
 import { storeRepository } from './storeRepository'
 import {
   fetchFeaturedProducts,
@@ -59,7 +59,9 @@ function releaseStoreProduct(release: StoreRelease, current?: StoreProduct): Sto
 
 export class StoreService extends EventEmitter {
   private snapshotEmitTimer: ReturnType<typeof setTimeout> | undefined
+  private backgroundRefreshTimer: ReturnType<typeof setInterval> | undefined
   private isRefreshing = false
+  private languageRefresh: Promise<StoreSnapshot> | null = null
   private changedSinceLastRefresh = 0
   private refreshInFlight: Promise<StoreSnapshot> | null = null
   private productComparisons = new Map<string, Promise<StoreSnapshot>>()
@@ -69,8 +71,13 @@ export class StoreService extends EventEmitter {
 
   constructor() {
     super()
-    const monitor = setInterval(() => void this.refresh(), PRICE_TTL_MS)
-    monitor.unref()
+    this.startBackgroundRefreshTimer()
+  }
+
+  setBackgroundRefreshPaused(paused: boolean): void {
+    if (this.backgroundRefreshTimer) clearInterval(this.backgroundRefreshTimer)
+    this.backgroundRefreshTimer = undefined
+    if (!paused) this.startBackgroundRefreshTimer()
   }
 
   getSnapshot(): StoreSnapshot {
@@ -91,6 +98,29 @@ export class StoreService extends EventEmitter {
     } finally {
       this.refreshInFlight = null
     }
+  }
+
+  refreshLanguage(): Promise<StoreSnapshot> {
+    if (this.languageRefresh) return this.languageRefresh
+    // Let any request for the previous language finish before refreshing the new one.
+    const run = async (): Promise<StoreSnapshot> => {
+      if (this.refreshInFlight) await this.refreshInFlight
+      let language: string
+      let snapshot: StoreSnapshot
+      do {
+        language = settingsStore.store.language
+        snapshot = await this.refresh()
+      } while (language !== settingsStore.store.language)
+      return snapshot
+    }
+    this.languageRefresh = run().finally(() => { this.languageRefresh = null })
+    return this.languageRefresh
+  }
+
+  private startBackgroundRefreshTimer(): void {
+    if (this.backgroundRefreshTimer) return
+    this.backgroundRefreshTimer = setInterval(() => void this.refresh(), PRICE_TTL_MS)
+    this.backgroundRefreshTimer.unref()
   }
 
   async setRegion(region: StoreRegionId): Promise<StoreSnapshot> {
@@ -149,10 +179,10 @@ export class StoreService extends EventEmitter {
     const query = rawQuery.trim().slice(0, 80)
     if (query.length < 2) return { query, products: [] }
     const regionId = settingsStore.store.storeRegion
-    const cacheKey = `${regionId}:${normalizeStoreTitle(query)}`
+    const cacheKey = `${regionId}:${settingsStore.store.language}:${normalizeStoreTitle(query)}`
     const cached = this.searchCache.get(cacheKey)
     if (cached && cached.expiresAt > Date.now()) return cached.response
-    const products = await searchAllStores(query, STORE_REGIONS[regionId])
+    const products = await searchAllStores(query, localizedStoreRegion(regionId, settingsStore.store.language))
     for (const product of products) storeRepository.upsert(regionId, product)
     const hydrated = storeRepository.getProducts(regionId)
     const productIds = new Set(products.map((product) => product.id))
@@ -167,6 +197,7 @@ export class StoreService extends EventEmitter {
     const appId = existing?.steamAppId ?? Number(productId.replace(/^steam:/, ''))
     if ((!Number.isInteger(appId) || appId <= 0) && !existing) return this.getSnapshot()
     if (
+      existing?.metadataLocale === localizedStoreRegion(regionId, settingsStore.store.language).steamLanguage &&
       existing?.providerPipelineVersion === PROVIDER_PIPELINE_VERSION &&
       existing.providerPricesUpdatedAt &&
       Date.now() - existing.providerPricesUpdatedAt < INTERACTIVE_COMPARE_FRESH_MS
@@ -185,8 +216,8 @@ export class StoreService extends EventEmitter {
     try {
       const product =
         Number.isInteger(appId) && appId > 0
-          ? await fetchSteamProduct(appId, STORE_REGIONS[regionId], existing)
-          : (await searchAllStores(existing?.name ?? '', STORE_REGIONS[regionId])).find(
+          ? await fetchSteamProduct(appId, localizedStoreRegion(regionId, settingsStore.store.language), existing)
+          : (await searchAllStores(existing?.name ?? '', localizedStoreRegion(regionId, settingsStore.store.language))).find(
               (candidate) =>
                 normalizeStoreTitle(candidate.name) === normalizeStoreTitle(existing?.name ?? '')
             )
@@ -210,7 +241,7 @@ export class StoreService extends EventEmitter {
 
   private async doRefresh(): Promise<StoreSnapshot> {
     const regionId = settingsStore.store.storeRegion
-    const region = STORE_REGIONS[regionId]
+    const region = localizedStoreRegion(regionId, settingsStore.store.language)
     this.isRefreshing = true
     this.changedSinceLastRefresh = 0
     this.releaseCalendarError = false
@@ -279,6 +310,7 @@ export class StoreService extends EventEmitter {
         .filter((appId) => {
           const cached = storeRepository.getProduct(regionId, `steam:${appId}`)
           return (
+            cached?.metadataLocale !== region.steamLanguage ||
             cached?.providerPipelineVersion !== PROVIDER_PIPELINE_VERSION ||
             !cached.providerPricesUpdatedAt ||
             Date.now() - cached.providerPricesUpdatedAt >= PRICE_TTL_MS

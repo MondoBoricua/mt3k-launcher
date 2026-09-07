@@ -29,9 +29,10 @@ export function normalizeStoreTitle(value: string): string {
 }
 
 export function storeHeaders(region: StoreRegionConfig): HeadersInit {
+  const locale = region.contentLocale ?? region.locale
   return {
     'User-Agent': STORE_USER_AGENT,
-    'Accept-Language': `${region.locale},${region.locale.split('-')[0]};q=0.9,en;q=0.7`
+    'Accept-Language': `${locale},${locale.split('-')[0]};q=0.9,en;q=0.7`
   }
 }
 

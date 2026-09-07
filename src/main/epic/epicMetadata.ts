@@ -1,3 +1,4 @@
+import { languageLocale } from '@shared/language'
 import { EventEmitter } from 'node:events'
 import Store from 'electron-store'
 import { app } from 'electron'
@@ -8,7 +9,7 @@ import type { EpicApiClient, EpicCatalogItem } from './epicApi'
 const POSITIVE_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const NEGATIVE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const REQUEST_GAP_MS = 250
-const METADATA_SCHEMA_VERSION = 3
+const METADATA_SCHEMA_VERSION = 4
 
 export interface EpicMetadataSyncTarget {
   providerGameId: string
@@ -156,7 +157,7 @@ function classifyCatalogItem(item: EpicCatalogItem): 'game' | 'skip' {
   return 'game'
 }
 
-function catalogMetadata(item: EpicCatalogItem): GameMetadata {
+function catalogMetadata(item: EpicCatalogItem, providerStoreId: string, locale: string): GameMetadata {
   const vertical = artworkCandidates(item, 'vertical')
   const horizontal = artworkCandidates(item, 'horizontal')
   const icon = artworkCandidates(item, 'icon')
@@ -181,12 +182,13 @@ function catalogMetadata(item: EpicCatalogItem): GameMetadata {
     .find((date): date is string => Boolean(date))
 
   return {
+    providerStoreId,
     summary: item.description?.trim() || undefined,
     description: item.description?.trim() || undefined,
     genres,
     developers: unique([developer]),
     publishers: unique([publisher]),
-    releaseDateText: releaseDate ? new Date(releaseDate).toLocaleDateString() : undefined,
+    releaseDateText: releaseDate ? new Date(releaseDate).toLocaleDateString(languageLocale(locale.split('-')[0])) : undefined,
     storeUrl,
     platforms: normalizedPlatforms.length > 0 ? normalizedPlatforms : ['windows'],
     backgroundUrl: horizontal?.[0],
@@ -228,7 +230,7 @@ async function fetchMetadata(item: QueueItem): Promise<CachedEpicMetadata> {
     ...item.target,
     kind,
     name: kind === 'game' && catalog.title ? removeTrademarks(catalog.title) : undefined,
-    metadata: kind === 'game' ? catalogMetadata(catalog) : {},
+    metadata: kind === 'game' ? catalogMetadata(catalog, item.target.catalogItemId, item.locale) : {},
     locale: item.locale,
     source: 'epic-catalog',
     fetchedAt,

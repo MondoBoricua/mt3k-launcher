@@ -16,7 +16,8 @@ import {
 } from './orbitServiceProtocol'
 import {
   BACKGROUND_AGENT_STABLE_MS,
-  backgroundAgentRestartDelayMs
+  backgroundAgentRestartDelayMs,
+  shouldRunBackgroundAgent
 } from './orbitBackgroundServicePolicy'
 import {
   ORBIT_BACKGROUND_SERVICE_LOGIN_ITEM_NAME,
@@ -175,7 +176,7 @@ export class OrbitBackgroundServiceManager {
           await clearBackgroundAgentSuspension(this.userDataPath)
           this.writeLoginItem(true)
           this.assertInstalled()
-          await this.startAgent(revision, true)
+          if (this.isHardwareControlEnabled()) await this.startAgent(revision, true)
         } else if (action === 'repair') {
           await suspendBackgroundAgent(this.userDataPath, { recoverAgent: false })
           try {
@@ -195,8 +196,12 @@ export class OrbitBackgroundServiceManager {
               await clearBackgroundAgentSuspension(this.userDataPath)
             }
           }
-          await this.startAgent(revision, true)
+          if (this.isHardwareControlEnabled()) await this.startAgent(revision, true)
         } else if (action === 'restart') {
+          if (!this.isHardwareControlEnabled()) {
+            await this.stopAgent()
+            return await this.refresh()
+          }
           const before = await this.tryProbeAgent()
           const suspension = await suspendBackgroundAgent(this.userDataPath, {
             recoverAgent: true
@@ -255,6 +260,7 @@ export class OrbitBackgroundServiceManager {
   }
 
   async reloadSettings(): Promise<void> {
+    if (!this.isHardwareControlEnabled()) this.invalidatePendingStart()
     try {
       const snapshot = await requestOrbitPipe<unknown>(this.pipeName, {
         command: 'reload-settings' satisfies OrbitAgentCommand
@@ -264,7 +270,15 @@ export class OrbitBackgroundServiceManager {
       }
     } catch {
       const installation = this.getInstallation()
-      if (installation.installation === 'installed') this.queueEnsureRunning()
+      if (
+        shouldRunBackgroundAgent(
+          installation.installation,
+          this.isHardwareControlEnabled(),
+          this.startupReconciliationPending || this.updateSuspended
+        )
+      ) {
+        this.queueEnsureRunning()
+      }
     }
     await this.refresh()
   }
@@ -376,7 +390,14 @@ export class OrbitBackgroundServiceManager {
       await this.control('install')
       return
     }
-    if (status.installation === 'installed' && status.runtime !== 'running') {
+    if (
+      shouldRunBackgroundAgent(
+        status.installation,
+        this.isHardwareControlEnabled(),
+        this.startupReconciliationPending || this.updateSuspended
+      ) &&
+      status.runtime !== 'running'
+    ) {
       this.queueEnsureRunning()
     }
   }
@@ -511,6 +532,12 @@ export class OrbitBackgroundServiceManager {
   private noteAgentUnavailable(
     installation: OrbitBackgroundServiceStatus['installation']
   ): void {
+    if (!this.isHardwareControlEnabled()) {
+      this.consecutiveStartFailures = 0
+      this.nextAutomaticStartAt = 0
+      this.lastAccountedAgentStartedAt = this.lastObservedAgentStartedAt
+      return
+    }
     const startedAt = this.lastObservedAgentStartedAt
     if (
       this.manualTransition ||
@@ -802,6 +829,7 @@ export class OrbitBackgroundServiceManager {
       this.manualTransition ||
       this.startupReconciliationPending ||
       this.updateSuspended ||
+      !this.isHardwareControlEnabled() ||
       this.ensureRunningQueued ||
       Date.now() < this.nextAutomaticStartAt
     ) {
@@ -816,6 +844,7 @@ export class OrbitBackgroundServiceManager {
           this.manualTransition ||
           this.startupReconciliationPending ||
           this.updateSuspended ||
+          !this.isHardwareControlEnabled() ||
           this.getInstallation().installation !== 'installed'
         ) {
           return
@@ -844,8 +873,11 @@ export class OrbitBackgroundServiceManager {
         const installation = this.getInstallation()
         if (
           !this.startupReconciliationPending &&
-          !this.updateSuspended &&
-          installation.installation === 'installed'
+          shouldRunBackgroundAgent(
+            installation.installation,
+            this.isHardwareControlEnabled(),
+            this.startupReconciliationPending || this.updateSuspended
+          )
         ) {
           return
         }
@@ -873,7 +905,9 @@ export class OrbitBackgroundServiceManager {
     const installation = this.getInstallation()
     let next: OrbitBackgroundServiceStatus
     try {
-      const agent = await this.probeAgentWithRetry()
+      const agent = this.isHardwareControlEnabled()
+        ? await this.probeAgentWithRetry()
+        : await this.probeAgent()
       this.noteAgentRunning(agent)
       next = {
         ...installation,
@@ -890,15 +924,20 @@ export class OrbitBackgroundServiceManager {
         hardwareControl: stoppedHardwareStatus(this.isHardwareControlEnabled()),
         reason:
           installation.reason ??
-          (installation.installation === 'installed' ? 'agent-unreachable' : undefined)
+          (installation.installation === 'installed' && this.isHardwareControlEnabled()
+            ? 'agent-unreachable'
+            : undefined)
       }
     }
     this.setStatus(next)
 
     if (!this.disposed && !this.manualTransition) {
       if (
-        !this.updateSuspended &&
-        next.installation === 'installed' &&
+        shouldRunBackgroundAgent(
+          next.installation,
+          this.isHardwareControlEnabled(),
+          this.startupReconciliationPending || this.updateSuspended
+        ) &&
         next.runtime === 'stopped'
       ) {
         this.queueEnsureRunning()
@@ -906,6 +945,7 @@ export class OrbitBackgroundServiceManager {
         next.runtime === 'running' &&
         (this.startupReconciliationPending ||
           this.updateSuspended ||
+          !this.isHardwareControlEnabled() ||
           next.installation !== 'installed')
       ) {
         this.queueEnsureStopped()

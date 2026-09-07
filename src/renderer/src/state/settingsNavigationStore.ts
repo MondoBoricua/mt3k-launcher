@@ -3,6 +3,7 @@ import { create } from 'zustand'
 export type SettingsPage =
   | 'appearance'
   | 'experience'
+  | 'plus'
   | 'libraries'
   | 'hardware'
   | 'updates'
@@ -11,6 +12,7 @@ export type SettingsPage =
 export const SETTINGS_PAGE_ORDER: SettingsPage[] = [
   'appearance',
   'experience',
+  'plus',
   'libraries',
   'hardware',
   'updates',

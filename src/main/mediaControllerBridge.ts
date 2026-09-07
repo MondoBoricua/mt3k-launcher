@@ -14,6 +14,7 @@ export interface MediaControllerHandlers {
   confirm: () => void
   back: () => void
   backHold: () => void
+  exitChord?: () => void
   playPause: () => void
   search: () => void
   history: (direction: -1 | 1) => void
@@ -118,6 +119,8 @@ export class MediaControllerBridge {
   private blockedUntilReleaseMask = 0
   private inputContextVersion = 0
   private backHoldTriggered = false
+  private exitChordHoldStartedAt: number | null = null
+  private exitChordTriggered = false
   private nextRepeatAt = new Map<number, number>()
   private keyboardTarget: MediaKeyboardControllerTarget | null = null
 
@@ -186,6 +189,19 @@ export class MediaControllerBridge {
       currentInputMask = this.mask & ~this.blockedUntilReleaseMask
       const contextVersion = this.inputContextVersion
       const now = Date.now()
+      if (handlers.exitChord) {
+        const exitChordMask = MEDIA_BUTTONS.lb | MEDIA_BUTTONS.rb | MEDIA_BUTTONS.start
+        if ((currentInputMask & exitChordMask) === exitChordMask) {
+          this.exitChordHoldStartedAt ??= now
+          if (!this.exitChordTriggered && now - this.exitChordHoldStartedAt >= 1_250) {
+            this.exitChordTriggered = true
+            handlers.exitChord()
+          }
+        } else {
+          this.exitChordHoldStartedAt = null
+          this.exitChordTriggered = false
+        }
+      }
       const keyboard = this.keyboardTarget
       if (keyboard && !keyboard.webContents.isDestroyed()) {
         repeated(MEDIA_BUTTONS.dpadUp, () => sendKeyboardKey('Up'), now)
@@ -359,6 +375,8 @@ export class MediaControllerBridge {
     this.blockedUntilReleaseMask = 0
     this.inputContextVersion += 1
     this.backHoldTriggered = false
+    this.exitChordHoldStartedAt = null
+    this.exitChordTriggered = false
     this.nextRepeatAt.clear()
     const children = [this.xinputChild, this.dualSenseChild]
     const dualSenseScriptPath = this.dualSenseScriptPath

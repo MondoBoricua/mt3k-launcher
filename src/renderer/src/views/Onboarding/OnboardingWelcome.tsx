@@ -3,6 +3,7 @@ import { Gamepad2 } from 'lucide-react'
 import { useAutoFocus } from '@renderer/hooks/useAutoFocus'
 import { FocusableButton } from '@renderer/components/FocusableButton'
 import { useT } from '@renderer/i18n/useT'
+import { LANGUAGE_OPTIONS, usePreferencesStore } from '@renderer/state/preferencesStore'
 import { OnboardingBackdrop, OrbitMark } from './OnboardingChrome'
 
 interface Props {
@@ -12,6 +13,8 @@ interface Props {
 export function OnboardingWelcome({ onContinue }: Props): JSX.Element {
   const containerRef = useAutoFocus<HTMLDivElement>()
   const t = useT()
+  const language = usePreferencesStore((s) => s.language)
+  const setLanguage = usePreferencesStore((s) => s.setLanguage)
 
   return (
     <div
@@ -32,7 +35,7 @@ export function OnboardingWelcome({ onContinue }: Props): JSX.Element {
         </div>
         <div className="flex items-center gap-3 text-[9px] font-bold uppercase tracking-[0.22em] text-white/35">
           <span className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_12px_rgb(var(--color-accent)/0.8)]" />
-          01 / 04
+          01 / 05
         </div>
       </header>
 
@@ -60,6 +63,24 @@ export function OnboardingWelcome({ onContinue }: Props): JSX.Element {
           >
             {t('onboarding.welcome.cta')}
           </FocusableButton>
+          <div
+            role="group"
+            aria-label={t('settings.language.title')}
+            className="mt-4 flex flex-wrap gap-2"
+          >
+            {LANGUAGE_OPTIONS.map((option) => (
+              <FocusableButton
+                key={option.id}
+                variant="ghost"
+                aria-pressed={language === option.id}
+                lang={option.id}
+                onClick={() => void setLanguage(option.id)}
+                className={`px-4 py-2 text-xs ${language === option.id ? 'border-accent/50 text-accent' : ''}`}
+              >
+                {option.label}
+              </FocusableButton>
+            ))}
+          </div>
         </motion.section>
 
         <motion.div
@@ -84,9 +105,9 @@ export function OnboardingWelcome({ onContinue }: Props): JSX.Element {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.25 }}
-        className="onboarding-welcome__footer grid grid-cols-4 gap-[clamp(0.75rem,2vw,2rem)]"
+        className="onboarding-welcome__footer grid grid-cols-5 gap-[clamp(0.75rem,2vw,2rem)]"
       >
-        {(['libraries', 'personalize', 'hardware', 'ready'] as const).map((page, index) => (
+        {(['libraries', 'personalize', 'plus', 'hardware', 'ready'] as const).map((page, index) => (
           <div key={page} className="onboarding-welcome__chapter">
             <div className="text-[9px] font-bold tracking-[0.2em] text-white/28">0{index + 1}</div>
             <div className="mt-1 truncate text-[10px] font-bold uppercase tracking-[0.16em] text-white/60">

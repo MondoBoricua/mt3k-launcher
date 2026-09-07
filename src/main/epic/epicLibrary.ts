@@ -1,3 +1,4 @@
+import { languageCountry } from '@shared/language'
 import { EventEmitter } from 'node:events'
 import type {
   LibraryDetectionMethod,
@@ -22,7 +23,7 @@ import {
   type EpicMetadataSyncTarget
 } from './epicMetadata'
 
-const EPIC_LOCALE: Record<string, string> = { en: 'en-US', de: 'de-DE' }
+const EPIC_LOCALE: Record<string, string> = { en: 'en-US', de: 'de-DE', es: 'es-ES' }
 
 interface MetadataUpdate {
   metadata: EpicMetadataResult
@@ -179,6 +180,39 @@ export class EpicLibraryService
     }
   }
 
+  /** Reads only Epic's local install manifests. Owned-library and playtime API
+   * requests remain untouched until a manual/full synchronization. */
+  async refreshInstalledGames(providerGameIds?: readonly string[]): Promise<LibrarySnapshot> {
+    const activeRefresh = this.refreshInFlight
+    if (activeRefresh) await activeRefresh.catch(() => undefined)
+
+    syncCoordinator.begin('library', 1, 0, 'epic-local', 'epic')
+    const requestedIds = providerGameIds
+      ? new Set(providerGameIds.map((providerGameId) => providerGameId.trim()).filter(Boolean))
+      : undefined
+    const installed = [...scanInstalledEpicApps().values()].filter(
+      (game) => !requestedIds || requestedIds.has(game.providerGameId)
+    )
+    const changedInstalled = installed.filter((game) => {
+      const existing = gameRepository.getGame(`epic:${game.providerGameId}`)
+      return (
+        !existing?.installed ||
+        existing.installDir !== game.installDir ||
+        existing.name !== game.name
+      )
+    })
+    if (changedInstalled.length > 0) {
+      gameRepository.applyInstalledProviderPatch('epic', changedInstalled)
+    }
+    const games = changedInstalled
+      .map((game) => gameRepository.getGame(`epic:${game.providerGameId}`))
+      .filter((game): game is NonNullable<typeof game> => Boolean(game))
+    if (games.length > 0) artworkService.syncProvider(games, 'epic')
+    syncCoordinator.complete('library', 'epic-local', 'epic')
+    if (changedInstalled.length > 0) this.emitSnapshot()
+    return this.getSnapshot()
+  }
+
   private async doRefresh(auth: EpicAuthManager): Promise<LibrarySnapshot> {
     const account = auth.getAccount() ?? (await auth.restoreSession())
     syncCoordinator.begin('library', account ? 3 : 1, 0, 'epic-local', 'epic')
@@ -257,7 +291,7 @@ export class EpicLibraryService
         [...assets.keys()].filter((id) => !targetIds.has(id))
       )
       const locale = EPIC_LOCALE[settingsStore.get('language')] ?? 'en-US'
-      const country = locale === 'de-DE' ? 'DE' : 'US'
+      const country = languageCountry(settingsStore.get('language'))
       epicMetadataService.syncLibrary(targets, locale, country, client)
       syncCoordinator.progress('library', 3, 3, 'epic', 'epic')
       syncCoordinator.complete('library', 'epic', 'epic')

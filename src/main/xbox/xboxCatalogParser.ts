@@ -113,6 +113,7 @@ export function parseXboxCatalogProducts(
         publishers: publisher ? [publisher] : undefined,
         releaseDateText: text(market?.OriginalReleaseDate),
         platforms: ['windows'],
+        providerStoreId: productId,
         storeUrl: `msxbox://game/?productId=${productId}`,
         backgroundUrl: horizontal?.[0],
         storeHeaderUrl: horizontal?.[0],

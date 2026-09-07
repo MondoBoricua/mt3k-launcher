@@ -13,6 +13,12 @@ import {
   normalizeSteamWebApiKey,
   SteamWebApiCredentialVault
 } from '../src/main/steam/steamWebApiCredentialVault.ts'
+import {
+  normalizeXboxTitleId,
+  parseXboxAchievements,
+  parseXboxTitleHistoryPage,
+  selectXboxTitleId
+} from '../src/main/achievements/xboxAchievementParsers.ts'
 
 const game = {
   id: 'steam:620',
@@ -46,6 +52,60 @@ assert.equal(
   parseSteamCommunityAchievements(game, '<playerstats><privacyMessage>Private</privacyMessage></playerstats>').reason,
   'private'
 )
+
+const xboxGame = {
+  id: 'xbox:9NTESTGAME01',
+  provider: 'xbox',
+  providerGameId: '9NTESTGAME01',
+  name: 'Forza Test',
+  metadata: { providerStoreId: '9NTESTGAME01' },
+  installed: true,
+  owned: true,
+  addedAt: 0,
+  updatedAt: 0
+} as LibraryGame
+const titleHistory = parseXboxTitleHistoryPage({
+  titles: [
+    {
+      titleId: 123456,
+      name: 'Forza Test',
+      devices: ['PC'],
+      productId: '9NTESTGAME01'
+    }
+  ],
+  pagingInfo: { continuationToken: 'next-page' }
+})
+assert.equal(titleHistory.continuationToken, 'next-page')
+assert.equal(selectXboxTitleId(xboxGame, titleHistory.titles), '123456')
+assert.equal(normalizeXboxTitleId('4D530919', true), BigInt('0x4D530919').toString(10))
+
+const xboxAchievements = parseXboxAchievements(xboxGame, {
+  achievements: [
+    {
+      id: '1',
+      name: 'Test unlocked',
+      description: 'Unlocked description',
+      lockedDescription: 'Locked description',
+      progressState: 'Achieved',
+      progression: { timeUnlocked: '2026-01-02T03:04:05Z' },
+      mediaAssets: [{ url: 'https://images-eds.xboxlive.com/image.png' }]
+    },
+    {
+      id: '2',
+      name: 'Test progress',
+      lockedDescription: 'Keep playing',
+      progressState: 'InProgress',
+      progression: { requirements: [{ current: '4', target: '10' }] },
+      isSecret: true
+    }
+  ]
+})
+assert.equal(xboxAchievements.state, 'available')
+assert.equal(xboxAchievements.source, 'xbox-network')
+assert.equal(xboxAchievements.total, 2)
+assert.equal(xboxAchievements.unlocked, 1)
+assert.equal(xboxAchievements.achievements[1]?.progress, 0.4)
+assert.equal(xboxAchievements.achievements[1]?.hidden, true)
 assert.equal(
   parseSteamCommunityAchievements(game, '<html><body>Sign in</body></html>').reason,
   'unavailable',
@@ -186,11 +246,30 @@ assert.match(sharedIpcSource, /retroAchievementsCredentialSet/u)
 assert.match(sharedIpcSource, /retroAchievementsCredentialClear/u)
 assert.match(sharedIpcSource, /steamWebApiCredentialSet/u)
 assert.match(sharedIpcSource, /steamWebApiCredentialClear/u)
+assert.match(sharedIpcSource, /xbox-network/u)
+assert.doesNotMatch(
+  sharedIpcSource,
+  /refreshToken|accessToken|userHash/u,
+  'Xbox session credentials must never cross the renderer contract'
+)
 
 const settingsStoreSource = await readFile(
   new URL('../src/main/settingsStore.ts', import.meta.url),
   'utf8'
 )
 assert.match(settingsStoreSource, /delete snapshot\[LEGACY_STEAM_WEB_API_KEY\]/u)
+
+const xboxAuthSource = await readFile(
+  new URL('../src/main/xbox/xboxAuth.ts', import.meta.url),
+  'utf8'
+)
+assert.match(xboxAuthSource, /safeStorage\.encryptString/u)
+assert.match(xboxAuthSource, /TRUSTED_SERVICE_HOSTS/u)
+assert.match(xboxAuthSource, /TRUSTED_RELYING_PARTIES/u)
+assert.doesNotMatch(
+  xboxAuthSource,
+  /388ea51c-0b25-4029-aae2-17df49d23905/iu,
+  'ORBIT must not ship another application’s public Xbox identity'
+)
 
 console.log('Achievement sync checks passed')

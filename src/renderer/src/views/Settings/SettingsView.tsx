@@ -1,3 +1,4 @@
+import { type Language, languageLocale } from '@shared/language'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -6,6 +7,7 @@ import {
   Check,
   CheckCircle2,
   CircleAlert,
+  Crown,
   Database,
   Download,
   DownloadCloud,
@@ -18,37 +20,49 @@ import {
   Eye,
   EyeOff,
   ImageIcon,
+  Info,
   Layers3,
   LayoutTemplate,
   LibraryBig,
   Loader2,
+  LockKeyhole,
   LogOut,
   Monitor,
   Palette,
+  Play,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
   Trophy,
+  Type,
   Undo2,
   UserRound
 } from 'lucide-react'
+import { SettingsSection, SettingsSections } from './SettingsSection'
+import { TextSizeControl } from './TextSizeControl'
 import { useAutoFocus } from '@renderer/hooks/useAutoFocus'
 import {
   usePreferencesStore,
+  flushMusicSettingsSave,
   THEME_OPTIONS,
+  CORNER_STYLE_OPTIONS,
   HOME_LAYOUT_OPTIONS,
   GAME_CARD_SIZE_OPTIONS,
   LIBRARY_GRID_COLUMN_OPTIONS,
   BACKDROP_INTENSITY_OPTIONS,
   HOME_BACKDROP_MODE_OPTIONS,
   HOME_BACKDROP_MOTION_OPTIONS,
+  UNINSTALLED_GAME_COLOR_OPTIONS,
+  UNINSTALLED_GAME_COLOR_RGB,
   LANGUAGE_OPTIONS
 } from '@renderer/state/preferencesStore'
 import { useAuthStore } from '@renderer/state/authStore'
 import { useEpicAuthStore } from '@renderer/state/epicAuthStore'
 import { usePlayStationStore } from '@renderer/state/playstationStore'
+import { useXboxAuthStore } from '@renderer/state/xboxAuthStore'
 import { useLibraryStore } from '@renderer/state/libraryStore'
 import { useNavigationStore } from '@renderer/state/navigationStore'
 import {
@@ -63,8 +77,10 @@ import {
 } from '@renderer/components/HardwareControlPanel'
 import { OrbitBackgroundServicePanel } from '@renderer/components/OrbitBackgroundServicePanel'
 import { OrbitWallpaperPanel } from '@renderer/components/OrbitWallpaperPanel'
+import { OrbitPlusPanel } from '@renderer/components/OrbitPlusPanel'
 import { ControllerButtonHint } from '@renderer/components/ControllerButtonHint'
 import { GameImage, preloadGameImage } from '@renderer/components/GameImage'
+import { HomeWallpaperMedia } from '@renderer/components/HomeWallpaperMedia'
 import {
   PROFILE_AVATAR_OPTIONS,
   ProfileAvatarPicker
@@ -72,21 +88,54 @@ import {
 import { useControllerButtonLabels } from '@renderer/state/controllerStore'
 import { useT } from '@renderer/i18n/useT'
 import { focusElement } from '@renderer/lib/spatialNavigation'
+import { playUiSound } from '@renderer/lib/uiAudio'
 import { notify } from '@renderer/state/notificationStore'
 import { latestLibraryActivity, normalizeLibraryTimestamp } from '@shared/libraryTime'
 import { useLibraryCollectionsStore } from '@renderer/state/libraryCollectionsStore'
 import { useAppUpdateStore } from '@renderer/state/appUpdateStore'
 import { useSyncStore } from '@renderer/state/syncStore'
+import { openOrbitPlusSettings, useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 import type { TranslationKey } from '@renderer/i18n/translations'
+import {
+  AUDIO_CUE_IDS,
+  isOrbitPlusThemeId,
+  orbitPlusHasFeature
+} from '@shared/ipc'
+import {
+  GAME_TITLE_MUSIC_DELAY_MAX,
+  GAME_TITLE_MUSIC_DELAY_MIN,
+  GAME_TITLE_MUSIC_DELAY_STEP,
+  GAME_TITLE_MUSIC_FADE_MAX,
+  GAME_TITLE_MUSIC_FADE_MIN,
+  GAME_TITLE_MUSIC_FADE_STEP,
+  GAME_TITLE_MUSIC_VOLUME_MAX,
+  GAME_TITLE_MUSIC_VOLUME_MIN,
+  GAME_TITLE_MUSIC_VOLUME_STEP
+} from '@shared/gameTitleMusic'
+import {
+  LAUNCHER_MUSIC_VOLUME_MAX,
+  LAUNCHER_MUSIC_VOLUME_MIN,
+  LAUNCHER_MUSIC_VOLUME_STEP,
+  type LauncherMusicSource
+} from '@shared/launcherMusic'
+import {
+  gameTrackingMethodsForProvider,
+  type GameTrackingMethod
+} from '@shared/gameTracking'
 import type {
+  AudioCueId,
   AudioPreset,
   AppUpdateSnapshot,
   ArtworkMaintenanceResult,
   BackdropIntensity,
+  CornerStyleId,
   DockMotion,
   DockSize,
   DockThemeId,
+  GameCardPrimaryAction,
   GameCardSize,
+  GameProvider,
+  CustomUiAudioCues,
   HomeBackdropMode,
   HomeBackdropMotion,
   HomeLayoutId,
@@ -109,7 +158,8 @@ import type {
   StartupAnimationMode,
   SystemUpdateSnapshot,
   ThemeId,
-  UiDensity
+  UiDensity,
+  UninstalledGameColor
 } from '@shared/ipc'
 
 const themeSwatch: Record<ThemeId, string> = {
@@ -125,7 +175,13 @@ const themeSwatch: Record<ThemeId, string> = {
   crimson: 'from-[#fb7185] to-[#f59e0b]',
   ice: 'from-[#bae6fd] to-[#60a5fa]',
   lime: 'from-[#a3e635] to-[#2dd4bf]',
-  monochrome: 'from-[#f4f4f5] to-[#71717a]'
+  monochrome: 'from-[#f4f4f5] to-[#71717a]',
+  cobalt: 'from-[#316fff] to-[#60d9ff]',
+  ultraviolet: 'from-[#8b5cf6] to-[#3b82f6]',
+  magenta: 'from-[#e879f9] to-[#fb7185]',
+  tangerine: 'from-[#f97316] to-[#facc15]',
+  mint: 'from-[#6ee7b7] to-[#7dd3fc]',
+  copper: 'from-[#d97757] to-[#fbbf24]'
 }
 
 const HOME_LAYOUT_BODY_KEYS: Record<HomeLayoutId, TranslationKey> = {
@@ -255,6 +311,24 @@ const GAME_CARD_SIZE_COPY: Record<
   }
 }
 
+const GAME_TRACKING_METHOD_LABEL_KEYS: Record<GameTrackingMethod, TranslationKey> = {
+  'provider-process': 'settings.gameTracking.method.providerProcess',
+  'process-tree': 'settings.gameTracking.method.processTree',
+  'install-directory': 'settings.gameTracking.method.installDirectory',
+  'package-identity': 'settings.gameTracking.method.packageIdentity',
+  executable: 'settings.gameTracking.method.executable',
+  'provider-handoff': 'settings.gameTracking.method.providerHandoff'
+}
+
+const UNINSTALLED_GAME_COLOR_LABELS: Record<UninstalledGameColor, TranslationKey> = {
+  gray: 'settings.uninstalledColor.gray',
+  blue: 'settings.uninstalledColor.blue',
+  violet: 'settings.uninstalledColor.violet',
+  green: 'settings.uninstalledColor.green',
+  amber: 'settings.uninstalledColor.amber',
+  rose: 'settings.uninstalledColor.rose'
+}
+
 const BACKDROP_INTENSITY_COPY: Record<
   BackdropIntensity,
   { labelKey: TranslationKey; bodyKey: TranslationKey }
@@ -337,8 +411,73 @@ const AUDIO_PRESET_OPTIONS: Array<{
     labelKey: 'settings.audio.playstation',
     bodyKey: 'settings.audio.playstationBody'
   },
+  {
+    id: 'manual',
+    labelKey: 'settings.audio.manual',
+    bodyKey: 'settings.audio.manualBody'
+  },
   { id: 'off', labelKey: 'settings.audio.off', bodyKey: 'settings.audio.offBody' }
 ]
+
+const CORNER_STYLE_COPY: Record<
+  CornerStyleId,
+  { labelKey: TranslationKey; bodyKey: TranslationKey; previewRadius: string }
+> = {
+  theme: {
+    labelKey: 'settings.theme.corner.theme',
+    bodyKey: 'settings.theme.corner.themeBody',
+    previewRadius: 'var(--radius-card)'
+  },
+  square: {
+    labelKey: 'settings.theme.corner.square',
+    bodyKey: 'settings.theme.corner.squareBody',
+    previewRadius: '0'
+  },
+  soft: {
+    labelKey: 'settings.theme.corner.soft',
+    bodyKey: 'settings.theme.corner.softBody',
+    previewRadius: '0.45rem'
+  },
+  round: {
+    labelKey: 'settings.theme.corner.round',
+    bodyKey: 'settings.theme.corner.roundBody',
+    previewRadius: '1.1rem'
+  }
+}
+
+const AUDIO_CUE_COPY: Record<
+  AudioCueId,
+  { labelKey: TranslationKey; bodyKey: TranslationKey }
+> = {
+  navigate: {
+    labelKey: 'settings.audio.cue.navigate',
+    bodyKey: 'settings.audio.cue.navigateBody'
+  },
+  confirm: {
+    labelKey: 'settings.audio.cue.confirm',
+    bodyKey: 'settings.audio.cue.confirmBody'
+  },
+  back: {
+    labelKey: 'settings.audio.cue.back',
+    bodyKey: 'settings.audio.cue.backBody'
+  },
+  switch: {
+    labelKey: 'settings.audio.cue.switch',
+    bodyKey: 'settings.audio.cue.switchBody'
+  },
+  open: {
+    labelKey: 'settings.audio.cue.open',
+    bodyKey: 'settings.audio.cue.openBody'
+  },
+  close: {
+    labelKey: 'settings.audio.cue.close',
+    bodyKey: 'settings.audio.cue.closeBody'
+  },
+  error: {
+    labelKey: 'settings.audio.cue.error',
+    bodyKey: 'settings.audio.cue.errorBody'
+  }
+}
 
 const STORE_REGION_OPTIONS: Array<{ id: StoreRegionId; labelKey: TranslationKey }> = [
   { id: 'eu', labelKey: 'store.region.eu' },
@@ -365,6 +504,12 @@ const SETTINGS_PAGES: {
     labelKey: 'settings.page.experience',
     bodyKey: 'settings.page.experienceBody',
     icon: SlidersHorizontal
+  },
+  {
+    id: 'plus',
+    labelKey: 'settings.page.plus',
+    bodyKey: 'settings.page.plusBody',
+    icon: Crown
   },
   {
     id: 'libraries',
@@ -452,6 +597,8 @@ const LIBRARY_ISSUE_KEYS: Record<LibraryProviderIssue, TranslationKey> = {
   'online-library-unavailable': 'settings.libraryStatus.issue.onlineUnavailable',
   'metadata-pending': 'settings.libraryStatus.issue.metadataPending',
   'source-unavailable': 'settings.libraryStatus.issue.sourceUnavailable',
+  'supplemental-source-unavailable': 'settings.libraryStatus.issue.supplementalSourceUnavailable',
+  'local-source-unavailable': 'settings.libraryStatus.issue.localSourceUnavailable',
   'authentication-failed': 'settings.libraryStatus.issue.authenticationFailed',
   'remote-play-app-unavailable': 'settings.libraryStatus.issue.remotePlayUnavailable',
   'emulator-missing': 'settings.libraryStatus.issue.emulatorMissing',
@@ -482,20 +629,23 @@ export function SettingsView(): JSX.Element {
   const containerRef = useAutoFocus<HTMLDivElement>()
   const controllerLabels = useControllerButtonLabels()
   const t = useT()
+  useEffect(() => () => { void flushMusicSettingsSave() }, [])
   const setPhase = useNavigationStore((s) => s.setPhase)
   const setOnboardingStep = useNavigationStore((s) => s.setOnboardingStep)
   const {
     theme,
+    cornerStyle,
     profileAvatar,
     customAvatarUrl,
     homeLayout,
     gameCardSize,
     libraryGridColumns,
+    uninstalledGameColor,
     backdropIntensity,
     homeBackdropMode,
     homeBackdropMotion,
     pinnedBackdropGameId,
-    customHomeWallpaperUrl,
+    customHomeWallpaper,
     homeCardBubbleEffect,
     startupAnimationMode,
     customStartupVideoUrl,
@@ -503,12 +653,24 @@ export function SettingsView(): JSX.Element {
     dockSize,
     dockMotion,
     uiDensity,
+    textScale,
     language,
     audioPreset,
+    customUiAudioCues,
     showStoreTab,
     showFriendsHub,
     showHomeBanners,
     showAchievements,
+    backgroundTrailers,
+    launcherMusic,
+    launcherMusicVolume,
+    launcherMusicSource,
+    customLauncherMusic,
+    gameTitleMusic,
+    gameTitleMusicVolume,
+    gameTitleMusicDelaySeconds,
+    gameTitleMusicFadeSeconds,
+    gameCardPrimaryAction,
     closeLaunchersAfterGame,
     notificationsEnabled,
     notificationPosition,
@@ -517,11 +679,13 @@ export function SettingsView(): JSX.Element {
     hardwareControlButton,
     hardwareControlHoldSeconds,
     setTheme,
+    setCornerStyle,
     setProfileAvatar,
     selectCustomAvatar,
     setHomeLayout,
     setGameCardSize,
     setLibraryGridColumns,
+    setUninstalledGameColor,
     setBackdropIntensity,
     setHomeBackdropMode,
     setHomeBackdropMotion,
@@ -537,16 +701,41 @@ export function SettingsView(): JSX.Element {
     setDensity,
     setLanguage,
     setAudioPreset,
+    selectCustomUiAudioCue,
+    clearCustomUiAudioCue,
     setShowStoreTab,
     setShowFriendsHub,
     setShowHomeBanners,
     setShowAchievements,
+    setBackgroundTrailers,
+    setLauncherMusic,
+    setLauncherMusicVolume,
+    setLauncherMusicSource,
+    selectCustomLauncherMusic,
+    clearCustomLauncherMusic,
+    setGameTitleMusic,
+    setGameTitleMusicVolume,
+    setGameTitleMusicDelaySeconds,
+    setGameTitleMusicFadeSeconds,
+    resetGameTitleMusicSettings,
+    setGameCardPrimaryAction,
     setCloseLaunchersAfterGame,
     setNotificationsEnabled,
     setNotificationPosition,
     setNotificationMotion
   } = usePreferencesStore()
   const customLibraryCount = useLibraryCollectionsStore((s) => s.collections.length)
+  const orbitPlusSnapshot = useOrbitPlusStore((s) => s.snapshot)
+  const manualAudioUnlocked = orbitPlusHasFeature(orbitPlusSnapshot, 'manual-audio')
+  const appearanceUnlocked = orbitPlusHasFeature(
+    orbitPlusSnapshot,
+    'premium-appearance'
+  )
+  const backgroundMotionUnlocked = orbitPlusHasFeature(
+    orbitPlusSnapshot,
+    'background-motion'
+  )
+  const effectiveHomeBackdropMotion = backgroundMotionUnlocked ? homeBackdropMotion : 'still'
   const page = useSettingsNavigationStore((s) => s.page)
   const direction = useSettingsNavigationStore((s) => s.direction)
   const setPage = useSettingsNavigationStore((s) => s.setPage)
@@ -564,6 +753,11 @@ export function SettingsView(): JSX.Element {
   const startPlayStationLogin = usePlayStationStore((s) => s.startLogin)
   const logoutPlayStation = usePlayStationStore((s) => s.logout)
   const refreshRemotePlay = usePlayStationStore((s) => s.refreshRemotePlay)
+  const xboxAvailable = useXboxAuthStore((s) => s.available)
+  const xboxAccount = useXboxAuthStore((s) => s.account)
+  const xboxStatus = useXboxAuthStore((s) => s.status)
+  const startXboxLogin = useXboxAuthStore((s) => s.startLogin)
+  const logoutXbox = useXboxAuthStore((s) => s.logout)
   const refreshLibrary = useLibraryStore((s) => s.refresh)
   const librarySnapshot = useLibraryStore((s) => s.snapshot)
   const isRefreshingLibrary = useLibraryStore((s) => s.isRefreshing)
@@ -627,7 +821,7 @@ export function SettingsView(): JSX.Element {
     ubisoftLibraryStatus,
     retroLibraryStatus
   ].filter((status) => status.state === 'ready').length
-  const accountSignature = `${account?.steamId ?? ''}:${epicAccount?.accountId ?? ''}:${playStationAccount?.accountId ?? ''}`
+  const accountSignature = `${account?.steamId ?? ''}:${epicAccount?.accountId ?? ''}:${playStationAccount?.accountId ?? ''}:${xboxAccount?.xuid ?? ''}`
   const previousAccountSignature = useRef(accountSignature)
   const [version, setVersion] = useState('')
   const [settings, setSettings] = useState<OrbitSettings | null>(null)
@@ -653,6 +847,8 @@ export function SettingsView(): JSX.Element {
   const [startupVideoError, setStartupVideoError] = useState(false)
   const [homeWallpaperBusy, setHomeWallpaperBusy] = useState(false)
   const [homeWallpaperError, setHomeWallpaperError] = useState(false)
+  const [launcherMusicBusy, setLauncherMusicBusy] = useState(false)
+  const [launcherMusicError, setLauncherMusicError] = useState(false)
   const [regionSaveState, setRegionSaveState] = useState<'idle' | 'saving' | 'error'>('idle')
   const [restoringGameId, setRestoringGameId] = useState<string | null>(null)
   const [restoreErrorGameId, setRestoreErrorGameId] = useState<string | null>(null)
@@ -673,7 +869,7 @@ export function SettingsView(): JSX.Element {
   const excludedGames = useMemo(
     () =>
       [...(librarySnapshot.excludedGames ?? [])].sort((left, right) =>
-        left.name.localeCompare(right.name, language === 'de' ? 'de-DE' : 'en-US')
+        left.name.localeCompare(right.name, languageLocale(language))
       ),
     [language, librarySnapshot.excludedGames]
   )
@@ -685,7 +881,7 @@ export function SettingsView(): JSX.Element {
         (left, right) =>
           latestLibraryActivity(right) - latestLibraryActivity(left) ||
           normalizeLibraryTimestamp(right.addedAt) - normalizeLibraryTimestamp(left.addedAt) ||
-          left.name.localeCompare(right.name, language === 'de' ? 'de-DE' : 'en-US')
+          left.name.localeCompare(right.name, languageLocale(language))
       )
     const recent = sorted.slice(0, 12)
     const selected = pinnedBackdropGameId
@@ -762,6 +958,28 @@ export function SettingsView(): JSX.Element {
               value: t(notificationsEnabled ? 'settings.summary.on' : 'settings.summary.off')
             }
           ]
+        : page === 'plus'
+          ? [
+              {
+                label: t('settings.summary.plusAccess'),
+                value: t(
+                  manualAudioUnlocked
+                    ? 'settings.summary.plusActive'
+                    : 'settings.summary.plusLocked'
+                )
+              },
+              {
+                label: t('settings.summary.plusMethod'),
+                value:
+                  orbitPlusSnapshot.entitlement?.source === 'patreon'
+                    ? t('settings.summary.plusPatreon')
+                    : t('settings.summary.plusFuture')
+              },
+              {
+                label: t('settings.summary.plusPrice'),
+                value: t('settings.summary.plusMonthly')
+              }
+            ]
         : page === 'libraries'
           ? [
               {
@@ -996,6 +1214,46 @@ export function SettingsView(): JSX.Element {
     }
   }
 
+  async function chooseLauncherMusicSource(source: LauncherMusicSource): Promise<void> {
+    if (launcherMusicBusy || source === launcherMusicSource) return
+    if (source === 'custom' && !manualAudioUnlocked) return
+    setLauncherMusicBusy(source === 'custom' && !customLauncherMusic)
+    setLauncherMusicError(false)
+    try {
+      await setLauncherMusicSource(source)
+    } catch {
+      setLauncherMusicError(true)
+    } finally {
+      setLauncherMusicBusy(false)
+    }
+  }
+
+  async function chooseCustomLauncherMusic(): Promise<void> {
+    if (launcherMusicBusy || !manualAudioUnlocked) return
+    setLauncherMusicBusy(true)
+    setLauncherMusicError(false)
+    try {
+      await selectCustomLauncherMusic()
+    } catch {
+      setLauncherMusicError(true)
+    } finally {
+      setLauncherMusicBusy(false)
+    }
+  }
+
+  async function removeCustomLauncherMusic(): Promise<void> {
+    if (launcherMusicBusy) return
+    setLauncherMusicBusy(true)
+    setLauncherMusicError(false)
+    try {
+      await clearCustomLauncherMusic()
+    } catch {
+      setLauncherMusicError(true)
+    } finally {
+      setLauncherMusicBusy(false)
+    }
+  }
+
   async function restoreExcludedGame(game: LibraryGame): Promise<void> {
     if (restoringGameId) return
     const buttons = Array.from(
@@ -1052,7 +1310,7 @@ export function SettingsView(): JSX.Element {
 
   async function chooseHomeBackdropMode(mode: HomeBackdropMode): Promise<void> {
     if (mode === 'custom') {
-      if (customHomeWallpaperUrl) {
+      if (customHomeWallpaper) {
         await setHomeBackdropMode('custom')
       } else {
         await chooseCustomHomeWallpaper()
@@ -1098,7 +1356,7 @@ export function SettingsView(): JSX.Element {
   }
 
   return (
-    <div ref={containerRef} className="flex h-full flex-col gap-5 overflow-hidden px-8 pb-8 pt-[6.5rem]">
+    <div ref={containerRef} data-settings-root className="flex h-full flex-col gap-5 overflow-hidden px-8 pb-8 pt-[6.5rem]">
       <div className="flex shrink-0 items-center justify-center">
         <div
           data-navigation-layer="secondary"
@@ -1117,6 +1375,7 @@ export function SettingsView(): JSX.Element {
                 key={item.id}
                 data-focusable
                 data-settings-page={item.id}
+                data-view-entry={active ? 'true' : undefined}
                 aria-pressed={active}
                 aria-current={active ? 'page' : undefined}
                 onClick={() => setPage(item.id)}
@@ -1160,6 +1419,7 @@ export function SettingsView(): JSX.Element {
             className="scrollbar-none absolute inset-0 overflow-y-auto overscroll-contain pb-[clamp(3rem,8vh,5rem)] pt-2"
             style={{ scrollPaddingBlock: 'clamp(1.5rem, 6vh, 4rem)' }}
           >
+            <SettingsSections initialExpandedId={page === 'plus' ? 'plus' : null}>
             <SettingsPageLead
               icon={activePage.icon}
               title={t(activePage.labelKey)}
@@ -1168,13 +1428,38 @@ export function SettingsView(): JSX.Element {
               total={SETTINGS_PAGES.length}
               highlights={pageHighlights}
               autoSaveLabel={t(
-                page === 'updates' ? 'settings.updates.localCheck' : 'settings.autoSave'
+                page === 'updates'
+                  ? 'settings.updates.localCheck'
+                  : page === 'plus'
+                    ? 'orbitPlus.secureLabel'
+                    : 'settings.autoSave'
               )}
             />
 
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-1 pt-3 text-[11px] text-white/45" aria-label={t('settings.section.controls')}>
+              <span>{t('settings.section.navigate')}</span>
+              <span className="flex items-center gap-2"><ControllerButtonHint button="south" />{t('settings.section.toggle')}</span>
+              <span className="flex items-center gap-2"><ControllerButtonHint button="east" />{t('settings.section.back')}</span>
+            </div>
+
             {page === 'appearance' && (
-              <div className="mt-5 space-y-5">
-                <SettingsSection index="01" icon={UserRound} title={t('settings.avatar.title')}>
+              <div className="mt-3 space-y-2">
+                <SettingsSection
+                  id="text-size"
+                  icon={Type}
+                  title={t('settings.textSize.title')}
+                  description={t('settings.textSize.body')}
+                  summary={`${textScale}%`}
+                >
+                  <TextSizeControl />
+                </SettingsSection>
+                <SettingsSection
+                  id="avatar"
+                  icon={UserRound}
+                  title={t('settings.avatar.title')}
+                  description={t('settings.section.avatarBody')}
+                  summary={t(PROFILE_AVATAR_OPTIONS.find((item) => item.id === profileAvatar)?.labelKey ?? 'settings.avatar.orbit')}
+                >
                   <ProfileAvatarPicker
                     selected={profileAvatar}
                     steamAvatarUrl={account?.avatarUrl}
@@ -1184,46 +1469,140 @@ export function SettingsView(): JSX.Element {
                   />
                 </SettingsSection>
 
-                <SettingsSection index="02" icon={Palette} title={t('settings.theme.title')}>
-                  <div className="grid grid-cols-4 gap-2 sm:grid-cols-7 xl:grid-cols-[repeat(13,minmax(0,1fr))]">
-                    {THEME_OPTIONS.map((option) => (
-                      <motion.button
-                        key={option.id}
-                        data-focusable
-                        data-theme-choice
-                        data-theme-option={option.id}
-                        onClick={() => void setTheme(option.id)}
-                        whileHover={{ y: -2, scale: 1.04 }}
-                        whileTap={{ scale: 0.95 }}
-                        aria-pressed={theme === option.id}
-                        className="group flex min-w-0 flex-col items-center gap-1.5 rounded-2xl px-1 py-1.5 text-center"
-                      >
-                        <div
-                          className={`theme-swatch-orb relative h-12 w-12 shrink-0 overflow-hidden rounded-full border bg-gradient-to-br transition-[border-color,box-shadow] ${themeSwatch[option.id]} ${
-                            theme === option.id
-                              ? 'border-white/80 shadow-[0_0_0_3px_rgb(var(--color-accent)/0.35),0_8px_24px_rgb(var(--color-accent)/0.25)]'
-                              : 'border-white/15 shadow-[0_6px_18px_rgba(0,0,0,0.32)]'
-                          }`}
+                <SettingsSection
+                  id="theme"
+                  icon={Palette}
+                  title={t('settings.theme.title')}
+                  description={t('settings.section.themeBody')}
+                  summary={`${THEME_OPTIONS.find((item) => item.id === theme)?.label ?? theme} · ${t(CORNER_STYLE_COPY[cornerStyle].labelKey)}`}
+                >
+                  <div className="grid grid-cols-4 gap-2 sm:grid-cols-7 lg:grid-cols-10 2xl:grid-cols-[repeat(19,minmax(0,1fr))]">
+                    {THEME_OPTIONS.map((option) => {
+                      const premium = isOrbitPlusThemeId(option.id)
+                      const locked = premium && !appearanceUnlocked
+                      const active = theme === option.id && !locked
+                      return (
+                        <motion.button
+                          key={option.id}
+                          data-focusable
+                          data-theme-choice
+                          data-theme-option={option.id}
+                          data-disabled={locked ? 'true' : undefined}
+                          type="button"
+                          disabled={locked}
+                          aria-disabled={locked || undefined}
+                          aria-label={premium ? `${option.label}, ORBIT Plus` : option.label}
+                          onClick={() => void setTheme(option.id)}
+                          whileHover={locked ? undefined : { y: -2, scale: 1.04 }}
+                          whileTap={locked ? undefined : { scale: 0.95 }}
+                          aria-pressed={active}
+                          className={`group flex min-w-0 flex-col items-center gap-1.5 rounded-2xl px-1 py-1.5 text-center ${locked ? 'cursor-not-allowed opacity-65' : ''}`}
                         >
-                          <div className="absolute inset-[5px] rounded-full border border-white/15 bg-black/25 backdrop-blur-md" />
-                          <div className="absolute bottom-2 left-2 h-2.5 w-5 rounded-full bg-white/20" />
-                          <div className="absolute right-2 top-2 h-3 w-3 rounded-full bg-white/35" />
-                          {theme === option.id && (
-                            <div className="absolute inset-0 flex items-center justify-center text-white drop-shadow-lg">
-                              <Check size={18} strokeWidth={3} />
-                            </div>
-                          )}
-                        </div>
-                        <span className={`w-full truncate text-[10px] font-semibold ${theme === option.id ? 'text-white' : 'text-white/60'}`}>
-                          {option.label}
-                        </span>
-                        {option.id === 'midnight' && (
-                          <span className="text-[8px] uppercase tracking-wider text-white/35">
-                            {t('settings.default')}
+                          <div
+                            className={`theme-swatch-orb relative h-12 w-12 shrink-0 overflow-hidden rounded-full border bg-gradient-to-br transition-[border-color,box-shadow] ${themeSwatch[option.id]} ${
+                              active
+                                ? 'border-white/80 shadow-[0_0_0_3px_rgb(var(--color-accent)/0.35),0_8px_24px_rgb(var(--color-accent)/0.25)]'
+                                : locked
+                                  ? 'border-amber-200/35 shadow-[0_6px_18px_rgba(0,0,0,0.32)] grayscale-[0.2]'
+                                  : 'border-white/15 shadow-[0_6px_18px_rgba(0,0,0,0.32)]'
+                            }`}
+                          >
+                            <div className="absolute inset-[5px] rounded-full border border-white/15 bg-black/25 backdrop-blur-md" />
+                            <div className="absolute bottom-2 left-2 h-2.5 w-5 rounded-full bg-white/20" />
+                            <div className="absolute right-2 top-2 h-3 w-3 rounded-full bg-white/35" />
+                            {(active || locked) && (
+                              <div className={`absolute inset-0 flex items-center justify-center drop-shadow-lg ${locked ? 'text-amber-100' : 'text-white'}`}>
+                                {locked ? <LockKeyhole size={16} /> : <Check size={18} strokeWidth={3} />}
+                              </div>
+                            )}
+                          </div>
+                          <span className={`w-full truncate text-[10px] font-semibold ${active ? 'text-white' : 'text-white/60'}`}>
+                            {option.label}
                           </span>
-                        )}
-                      </motion.button>
-                    ))}
+                          {option.id === 'midnight' ? (
+                            <span className="text-[8px] uppercase tracking-wider text-white/35">
+                              {t('settings.default')}
+                            </span>
+                          ) : premium ? (
+                            <span className="text-[8px] font-black uppercase tracking-wider text-amber-200/85">
+                              PLUS
+                            </span>
+                          ) : null}
+                        </motion.button>
+                      )
+                    })}
+                  </div>
+
+                  <div className="mt-4 border-t border-white/[0.07] pt-4">
+                    <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-white/85">
+                          {t('settings.theme.corner.title')}
+                        </h3>
+                        <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted">
+                          {t('settings.theme.corner.body')}
+                        </p>
+                      </div>
+                      <span className="flex items-center gap-1 rounded-full border border-amber-300/25 bg-amber-300/10 px-2.5 py-1 text-[8px] font-black uppercase tracking-[0.12em] text-amber-200">
+                        <Sparkles size={9} />
+                        ORBIT Plus
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                      {CORNER_STYLE_OPTIONS.map((option) => {
+                        const copy = CORNER_STYLE_COPY[option]
+                        const locked = option !== 'theme' && !appearanceUnlocked
+                        const active = cornerStyle === option && !locked
+                        return (
+                          <motion.button
+                            key={option}
+                            data-focusable
+                            data-corner-style-choice={option}
+                            data-disabled={locked ? 'true' : undefined}
+                            type="button"
+                            disabled={locked}
+                            aria-disabled={locked || undefined}
+                            aria-pressed={active}
+                            onClick={() => void setCornerStyle(option)}
+                            whileHover={locked ? undefined : { y: -2 }}
+                            whileTap={locked ? undefined : { scale: 0.97 }}
+                            className={`flex min-h-24 items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
+                              active
+                                ? 'border-accent/65 bg-accent/12 text-white'
+                                : locked
+                                  ? 'cursor-not-allowed border-amber-300/18 bg-amber-300/[0.035] text-white/45'
+                                  : 'border-white/[0.07] bg-white/[0.035] text-white/65 hover:bg-white/[0.065]'
+                            }`}
+                          >
+                            <span
+                              data-corner-preview
+                              aria-hidden="true"
+                              style={{ borderRadius: copy.previewRadius }}
+                              className={`flex h-12 w-12 shrink-0 items-center justify-center border ${locked ? 'border-amber-200/30 bg-amber-200/[0.06] text-amber-100' : 'border-accent/40 bg-accent/10 text-accent'}`}
+                            >
+                              {locked ? <LockKeyhole size={15} /> : <span className="h-2 w-2 bg-current" />}
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block text-xs font-bold">{t(copy.labelKey)}</span>
+                              <span className="mt-1 block text-[10px] leading-snug text-white/38">
+                                {t(copy.bodyKey)}
+                              </span>
+                            </span>
+                          </motion.button>
+                        )
+                      })}
+                    </div>
+                    {!appearanceUnlocked && (
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl2 border border-amber-300/15 bg-amber-300/[0.045] px-3 py-2.5">
+                        <p className="flex items-center gap-2 text-[11px] text-amber-100/75">
+                          <Crown size={13} className="shrink-0" />
+                          {t('settings.theme.plusHint')}
+                        </p>
+                        <FocusableButton variant="ghost" onClick={openOrbitPlusSettings} className="shrink-0">
+                          {t('settings.theme.plusAction')}
+                        </FocusableButton>
+                      </div>
+                    )}
                   </div>
                   <div className="mt-4 border-t border-white/[0.07] pt-4">
                     <SettingsToggle
@@ -1238,11 +1617,21 @@ export function SettingsView(): JSX.Element {
                   </div>
                 </SettingsSection>
 
-                <SettingsSection index="03" icon={ImageIcon} title={t('settings.wallpaper.title')}>
+                <SettingsSection
+                  id="wallpaper"
+                  icon={ImageIcon}
+                  title={t('settings.wallpaper.title')}
+                  description={t('settings.section.wallpaperBody')}
+                >
                   <OrbitWallpaperPanel />
                 </SettingsSection>
 
-                <SettingsSection index="04" icon={Film} title={t('settings.startup.title')}>
+                <SettingsSection
+                  id="startup"
+                  icon={Film}
+                  title={t('settings.startup.title')}
+                  description={t('settings.section.startupBody')}
+                >
                   <p className="mb-4 max-w-3xl text-xs leading-relaxed text-muted">
                     {t('settings.startup.body')}
                   </p>
@@ -1304,7 +1693,12 @@ export function SettingsView(): JSX.Element {
                   </div>
                 </SettingsSection>
 
-                <SettingsSection index="05" icon={AppWindow} title={t('settings.dock.title')}>
+                <SettingsSection
+                  id="dock"
+                  icon={AppWindow}
+                  title={t('settings.dock.title')}
+                  description={t('settings.section.dockBody')}
+                >
                   <p className="mb-4 max-w-3xl text-xs leading-relaxed text-muted">
                     {t('settings.dock.body')}
                   </p>
@@ -1365,7 +1759,12 @@ export function SettingsView(): JSX.Element {
                   </p>
                 </SettingsSection>
 
-                <SettingsSection index="06" icon={Layers3} title={t('settings.presentation.title')}>
+                <SettingsSection
+                  id="presentation"
+                  icon={Layers3}
+                  title={t('settings.presentation.title')}
+                  description={t('settings.section.presentationBody')}
+                >
                   <p className="mb-4 max-w-3xl text-xs leading-relaxed text-muted">
                     {t('settings.presentation.body')}
                   </p>
@@ -1406,16 +1805,27 @@ export function SettingsView(): JSX.Element {
                       eyebrow={t('settings.backdrop.motion.title')}
                       description={t('settings.backdrop.motion.body')}
                     >
-                      {HOME_BACKDROP_MOTION_OPTIONS.map((option) => (
-                        <PresentationChoice
-                          key={option}
-                          active={homeBackdropMotion === option}
-                          title={t(HOME_BACKDROP_MOTION_COPY[option].labelKey)}
-                          description={t(HOME_BACKDROP_MOTION_COPY[option].bodyKey)}
-                          onClick={() => void setHomeBackdropMotion(option)}
-                          preview={<BackdropMotionPreview motionMode={option} />}
-                        />
-                      ))}
+                      {HOME_BACKDROP_MOTION_OPTIONS.map((option) => {
+                        const premium = option !== 'still'
+                        const locked = premium && !backgroundMotionUnlocked
+                        return (
+                          <PresentationChoice
+                            key={option}
+                            active={effectiveHomeBackdropMotion === option}
+                            title={t(HOME_BACKDROP_MOTION_COPY[option].labelKey)}
+                            description={t(HOME_BACKDROP_MOTION_COPY[option].bodyKey)}
+                            badge={premium ? t('settings.page.plus') : undefined}
+                            locked={locked}
+                            settingOption={`home-backdrop-motion:${option}`}
+                            onClick={() =>
+                              locked
+                                ? openOrbitPlusSettings()
+                                : void setHomeBackdropMotion(option)
+                            }
+                            preview={<BackdropMotionPreview motionMode={option} />}
+                          />
+                        )
+                      })}
                     </PresentationGroup>
 
                     <PresentationGroup
@@ -1453,6 +1863,81 @@ export function SettingsView(): JSX.Element {
                         />
                       ))}
                     </PresentationGroup>
+                  </div>
+
+                  <div className="mt-3 rounded-2xl border border-white/[0.07] bg-black/20 p-3">
+                    <div className="mb-3 px-1">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-accent">
+                        {t('settings.uninstalledColor.title')}
+                      </p>
+                      <p className="mt-1 max-w-3xl text-[11px] leading-relaxed text-white/42">
+                        {t('settings.uninstalledColor.body')}
+                      </p>
+                    </div>
+                    <div
+                      data-navigation-grid
+                      data-grid-columns={6}
+                      className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6"
+                    >
+                      {UNINSTALLED_GAME_COLOR_OPTIONS.map((option) => {
+                        const active = uninstalledGameColor === option
+                        return (
+                          <motion.button
+                            key={option}
+                            data-focusable
+                            data-uninstalled-game-color={option}
+                            type="button"
+                            aria-pressed={active}
+                            onClick={() => void setUninstalledGameColor(option)}
+                            whileHover={{ y: -2 }}
+                            whileTap={{ scale: 0.98 }}
+                            className={`flex min-h-16 items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors ${
+                              active
+                                ? 'border-accent/65 bg-accent/12'
+                                : 'border-white/[0.06] bg-white/[0.025] hover:bg-white/[0.05]'
+                            }`}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className="relative h-10 w-8 shrink-0 overflow-hidden rounded-lg border border-white/15 bg-[linear-gradient(145deg,#171a20_0%,#e7e9ed_48%,#505764_100%)] shadow-[0_5px_12px_rgba(0,0,0,0.32)]"
+                            >
+                              <span
+                                className="absolute inset-0"
+                                style={{
+                                  backgroundColor: `rgb(${UNINSTALLED_GAME_COLOR_RGB[option]})`,
+                                  mixBlendMode: 'color'
+                                }}
+                              />
+                              <span className="absolute inset-x-1 bottom-1 h-1 rounded-full bg-black/35" />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span
+                                className={`block truncate text-xs font-bold ${
+                                  active ? 'text-white' : 'text-white/65'
+                                }`}
+                              >
+                                {t(UNINSTALLED_GAME_COLOR_LABELS[option])}
+                              </span>
+                              {option === 'gray' && (
+                                <span className="mt-0.5 block text-[8px] font-bold uppercase tracking-wider text-white/32">
+                                  {t('settings.default')}
+                                </span>
+                              )}
+                            </span>
+                            <span
+                              aria-hidden="true"
+                              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                                active
+                                  ? 'border-accent bg-accent text-black'
+                                  : 'border-white/15 text-transparent'
+                              }`}
+                            >
+                              <Check size={9} strokeWidth={3} />
+                            </span>
+                          </motion.button>
+                        )
+                      })}
+                    </div>
                   </div>
 
                   <AnimatePresence initial={false}>
@@ -1529,7 +2014,7 @@ export function SettingsView(): JSX.Element {
                   </AnimatePresence>
 
                   <AnimatePresence initial={false}>
-                    {homeBackdropMode === 'custom' && customHomeWallpaperUrl && (
+                    {homeBackdropMode === 'custom' && customHomeWallpaper && (
                       <motion.div
                         key="custom-home-wallpaper-picker"
                         initial={{ opacity: 0, y: -8 }}
@@ -1539,17 +2024,26 @@ export function SettingsView(): JSX.Element {
                         className="mt-3 flex flex-col gap-3 rounded-2xl border border-white/[0.07] bg-black/20 p-3 md:flex-row md:items-center"
                       >
                         <div className="relative h-28 overflow-hidden rounded-xl border border-white/10 md:w-52 md:shrink-0">
-                          <img
-                            src={customHomeWallpaperUrl}
+                          <HomeWallpaperMedia
+                            asset={customHomeWallpaper}
                             alt={t('settings.backdrop.custom.alt')}
-                            draggable={false}
+                            onError={() => setHomeWallpaperError(true)}
+                            onReady={() => setHomeWallpaperError(false)}
                             className="h-full w-full object-cover"
                           />
                           <span className="absolute inset-0 bg-gradient-to-t from-black/55 to-transparent" />
-                          <ImageIcon
-                            size={15}
-                            className="absolute bottom-2.5 left-2.5 text-white/75"
-                          />
+                          <span className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 text-white/75">
+                            {customHomeWallpaper.kind === 'video' ? (
+                              <>
+                                <Film size={15} />
+                                <span className="text-[9px] font-bold uppercase tracking-[0.14em]">
+                                  {t('settings.backdrop.custom.live')}
+                                </span>
+                              </>
+                            ) : (
+                              <ImageIcon size={15} />
+                            )}
+                          </span>
                         </div>
                         <div className="min-w-0 flex-1 px-1">
                           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-accent">
@@ -1558,7 +2052,11 @@ export function SettingsView(): JSX.Element {
                           <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-white/42">
                             {homeWallpaperError
                               ? t('settings.backdrop.custom.error')
-                              : t('settings.backdrop.custom.body')}
+                              : t(
+                                  customHomeWallpaper.kind === 'video'
+                                    ? 'settings.backdrop.custom.liveBody'
+                                    : 'settings.backdrop.custom.body'
+                                )}
                           </p>
                           <div className="mt-3 flex flex-wrap gap-2">
                             <FocusableButton
@@ -1588,7 +2086,13 @@ export function SettingsView(): JSX.Element {
                   </AnimatePresence>
                 </SettingsSection>
 
-                <SettingsSection index="07" icon={LayoutTemplate} title={t('settings.homeLayout.title')}>
+                <SettingsSection
+                  id="home-layout"
+                  icon={LayoutTemplate}
+                  title={t('settings.homeLayout.title')}
+                  description={t('settings.section.home-layoutBody')}
+                  summary={homeLayout.toUpperCase()}
+                >
                   <p className="mb-4 text-xs leading-relaxed text-muted">
                     {t('settings.homeLayout.body')}
                   </p>
@@ -1636,9 +2140,25 @@ export function SettingsView(): JSX.Element {
               </div>
             )}
 
+            {page === 'plus' && (
+              <div className="mt-5">
+                <SettingsSection
+                  id="plus"
+                  icon={Crown}
+                  title={t('settings.page.plus')}
+                  description={t('settings.section.plusBody')}><OrbitPlusPanel /></SettingsSection
+                >
+              </div>
+            )}
+
             {page === 'experience' && (
-              <div className="mt-5 space-y-5">
-                <SettingsSection index="01" icon={Eye} title={t('settings.visibility.title')}>
+              <div className="mt-3 space-y-2">
+                <SettingsSection
+                  id="visibility"
+                  icon={Eye}
+                  title={t('settings.visibility.title')}
+                  description={t('settings.section.visibilityBody')}
+                >
                   <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                     <SettingsToggle
                       id="showStoreTab"
@@ -1681,40 +2201,69 @@ export function SettingsView(): JSX.Element {
                   </div>
                 </SettingsSection>
 
-                <SettingsSection index="02" icon={AudioLines} title={t('settings.audio.title')}>
+                <SettingsSection
+                  id="sound"
+                  icon={AudioLines}
+                  title={t('settings.section.sound')}
+                  description={t('settings.section.soundBody')}
+                  summary={t(AUDIO_PRESET_OPTIONS.find((item) => item.id === audioPreset)?.labelKey ?? 'settings.audio.orbit')}
+                >
+                  <h3 className="mb-1 text-sm font-semibold text-white/85">{t('settings.audio.title')}</h3>
                   <p className="mb-3 text-xs text-muted">{t('settings.audio.body')}</p>
-                  <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8">
+                  <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-9">
                     {AUDIO_PRESET_OPTIONS.map((option, index) => {
-                      const active = audioPreset === option.id
+                      const premium = option.id === 'manual'
+                      const locked = premium && !manualAudioUnlocked
+                      const active = audioPreset === option.id && !locked
                       return (
                         <motion.button
                           key={option.id}
                           data-focusable
+                          data-disabled={locked ? 'true' : undefined}
                           data-ui-sound-skip
                           type="button"
+                          disabled={locked}
+                          aria-disabled={locked || undefined}
                           aria-pressed={active}
                           onClick={() => void setAudioPreset(option.id)}
-                          whileHover={{ y: -2 }}
-                          whileTap={{ scale: 0.97 }}
+                          whileHover={locked ? undefined : { y: -2 }}
+                          whileTap={locked ? undefined : { scale: 0.97 }}
                           className={`min-w-0 rounded-2xl border p-3 text-left transition-colors ${
                             active
                               ? 'border-accent/70 bg-accent/15 text-white'
-                              : 'border-white/[0.07] bg-white/[0.04] text-white/70 hover:bg-white/[0.07]'
+                              : locked
+                                ? 'cursor-not-allowed border-amber-300/20 bg-amber-300/[0.04] text-white/50'
+                                : 'border-white/[0.07] bg-white/[0.04] text-white/70 hover:bg-white/[0.07]'
                           }`}
                         >
                           <div className="mb-2 flex items-center justify-between gap-2">
                             <span
                               className={`flex h-8 w-8 items-center justify-center rounded-full ${
-                                active ? 'bg-accent text-black' : 'bg-white/[0.07] text-white/55'
+                                active
+                                  ? 'bg-accent text-black'
+                                  : locked
+                                    ? 'border border-amber-300/25 bg-amber-300/10 text-amber-200'
+                                    : 'bg-white/[0.07] text-white/55'
                               }`}
                             >
-                              <AudioLines size={15} />
+                              {locked ? (
+                                <LockKeyhole size={14} />
+                              ) : option.id === 'manual' ? (
+                                <SlidersHorizontal size={15} />
+                              ) : (
+                                <AudioLines size={15} />
+                              )}
                             </span>
-                            {index === 0 && (
+                            {index === 0 ? (
                               <span className="text-[8px] font-bold uppercase tracking-wider text-white/35">
                                 {t('settings.default')}
                               </span>
-                            )}
+                            ) : premium ? (
+                              <span className="flex items-center gap-1 rounded-full border border-amber-300/25 bg-amber-300/10 px-2 py-1 text-[7px] font-black uppercase tracking-[0.12em] text-amber-200">
+                                <Sparkles size={8} />
+                                {t('settings.audio.premiumBadge')}
+                              </span>
+                            ) : null}
                           </div>
                           <span className="block truncate text-sm font-semibold">
                             {t(option.labelKey)}
@@ -1726,9 +2275,211 @@ export function SettingsView(): JSX.Element {
                       )
                     })}
                   </div>
+                  <AnimatePresence initial={false}>
+                    {manualAudioUnlocked && audioPreset === 'manual' && (
+                      <ManualAudioCueEditor
+                        customCues={customUiAudioCues}
+                        onSelect={selectCustomUiAudioCue}
+                        onClear={clearCustomUiAudioCue}
+                        t={t}
+                      />
+                    )}
+                  </AnimatePresence>
+                  <div className="mt-4 border-t border-white/[0.07] pt-4">
+                    <SettingsToggle
+                      id="launcherMusic"
+                      active={launcherMusic}
+                      title={t('launcherMusic.setting')}
+                      description={t('launcherMusic.settingBody')}
+                      defaultActive
+                      onChange={(active) => void setLauncherMusic(active)}
+                      t={t}
+                    />
+                    <AnimatePresence initial={false}>
+                      {launcherMusic && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="mt-3 grid gap-4 rounded-2xl border border-white/[0.07] bg-black/20 p-4 xl:grid-cols-[minmax(16rem,0.8fr)_minmax(20rem,1.2fr)]">
+                            <MusicRange
+                              id="launcher-music-volume"
+                              title={t('launcherMusic.volume')}
+                              description={t('launcherMusic.volumeBody')}
+                              value={launcherMusicVolume}
+                              min={LAUNCHER_MUSIC_VOLUME_MIN}
+                              max={LAUNCHER_MUSIC_VOLUME_MAX}
+                              step={LAUNCHER_MUSIC_VOLUME_STEP}
+                              valueText={`${launcherMusicVolume}%`}
+                              minText={`${LAUNCHER_MUSIC_VOLUME_MIN}%`}
+                              maxText={`${LAUNCHER_MUSIC_VOLUME_MAX}%`}
+                              onChange={(value) => void setLauncherMusicVolume(value)}
+                            />
+                            <div className="rounded-xl border border-white/[0.06] bg-white/[0.025] p-3">
+                              <p className="text-sm font-semibold text-white/85">
+                                {t('launcherMusic.source')}
+                              </p>
+                              <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                                {t('launcherMusic.sourceBody')}
+                              </p>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <OptionPill
+                                  active={launcherMusicSource === 'orbit'}
+                                  onClick={() => void chooseLauncherMusicSource('orbit')}
+                                >
+                                  <AudioLines size={14} />
+                                  {t('launcherMusic.orbit')}
+                                </OptionPill>
+                                <OptionPill
+                                  active={launcherMusicSource === 'custom' && manualAudioUnlocked}
+                                  disabled={!manualAudioUnlocked || launcherMusicBusy}
+                                  onClick={() => void chooseLauncherMusicSource('custom')}
+                                >
+                                  {manualAudioUnlocked ? <Sparkles size={14} /> : <LockKeyhole size={14} />}
+                                  {t('launcherMusic.custom')}
+                                </OptionPill>
+                              </div>
+                              {!manualAudioUnlocked ? (
+                                <p className="mt-3 flex items-center gap-2 text-[11px] text-amber-200/75">
+                                  <Crown size={13} />
+                                  {t('launcherMusic.premium')}
+                                </p>
+                              ) : (
+                                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] pt-3">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-xs font-semibold text-white/75">
+                                      {customLauncherMusic?.name ?? t('launcherMusic.customMissing')}
+                                    </p>
+                                    <p className={`mt-1 text-[10px] ${launcherMusicError ? 'text-rose-200' : 'text-white/38'}`}>
+                                      {launcherMusicError
+                                        ? t('launcherMusic.error')
+                                        : t('launcherMusic.customBody')}
+                                    </p>
+                                  </div>
+                                  <div className="flex shrink-0 flex-wrap gap-2">
+                                    <FocusableButton
+                                      variant="ghost"
+                                      disabled={launcherMusicBusy}
+                                      aria-busy={launcherMusicBusy}
+                                      onClick={() => void chooseCustomLauncherMusic()}
+                                      className="px-4 py-2 text-xs disabled:cursor-wait disabled:opacity-50"
+                                    >
+                                      {launcherMusicBusy
+                                        ? t('launcherMusic.selecting')
+                                        : t(customLauncherMusic ? 'launcherMusic.replace' : 'launcherMusic.choose')}
+                                    </FocusableButton>
+                                    {customLauncherMusic && (
+                                      <FocusableButton
+                                        variant="ghost"
+                                        disabled={launcherMusicBusy}
+                                        onClick={() => void removeCustomLauncherMusic()}
+                                        className="px-4 py-2 text-xs disabled:opacity-50"
+                                      >
+                                        {t('launcherMusic.remove')}
+                                      </FocusableButton>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  <div className="mt-4 border-t border-white/[0.07] pt-4">
+                    <SettingsToggle
+                      id="gameTitleMusic"
+                      active={gameTitleMusic}
+                      title={t('titleMusic.setting')}
+                      description={t('titleMusic.settingBody')}
+                      defaultActive
+                      onChange={(active) => void setGameTitleMusic(active)}
+                      t={t}
+                    />
+                    <AnimatePresence initial={false}>
+                      {gameTitleMusic && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="mt-3 space-y-4 rounded-2xl border border-white/[0.07] bg-black/20 p-4">
+                            <p className="text-xs leading-relaxed text-muted">
+                              {t('titleMusic.controlsBody')}
+                            </p>
+                            <div className="grid gap-4 xl:grid-cols-3">
+                              <MusicRange
+                                id="title-music-volume"
+                                title={t('titleMusic.volume')}
+                                description={t('titleMusic.volumeBody')}
+                                value={gameTitleMusicVolume}
+                                min={GAME_TITLE_MUSIC_VOLUME_MIN}
+                                max={GAME_TITLE_MUSIC_VOLUME_MAX}
+                                step={GAME_TITLE_MUSIC_VOLUME_STEP}
+                                valueText={`${gameTitleMusicVolume}%`}
+                                minText={`${GAME_TITLE_MUSIC_VOLUME_MIN}%`}
+                                maxText={`${GAME_TITLE_MUSIC_VOLUME_MAX}%`}
+                                onChange={(value) => void setGameTitleMusicVolume(value)}
+                              />
+                              <MusicRange
+                                id="title-music-delay"
+                                title={t('titleMusic.delay')}
+                                description={t('titleMusic.delayBody')}
+                                value={gameTitleMusicDelaySeconds}
+                                min={GAME_TITLE_MUSIC_DELAY_MIN}
+                                max={GAME_TITLE_MUSIC_DELAY_MAX}
+                                step={GAME_TITLE_MUSIC_DELAY_STEP}
+                                valueText={titleMusicSeconds(gameTitleMusicDelaySeconds, language, t)}
+                                minText={t('titleMusic.immediate')}
+                                maxText={titleMusicSeconds(GAME_TITLE_MUSIC_DELAY_MAX, language, t)}
+                                onChange={(value) => void setGameTitleMusicDelaySeconds(value)}
+                              />
+                              <MusicRange
+                                id="title-music-fade"
+                                title={t('titleMusic.fade')}
+                                description={t('titleMusic.fadeBody')}
+                                value={gameTitleMusicFadeSeconds}
+                                min={GAME_TITLE_MUSIC_FADE_MIN}
+                                max={GAME_TITLE_MUSIC_FADE_MAX}
+                                step={GAME_TITLE_MUSIC_FADE_STEP}
+                                valueText={titleMusicSeconds(gameTitleMusicFadeSeconds, language, t)}
+                                minText={t('titleMusic.immediate')}
+                                maxText={titleMusicSeconds(GAME_TITLE_MUSIC_FADE_MAX, language, t)}
+                                onChange={(value) => void setGameTitleMusicFadeSeconds(value)}
+                              />
+                            </div>
+                            <div className="flex justify-end">
+                              <FocusableButton
+                                data-title-music-reset
+                                variant="ghost"
+                                onClick={() => void resetGameTitleMusicSettings()}
+                              >
+                                <span className="flex items-center gap-2">
+                                  <RotateCcw size={15} />
+                                  {t('titleMusic.reset')}
+                                </span>
+                              </FocusableButton>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </SettingsSection>
 
-                <SettingsSection index="03" icon={BellRing} title={t('settings.notifications.title')}>
+                <SettingsSection
+                  id="notifications"
+                  icon={BellRing}
+                  title={t('settings.notifications.title')}
+                  description={t('settings.section.notificationsBody')}
+                  summary={t(notificationsEnabled ? 'settings.summary.on' : 'settings.summary.off')}
+                >
                   <div className="space-y-4">
                     <SettingsToggle
                       id="notificationsEnabled"
@@ -1802,7 +2553,13 @@ export function SettingsView(): JSX.Element {
                   </div>
                 </SettingsSection>
 
-                <SettingsSection index="04" icon={SlidersHorizontal} title={t('settings.language.title')}>
+                <SettingsSection
+                  id="language"
+                  icon={Globe2}
+                  title={t('settings.language.title')}
+                  description={t('settings.section.languageBody')}
+                  summary={LANGUAGE_OPTIONS.find((item) => item.id === language)?.label ?? language}
+                >
                   <div className="flex gap-3">
                     {LANGUAGE_OPTIONS.map((option) => (
                       <OptionPill
@@ -1816,7 +2573,12 @@ export function SettingsView(): JSX.Element {
                   </div>
                 </SettingsSection>
 
-                <SettingsSection index="05" icon={Trophy} title={t('settings.integrations.title')}>
+                <SettingsSection
+                  id="integrations"
+                  icon={Trophy}
+                  title={t('settings.integrations.title')}
+                  description={t('settings.section.integrationsBody')}
+                >
                   <div className="space-y-4">
                     <SettingsToggle
                       id="showAchievements"
@@ -1827,6 +2589,16 @@ export function SettingsView(): JSX.Element {
                       onChange={(active) => void setShowAchievements(active)}
                       t={t}
                     />
+                    <SettingsToggle
+                      id="backgroundTrailers"
+                      active={backgroundTrailers}
+                      title={t('trailer.setting')}
+                      description={t('trailer.settingBody')}
+                      defaultActive
+                      onChange={(active) => void setBackgroundTrailers(active)}
+                      t={t}
+                    />
+
 
                     <div>
                       <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-white/38">
@@ -1972,23 +2744,73 @@ export function SettingsView(): JSX.Element {
                   </div>
                 </SettingsSection>
 
-                <SettingsSection index="06" icon={AppWindow} title={t('settings.launchBehavior.title')}>
-                  <SettingsToggle
-                    id="closeLaunchersAfterGame"
-                    active={closeLaunchersAfterGame}
-                    title={t('settings.launchBehavior.closeLaunchers')}
-                    description={t('settings.launchBehavior.closeLaunchersBody')}
-                    defaultInactive
-                    onChange={(active) => void setCloseLaunchersAfterGame(active)}
-                    t={t}
-                  />
+                <SettingsSection
+                  id="launch-behavior"
+                  icon={AppWindow}
+                  title={t('settings.launchBehavior.title')}
+                  description={t('settings.section.launch-behaviorBody')}
+                >
+                  <div className="space-y-4">
+                    <p className="max-w-3xl text-sm leading-relaxed text-muted">
+                      {t('settings.launchBehavior.body', {
+                        confirm: controllerLabels.south
+                      })}
+                    </p>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <PresentationChoice
+                        active={gameCardPrimaryAction === 'launch'}
+                        title={t('settings.launchBehavior.direct')}
+                        description={t('settings.launchBehavior.directBody', {
+                          confirm: controllerLabels.south,
+                          menu: controllerLabels.menu
+                        })}
+                        badge={t('settings.default')}
+                        preview={<GameCardActionPreview action="launch" />}
+                        onClick={() => void setGameCardPrimaryAction('launch')}
+                      />
+                      <PresentationChoice
+                        active={gameCardPrimaryAction === 'details'}
+                        title={t('settings.launchBehavior.detailsFirst')}
+                        description={t('settings.launchBehavior.detailsFirstBody', {
+                          confirm: controllerLabels.south,
+                          menu: controllerLabels.menu
+                        })}
+                        preview={<GameCardActionPreview action="details" />}
+                        onClick={() => void setGameCardPrimaryAction('details')}
+                      />
+                    </div>
+                    <p className="flex items-center gap-2 rounded-xl border border-white/[0.07] bg-black/15 px-3 py-2.5 text-xs leading-relaxed text-white/45">
+                      <ControllerButtonHint
+                        button="menu"
+                        className="shrink-0 rounded-md border border-white/15 px-1.5 py-0.5 text-[10px] font-bold text-white/60"
+                      />
+                      <span>{t('settings.launchBehavior.swapHint')}</span>
+                    </p>
+                    <div className="border-t border-white/[0.07] pt-4">
+                      <SettingsToggle
+                        id="closeLaunchersAfterGame"
+                        active={closeLaunchersAfterGame}
+                        title={t('settings.launchBehavior.closeLaunchers')}
+                        description={t('settings.launchBehavior.closeLaunchersBody')}
+                        defaultInactive
+                        onChange={(active) => void setCloseLaunchersAfterGame(active)}
+                        t={t}
+                      />
+                    </div>
+                  </div>
                 </SettingsSection>
               </div>
             )}
 
             {page === 'libraries' && (
-              <div className="mt-5 space-y-5">
-                <SettingsSection index="01" icon={Grid3X3} title={t('settings.libraryGrid.title')}>
+              <div className="mt-3 space-y-2">
+                <SettingsSection
+                  id="library-grid"
+                  icon={Grid3X3}
+                  title={t('settings.libraryGrid.title')}
+                  description={t('settings.section.library-gridBody')}
+                  summary={t('settings.libraryGrid.columns', { count: libraryGridColumns })}
+                >
                   <p className="mb-4 max-w-3xl text-sm leading-relaxed text-muted">
                     {t('settings.libraryGrid.body')}
                   </p>
@@ -2015,7 +2837,12 @@ export function SettingsView(): JSX.Element {
                   </div>
                 </SettingsSection>
 
-                <SettingsSection index="02" icon={EyeOff} title={t('settings.excludedGames.title')}>
+                <SettingsSection
+                  id="excluded-games"
+                  icon={EyeOff}
+                  title={t('settings.excludedGames.title')}
+                  description={t('settings.section.excluded-gamesBody')}
+                >
                   <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                     <p className="max-w-3xl text-sm leading-relaxed text-muted">
                       {t('settings.excludedGames.body')}
@@ -2110,7 +2937,12 @@ export function SettingsView(): JSX.Element {
                   )}
                 </SettingsSection>
 
-                <SettingsSection index="03" icon={LibraryBig} title={t('settings.account.title')}>
+                <SettingsSection
+                  id="accounts"
+                  icon={LibraryBig}
+                  title={t('settings.account.title')}
+                  description={t('settings.section.accountsBody')}
+                >
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
                     <p className="max-w-3xl text-xs leading-relaxed text-muted">
                       {t('settings.libraryStatus.body')}
@@ -2141,6 +2973,7 @@ export function SettingsView(): JSX.Element {
                   </div>
                   <div className="grid grid-cols-1 gap-3 xl:grid-cols-2 2xl:grid-cols-3">
                     <LibraryProviderCard
+                      trackingProvider="steam"
                       store="Steam"
                       badge="S"
                       badgeClass="bg-[#1b2838]"
@@ -2169,6 +3002,7 @@ export function SettingsView(): JSX.Element {
                       t={t}
                     />
                     <LibraryProviderCard
+                      trackingProvider="epic"
                       store="Epic Games"
                       badge="E"
                       badgeClass="bg-[#2a2a2a]"
@@ -2197,21 +3031,61 @@ export function SettingsView(): JSX.Element {
                       t={t}
                     />
                     <LibraryProviderCard
+                      trackingProvider="xbox"
                       store={t('settings.account.xboxTitle')}
                       badge="X"
                       badgeClass="bg-[#107c10]"
                       status={xboxLibraryStatus}
-                      description={t('settings.libraryStatus.xboxAutomatic')}
-                      connected
+                      insights={[
+                        ...(xboxLibraryStatus.subscriptions?.includes('xbox-game-pass')
+                          ? [t('settings.account.xboxGamePassActive')]
+                          : []),
+                        ...((xboxLibraryStatus.entitlementCounts?.subscription ?? 0) > 0
+                          ? [
+                              t('settings.account.xboxGamePassCount', {
+                                count: xboxLibraryStatus.entitlementCounts?.subscription ?? 0
+                              })
+                            ]
+                          : []),
+                        ...((xboxLibraryStatus.entitlementCounts?.unknown ?? 0) > 0
+                          ? [
+                              t('settings.account.xboxUnknownCount', {
+                                count: xboxLibraryStatus.entitlementCounts?.unknown ?? 0
+                              })
+                            ]
+                          : [])
+                      ]}
+                      description={
+                        xboxAccount
+                          ? t('settings.account.connectedName', { name: xboxAccount.gamertag })
+                          : !xboxAvailable
+                            ? t('settings.account.xboxUnavailable')
+                            : xboxStatus.state === 'error'
+                              ? t('settings.account.connectionFailed')
+                              : t('settings.account.xboxNotConnected')
+                      }
+                      connected={Boolean(xboxAccount)}
                       automatic
-                      waiting={false}
-                      error={false}
-                      connectLabel=""
-                      signOutLabel=""
+                      waiting={xboxStatus.state === 'waiting-for-browser'}
+                      error={xboxStatus.state === 'error' || xboxLibraryStatus.state === 'error'}
+                      connectDisabled={!xboxAvailable}
+                      connectLabel={t(
+                        !xboxAvailable
+                          ? 'settings.account.xboxUnavailableShort'
+                          : xboxStatus.state === 'waiting-for-browser'
+                            ? 'settings.account.connecting'
+                            : xboxStatus.state === 'error'
+                              ? 'settings.account.retry'
+                              : 'settings.account.connectXbox'
+                      )}
+                      signOutLabel={t('settings.account.signOut')}
+                      onConnect={() => void startXboxLogin()}
+                      onLogout={() => void logoutXbox()}
                       language={language}
                       t={t}
                     />
                     <LibraryProviderCard
+                      trackingProvider="gog"
                       store="GOG"
                       badge="G"
                       badgeClass="bg-gradient-to-br from-[#8637d5] to-[#4d1d91]"
@@ -2227,6 +3101,7 @@ export function SettingsView(): JSX.Element {
                       t={t}
                     />
                     <LibraryProviderCard
+                      trackingProvider="playstation"
                       store="PlayStation"
                       badge="P"
                       badgeClass="bg-[#006fcd]"
@@ -2257,6 +3132,7 @@ export function SettingsView(): JSX.Element {
                       t={t}
                     />
                     <LibraryProviderCard
+                      trackingProvider="ea"
                       store="EA app"
                       badge="EA"
                       badgeClass="bg-[#ff4747]"
@@ -2272,6 +3148,7 @@ export function SettingsView(): JSX.Element {
                       t={t}
                     />
                     <LibraryProviderCard
+                      trackingProvider="ubisoft"
                       store="Ubisoft Connect"
                       badge="U"
                       badgeClass="bg-gradient-to-br from-[#008de5] to-[#0050a5]"
@@ -2287,6 +3164,7 @@ export function SettingsView(): JSX.Element {
                       t={t}
                     />
                     <LibraryProviderCard
+                      trackingProvider="retro"
                       store="Retro"
                       badge="R"
                       badgeClass="bg-gradient-to-br from-[#ff7a18] to-[#af002d]"
@@ -2313,9 +3191,10 @@ export function SettingsView(): JSX.Element {
                 </SettingsSection>
 
                 <SettingsSection
-                  index="04"
+                  id="retro-achievements"
                   icon={Trophy}
                   title={t('settings.retroAchievements.title')}
+                  description={t('settings.section.retro-achievementsBody')}
                 >
                   <p className="mb-4 max-w-4xl text-sm leading-relaxed text-muted">
                     {t('settings.retroAchievements.body')}
@@ -2402,7 +3281,12 @@ export function SettingsView(): JSX.Element {
                   )}
                 </SettingsSection>
 
-                <SettingsSection index="05" icon={Globe2} title={t('settings.storeRegion.title')}>
+                <SettingsSection
+                  id="store-region"
+                  icon={Globe2}
+                  title={t('settings.storeRegion.title')}
+                  description={t('settings.section.store-regionBody')}
+                >
                   <p className="mb-4 text-sm text-muted">{t('settings.storeRegion.body')}</p>
                   <div className="flex flex-wrap gap-3">
                     {STORE_REGION_OPTIONS.map((option) => (
@@ -2430,7 +3314,12 @@ export function SettingsView(): JSX.Element {
                   </div>
                 </SettingsSection>
 
-                <SettingsSection index="06" icon={ImageIcon} title={t('settings.images.title')}>
+                <SettingsSection
+                  id="artwork"
+                  icon={ImageIcon}
+                  title={t('settings.images.title')}
+                  description={t('settings.section.artworkBody')}
+                >
                   <p className="mb-4 max-w-4xl text-sm leading-relaxed text-muted">
                     {t('settings.images.body')}
                   </p>
@@ -2635,18 +3524,20 @@ export function SettingsView(): JSX.Element {
             )}
 
             {page === 'hardware' && (
-              <div className="mt-5 space-y-5">
+              <div className="mt-3 space-y-2">
                 <SettingsSection
-                  index="01"
+                  id="background-service"
                   icon={ShieldCheck}
                   title={t('settings.backgroundService.title')}
+                  description={t('settings.section.background-serviceBody')}
                 >
                   <OrbitBackgroundServicePanel />
                 </SettingsSection>
                 <SettingsSection
-                  index="02"
+                  id="hardware-control"
                   icon={Gamepad2}
                   title={t('settings.hardwareControl.title')}
+                  description={t('settings.section.hardware-controlBody')}
                 >
                   <HardwareControlPanel />
                 </SettingsSection>
@@ -2654,7 +3545,7 @@ export function SettingsView(): JSX.Element {
             )}
 
             {page === 'updates' && (
-              <div className="mt-5 space-y-5">
+              <div className="mt-3 space-y-2">
                 <OrbitUpdatesPanel
                   snapshot={appUpdateSnapshot}
                   language={language}
@@ -2676,8 +3567,13 @@ export function SettingsView(): JSX.Element {
             )}
 
             {page === 'system' && (
-              <div className="mt-5 space-y-5">
-                <SettingsSection index="01" icon={RotateCcw} title={t('settings.onboarding.title')}>
+              <div className="mt-3 space-y-2">
+                <SettingsSection
+                  id="onboarding"
+                  icon={RotateCcw}
+                  title={t('settings.onboarding.title')}
+                  description={t('settings.section.onboardingBody')}
+                >
                   <div className="flex flex-wrap items-center justify-between gap-4">
                     <p className="max-w-3xl text-sm leading-relaxed text-muted">
                       {t('settings.onboarding.body')}
@@ -2702,13 +3598,20 @@ export function SettingsView(): JSX.Element {
                   </div>
                 </SettingsSection>
 
-                <SettingsSection index="02" icon={AppWindow} title={t('settings.about.title')}>
+                <SettingsSection
+                  id="about"
+                  icon={AppWindow}
+                  title={t('settings.about.title')}
+                  description={t('settings.section.aboutBody')}
+                  summary={version || '—'}
+                >
                   <p className="text-sm text-muted">
                     {t('settings.about.version', { version: version || '—' })}
                   </p>
                 </SettingsSection>
               </div>
             )}
+            </SettingsSections>
           </motion.div>
         </AnimatePresence>
       </div>
@@ -2743,7 +3646,7 @@ function OrbitUpdatesPanel({
   onAutoDownloadChange
 }: {
   snapshot: AppUpdateSnapshot
-  language: 'en' | 'de'
+  language: Language
   onCheck: () => void
   onDownload: () => void
   onInstall: () => void
@@ -2798,7 +3701,13 @@ function OrbitUpdatesPanel({
   }
 
   return (
-    <SettingsSection index="01" icon={DownloadCloud} title={t('appUpdate.settings.title')}>
+    <SettingsSection
+      id="orbit-updates"
+      icon={DownloadCloud}
+      title={t('appUpdate.settings.title')}
+      description={t('settings.section.orbit-updatesBody')}
+      summary={t(appUpdateStatusKey(snapshot))}
+    >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="max-w-3xl">
           <p className="text-sm leading-relaxed text-muted">{t('appUpdate.settings.body')}</p>
@@ -2967,7 +3876,7 @@ function SystemUpdatesPanel({
 }: {
   snapshot: SystemUpdateSnapshot | null
   checkState: 'idle' | 'checking' | 'error'
-  language: 'en' | 'de'
+  language: Language
   onCheck: () => void
 }): JSX.Element {
   const t = useT()
@@ -2983,7 +3892,7 @@ function SystemUpdatesPanel({
   )
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-2">
       {snapshot?.platform === 'unsupported' && (
         <div className="flex items-center gap-3 rounded-xl border border-amber-300/20 bg-amber-300/[0.07] px-4 py-3 text-sm text-amber-100">
           <CircleAlert size={17} className="shrink-0" />
@@ -3005,7 +3914,12 @@ function SystemUpdatesPanel({
         </div>
       )}
 
-      <SettingsSection index="02" icon={Download} title={t('settings.updates.windowsTitle')}>
+      <SettingsSection
+        id="windows-updates"
+        icon={Download}
+        title={t('settings.updates.windowsTitle')}
+        description={t('settings.section.windows-updatesBody')}
+      >
         <div className="flex flex-wrap items-start justify-between gap-4">
           <p className="max-w-3xl text-sm leading-relaxed text-muted">
             {t('settings.updates.windowsBody')}
@@ -3088,7 +4002,12 @@ function SystemUpdatesPanel({
         )}
       </SettingsSection>
 
-      <SettingsSection index="03" icon={Monitor} title={t('settings.updates.graphicsTitle')}>
+      <SettingsSection
+        id="graphics-updates"
+        icon={Monitor}
+        title={t('settings.updates.graphicsTitle')}
+        description={t('settings.section.graphics-updatesBody')}
+      >
         <p className="max-w-4xl text-sm leading-relaxed text-muted">
           {t('settings.updates.graphicsBody')}
         </p>
@@ -3268,12 +4187,12 @@ function VendorBadge({ vendor }: { vendor: GraphicsAdapterVendor }): JSX.Element
 
 function formatUpdateDate(
   value: number | string,
-  language: 'en' | 'de',
+  language: Language,
   includeTime = false
 ): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', {
+  return new Intl.DateTimeFormat(languageLocale(language), {
     dateStyle: 'medium',
     ...(includeTime ? { timeStyle: 'short' as const } : {})
   }).format(date)
@@ -3359,11 +4278,162 @@ function PresentationGroup({
   )
 }
 
+function ManualAudioCueEditor({
+  customCues,
+  onSelect,
+  onClear,
+  t
+}: {
+  customCues: CustomUiAudioCues
+  onSelect: (cueId: AudioCueId) => Promise<boolean>
+  onClear: (cueId: AudioCueId) => Promise<void>
+  t: ReturnType<typeof useT>
+}): JSX.Element {
+  const [busyCueId, setBusyCueId] = useState<AudioCueId | null>(null)
+  const [errorCueId, setErrorCueId] = useState<AudioCueId | null>(null)
+
+  const restoreCueFocus = (cueId: AudioCueId): void => {
+    requestAnimationFrame(() => {
+      focusElement(
+        document.querySelector<HTMLElement>(`[data-ui-audio-select="${cueId}"]`)
+      )
+    })
+  }
+
+  const chooseCue = async (cueId: AudioCueId): Promise<void> => {
+    if (busyCueId) return
+    setBusyCueId(cueId)
+    setErrorCueId(null)
+    try {
+      await onSelect(cueId)
+    } catch {
+      setErrorCueId(cueId)
+    } finally {
+      setBusyCueId(null)
+      restoreCueFocus(cueId)
+    }
+  }
+
+  const removeCue = async (cueId: AudioCueId): Promise<void> => {
+    if (busyCueId) return
+    setBusyCueId(cueId)
+    setErrorCueId(null)
+    try {
+      await onClear(cueId)
+    } catch {
+      setErrorCueId(cueId)
+    } finally {
+      setBusyCueId(null)
+      restoreCueFocus(cueId)
+    }
+  }
+
+  return (
+    <motion.div
+      key="manual-audio-cue-editor"
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      transition={{ duration: 0.18 }}
+      className="mt-3 rounded-2xl border border-accent/20 bg-black/20 p-3"
+    >
+      <div className="mb-3 px-1">
+        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-accent">
+          {t('settings.audio.manualEditor')}
+        </p>
+        <p className="mt-1 max-w-3xl text-[11px] leading-relaxed text-white/42">
+          {t('settings.audio.manualEditorBody')}
+        </p>
+        <p className="mt-1 text-[9px] text-white/30">
+          {t('settings.audio.manualFormats')}
+        </p>
+      </div>
+
+      <div className="grid gap-2 lg:grid-cols-2">
+        {AUDIO_CUE_IDS.map((cueId) => {
+          const copy = AUDIO_CUE_COPY[cueId]
+          const customCue = customCues[cueId]
+          const busy = busyCueId === cueId
+          const cueLabel = t(copy.labelKey)
+          return (
+            <div
+              key={cueId}
+              role="group"
+              aria-label={cueLabel}
+              className="flex min-w-0 flex-col gap-2.5 rounded-xl border border-white/[0.06] bg-white/[0.025] p-2.5 sm:flex-row sm:items-center"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-semibold text-white/76">{cueLabel}</span>
+                <span className="mt-0.5 block text-[9px] leading-snug text-white/35">
+                  {t(copy.bodyKey)}
+                </span>
+                <span aria-live="polite" className={`mt-1 block truncate text-[10px] font-medium ${
+                  errorCueId === cueId ? 'text-rose-200' : customCue ? 'text-accent' : 'text-white/32'
+                }`}>
+                  {errorCueId === cueId
+                    ? t('settings.audio.manualError')
+                    : customCue?.name ?? t('settings.audio.manualFallback')}
+                </span>
+              </span>
+              <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+                <motion.button
+                  data-focusable
+                  data-ui-sound-skip
+                  type="button"
+                  aria-label={t('settings.audio.manualPreview', { cue: cueLabel })}
+                  onClick={() => playUiSound(cueId)}
+                  whileTap={{ scale: 0.97 }}
+                  className="flex h-8 items-center justify-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.04] px-3 text-[9px] font-bold text-white/60 transition-colors hover:bg-white/[0.08] hover:text-white"
+                >
+                  <Play size={10} fill="currentColor" className="shrink-0" />
+                  {t('settings.audio.manualListen')}
+                </motion.button>
+                <motion.button
+                  data-focusable
+                  data-ui-sound-skip
+                  data-ui-audio-select={cueId}
+                  type="button"
+                  disabled={Boolean(busyCueId)}
+                  aria-busy={busy}
+                  onClick={() => void chooseCue(cueId)}
+                  whileTap={{ scale: 0.97 }}
+                  className="flex h-8 items-center justify-center rounded-full bg-accent/12 px-3 text-[9px] font-bold text-accent transition-colors hover:bg-accent/20 disabled:cursor-wait disabled:opacity-45"
+                >
+                  {busy
+                    ? t('settings.audio.manualSelecting')
+                    : t(customCue ? 'settings.audio.manualReplace' : 'settings.audio.manualChoose')}
+                </motion.button>
+                {customCue && (
+                  <motion.button
+                    data-focusable
+                    data-ui-sound-skip
+                    data-ui-audio-remove={cueId}
+                    type="button"
+                    disabled={Boolean(busyCueId)}
+                    aria-label={t('settings.audio.manualRemoveLabel', { cue: cueLabel })}
+                    onClick={() => void removeCue(cueId)}
+                    whileTap={{ scale: 0.92 }}
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-white/38 transition-colors hover:bg-rose-400/10 hover:text-rose-200 disabled:opacity-40"
+                  >
+                    <Trash2 size={13} />
+                  </motion.button>
+                )}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </motion.div>
+  )
+}
+
 function PresentationChoice({
   active,
   title,
   description,
   badge,
+  locked = false,
+  settingOption,
   preview,
   onClick
 }: {
@@ -3371,12 +4441,16 @@ function PresentationChoice({
   title: string
   description: string
   badge?: string
+  locked?: boolean
+  settingOption?: string
   preview: React.ReactNode
   onClick: () => void
 }): JSX.Element {
   return (
     <motion.button
       data-focusable
+      data-premium-locked={locked ? 'true' : undefined}
+      data-setting-option={settingOption}
       type="button"
       aria-pressed={active}
       onClick={onClick}
@@ -3385,7 +4459,9 @@ function PresentationChoice({
       className={`flex min-h-[4.65rem] w-full items-center gap-3 rounded-xl border p-2.5 text-left transition-colors ${
         active
           ? 'border-accent/65 bg-accent/12'
-          : 'border-white/[0.06] bg-white/[0.025] hover:bg-white/[0.05]'
+          : locked
+            ? 'border-amber-300/20 bg-amber-300/[0.04] hover:bg-amber-300/[0.07]'
+            : 'border-white/[0.06] bg-white/[0.025] hover:bg-white/[0.05]'
       }`}
     >
       <span className="flex h-12 w-[4.25rem] shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/[0.07] bg-black/35">
@@ -3397,7 +4473,13 @@ function PresentationChoice({
             {title}
           </span>
           {badge && (
-            <span className="rounded-full bg-white/[0.07] px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-wider text-white/35">
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-wider ${
+                locked
+                  ? 'border border-amber-300/20 bg-amber-300/10 text-amber-200'
+                  : 'bg-white/[0.07] text-white/35'
+              }`}
+            >
               {badge}
             </span>
           )}
@@ -3406,10 +4488,18 @@ function PresentationChoice({
       </span>
       <span
         className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
-          active ? 'border-accent bg-accent text-black' : 'border-white/15 text-transparent'
+          active
+            ? 'border-accent bg-accent text-black'
+            : locked
+              ? 'border-amber-300/25 bg-amber-300/10 text-amber-200'
+              : 'border-white/15 text-transparent'
         }`}
       >
-        <Check size={11} strokeWidth={3} />
+        {locked ? (
+          <LockKeyhole size={10} strokeWidth={2.5} />
+        ) : (
+          <Check size={11} strokeWidth={3} />
+        )}
       </span>
     </motion.button>
   )
@@ -3625,6 +4715,25 @@ function CardSizePreview({ size }: { size: GameCardSize }): JSX.Element {
   )
 }
 
+function GameCardActionPreview({
+  action
+}: {
+  action: GameCardPrimaryAction
+}): JSX.Element {
+  return (
+    <span className="flex items-center gap-2 text-white/70">
+      <ControllerButtonHint
+        button="south"
+        className="flex h-7 min-w-7 items-center justify-center rounded-full border border-white/18 bg-white/[0.07] px-1.5 text-xs font-black"
+      />
+      <span className="h-px w-3 bg-white/20" />
+      <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/25 bg-accent/10 text-accent">
+        {action === 'launch' ? <Play size={13} fill="currentColor" /> : <Info size={14} />}
+      </span>
+    </span>
+  )
+}
+
 function BackdropPreview({ intensity }: { intensity: BackdropIntensity }): JSX.Element {
   const opacity =
     intensity === 'subtle'
@@ -3777,31 +4886,79 @@ function SettingsToggle({
   )
 }
 
-function SettingsSection({
-  index,
-  icon: Icon,
+function titleMusicSeconds(
+  value: number,
+  language: Language,
+  t: ReturnType<typeof useT>
+): string {
+  if (value === 0) return t('titleMusic.immediate')
+  const formatted = value.toLocaleString(languageLocale(language), {
+    maximumFractionDigits: 1
+  })
+  return t('titleMusic.seconds', { value: formatted })
+}
+
+function MusicRange({
+  id,
   title,
-  children
+  description,
+  value,
+  min,
+  max,
+  step,
+  valueText,
+  minText,
+  maxText,
+  onChange
 }: {
-  index: string
-  icon: typeof Palette
+  id: string
   title: string
-  children: React.ReactNode
+  description: string
+  value: number
+  min: number
+  max: number
+  step: number
+  valueText: string
+  minText: string
+  maxText: string
+  onChange: (value: number) => void
 }): JSX.Element {
   return (
-    <section className="settings-section relative overflow-hidden rounded-xl2 border border-white/[0.07] bg-[linear-gradient(135deg,rgb(255_255_255/0.045),rgb(255_255_255/0.018))] p-5 shadow-card backdrop-blur-xl">
-      <div className="pointer-events-none absolute left-0 top-5 h-8 w-px bg-accent/80" />
-      <h3 className="mb-4 flex items-center gap-3">
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.07] bg-black/25 text-accent">
-          <Icon size={15} />
-        </span>
-        <span className="text-sm font-semibold text-white/78">{title}</span>
-        <span className="ml-auto text-[9px] font-bold tracking-[0.18em] text-white/22">
-          {index}
-        </span>
-      </h3>
-      {children}
-    </section>
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.025] p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <label htmlFor={id} className="text-sm font-semibold text-white/85">
+            {title}
+          </label>
+          <p id={`${id}-hint`} className="mt-1 text-[11px] leading-relaxed text-muted">
+            {description}
+          </p>
+        </div>
+        <output htmlFor={id} className="shrink-0 text-base font-bold tabular-nums text-accent">
+          {valueText}
+        </output>
+      </div>
+      <input
+        id={id}
+        data-focusable
+        data-setting-range={id}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        aria-valuetext={valueText}
+        aria-describedby={`${id}-hint`}
+        onChange={(event) => onChange(Number(event.currentTarget.value))}
+        onBlur={() => { void flushMusicSettingsSave() }}
+        onPointerUp={() => { void flushMusicSettingsSave() }}
+        className="mt-2 block h-8 w-full cursor-pointer rounded-xl accent-accent"
+      />
+      <div className="flex justify-between gap-3 text-[10px] text-white/38">
+        <span>{minText}</span>
+        <span>{maxText}</span>
+      </div>
+    </div>
   )
 }
 
@@ -3990,7 +5147,7 @@ function formatLibraryCheck(
   t: ReturnType<typeof useT>
 ): string {
   if (!timestamp) return t('settings.libraryStatus.neverChecked')
-  return new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', {
+  return new Intl.DateTimeFormat(languageLocale(language), {
     hour: '2-digit',
     minute: '2-digit'
   }).format(timestamp)
@@ -4000,14 +5157,14 @@ function formatArtworkTimestamp(
   timestamp: number,
   language: OrbitSettings['language']
 ): string {
-  return new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', {
+  return new Intl.DateTimeFormat(languageLocale(language), {
     dateStyle: 'medium',
     timeStyle: 'short'
   }).format(timestamp)
 }
 
 function formatArtworkCacheSize(bytes: number, language: OrbitSettings['language']): string {
-  const locale = language === 'de' ? 'de-DE' : 'en-US'
+  const locale = languageLocale(language)
   const size = bytes >= 1024 * 1024 ? bytes / (1024 * 1024) : bytes / 1024
   const unit = bytes >= 1024 * 1024 ? 'MB' : 'KB'
   return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(size)} ${unit}`
@@ -4025,13 +5182,16 @@ function steamGridDbTokenClass(
 }
 
 function LibraryProviderCard({
+  trackingProvider,
   store,
   badge,
   badgeClass,
   status,
   description,
+  insights = [],
   connected,
   automatic = false,
+  connectDisabled = false,
   waiting,
   error,
   connectLabel,
@@ -4041,13 +5201,16 @@ function LibraryProviderCard({
   language,
   t
 }: {
+  trackingProvider: GameProvider
   store: string
   badge: string
   badgeClass: string
   status: LibraryProviderStatus
   description: string
+  insights?: string[]
   connected: boolean
   automatic?: boolean
+  connectDisabled?: boolean
   waiting: boolean
   error: boolean
   connectLabel: string
@@ -4058,6 +5221,7 @@ function LibraryProviderCard({
   t: ReturnType<typeof useT>
 }): JSX.Element {
   const methods = status.methods.map((method) => t(LIBRARY_METHOD_KEYS[method]))
+  const trackingMethods = gameTrackingMethodsForProvider(trackingProvider)
   const issue = status.issue
     ? t(LIBRARY_ISSUE_KEYS[status.issue], { count: status.pendingCount ?? 0 })
     : undefined
@@ -4117,11 +5281,54 @@ function LibraryProviderCard({
         <p className="mt-1.5 text-xs leading-relaxed text-white/68">
           {methods.length > 0 ? methods.join(' + ') : t('settings.libraryStatus.method.pending')}
         </p>
+        {insights.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {insights.map((insight) => (
+              <span
+                key={insight}
+                className="rounded-full border border-[#52c75a]/20 bg-[#107c10]/12 px-2 py-1 text-[9px] font-semibold text-[#8bea91]"
+              >
+                {insight}
+              </span>
+            ))}
+          </div>
+        )}
         {status.pendingCount ? (
           <p className="mt-2 text-[10px] text-accent">
             {t('settings.libraryStatus.pending', { count: status.pendingCount })}
           </p>
         ) : null}
+        <div className="mt-2.5 border-t border-white/[0.06] pt-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-white/30">
+              {t('settings.gameTracking.cardLabel')}
+            </p>
+            <span className="flex items-center gap-1 text-[9px] font-medium text-white/35">
+              <ShieldCheck
+                size={10}
+                style={{ color: 'rgb(var(--color-game-running))' }}
+              />
+              {t('settings.gameTracking.fallbacksActive')}
+            </span>
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px]">
+            {trackingMethods.map((method, index) => (
+              <span key={method} className="flex items-center gap-1.5">
+                {index > 0 && <span className="text-white/20">→</span>}
+                <span
+                  className={index === 0 ? '' : 'text-white/45'}
+                  style={
+                    index === 0
+                      ? { color: 'rgb(var(--color-game-running))' }
+                      : undefined
+                  }
+                >
+                  {t(GAME_TRACKING_METHOD_LABEL_KEYS[method])}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
 
       {issue && (
@@ -4142,30 +5349,33 @@ function LibraryProviderCard({
             {formatLibraryCheck(status.lastCheckedAt, language, t)}
           </span>
         </p>
-        {automatic ? (
-          <span className="rounded-full bg-[#107c10]/15 px-2.5 py-1 text-[9px] font-semibold text-[#6ee7a0]">
-            {t('settings.libraryStatus.automatic')}
-          </span>
-        ) : connected && onLogout ? (
-          <FocusableButton variant="ghost" onClick={onLogout} className="shrink-0">
-            <span className="flex items-center gap-2">
-              <LogOut size={14} />
-              {signOutLabel}
+        <div className="flex items-center gap-2">
+          {automatic && (
+            <span className="rounded-full bg-[#107c10]/15 px-2.5 py-1 text-[9px] font-semibold text-[#6ee7a0]">
+              {t('settings.libraryStatus.automatic')}
             </span>
-          </FocusableButton>
-        ) : onConnect ? (
-          <FocusableButton
-            data-disabled={waiting ? 'true' : undefined}
-            disabled={waiting}
-            onClick={onConnect}
-            className="shrink-0 disabled:cursor-wait disabled:opacity-50"
-          >
-            <span className="flex items-center gap-2">
-              {waiting && <Loader2 size={14} className="animate-spin" />}
-              {connectLabel}
-            </span>
-          </FocusableButton>
-        ) : null}
+          )}
+          {connected && onLogout ? (
+            <FocusableButton variant="ghost" onClick={onLogout} className="shrink-0">
+              <span className="flex items-center gap-2">
+                <LogOut size={14} />
+                {signOutLabel}
+              </span>
+            </FocusableButton>
+          ) : onConnect ? (
+            <FocusableButton
+              data-disabled={waiting || connectDisabled ? 'true' : undefined}
+              disabled={waiting || connectDisabled}
+              onClick={onConnect}
+              className="shrink-0 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span className="flex items-center gap-2">
+                {waiting && <Loader2 size={14} className="animate-spin" />}
+                {connectLabel}
+              </span>
+            </FocusableButton>
+          ) : null}
+        </div>
       </div>
     </article>
   )

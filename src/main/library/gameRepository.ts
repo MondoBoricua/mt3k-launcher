@@ -2,7 +2,9 @@ import Store from 'electron-store'
 import { app } from 'electron'
 import type {
   GameMetadata,
+  GameMetadataUpdateInput,
   GameProvider,
+  LibraryAccessKind,
   LibraryGame,
   LibrarySessionRecord,
   LibrarySnapshot,
@@ -23,13 +25,19 @@ import {
 import { isAutomaticLibraryTitleAllowed } from '@shared/libraryContentPolicy'
 import type { LocalGameRecordInput } from '../customLibrary'
 import type { RetroGameRecordInput } from '../retro/retroLibrary'
+import { sanitizeStoredMetadataOverrides } from './gameMetadataInput'
+import {
+  applyGameMetadataOverrides,
+  patchGameMetadataOverrides,
+  sameGameMetadataOverrides
+} from '@shared/gameMetadataOverrides'
 import {
   playtimeSecondsFrom,
   reconcileProviderPlaytime,
   validPlaytimeSeconds
 } from './playtimeTracking'
 
-const DATABASE_VERSION = 8
+const DATABASE_VERSION = 9
 const DEFAULT_PROFILE_ID = 'orbit-default'
 const STEAM_PROVIDER = 'steam' as const
 const SESSION_RETENTION_MS = 366 * 24 * 60 * 60 * 1_000
@@ -124,6 +132,7 @@ export interface ProviderOwnedDelta {
   providerGameId: string
   name?: string
   appId?: number
+  libraryAccess?: LibraryAccessKind
   metadata?: GameMetadata
   playtimeSeconds?: number
   playtimeMinutes?: number
@@ -134,6 +143,7 @@ export interface ProviderMetadataDelta {
   providerGameId: string
   appId?: number
   name?: string
+  libraryAccess?: LibraryAccessKind
   metadata: GameMetadata
   locale: string
   source: string
@@ -360,6 +370,22 @@ function metadataEquals(left: GameMetadata, right: GameMetadata): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
+function toPublicGame({
+  owned: _owned,
+  ownershipSource: _ownershipSource,
+  lastSeenOnlineAt: _online,
+  lastSeenInstalledAt: _local,
+  providerPlaytimeSeconds: _providerPlaytime,
+  pendingPlaytimeSeconds: _pendingPlaytime,
+  ...game
+}: StoredGame): LibraryGame {
+  return {
+    ...game,
+    name: game.nameOverride ?? game.name,
+    metadata: applyGameMetadataOverrides(game.metadata, game.metadataOverrides)
+  }
+}
+
 function emptyAccount(): AccountLibrary {
   return { games: {}, recentGameIds: [], steamRecentGameIds: [], sessions: [], loadedAt: 0 }
 }
@@ -408,17 +434,11 @@ export class GameRepository {
     this.ensureOpen()
     const visibleRecords = projectVisibleLibraryRecords(Object.values(this.account.games))
 
-    const toPublicGame = ({
-      owned: _owned,
-      ownershipSource: _ownershipSource,
-      lastSeenOnlineAt: _online,
-      lastSeenInstalledAt: _local,
-      providerPlaytimeSeconds: _providerPlaytime,
-      pendingPlaytimeSeconds: _pendingPlaytime,
-      ...game
-    }: StoredGame): LibraryGame => game
     const games = visibleRecords.map(toPublicGame)
-    const providerGames = visibleRecords.map(toPublicGame)
+    // Both public projections intentionally contain the same records today. Reuse the
+    // immutable snapshot array so Electron's structured clone only has to carry one
+    // object graph across IPC. Consumers treat both arrays as read-only.
+    const providerGames = games
     const visibleIds = new Set(games.map((game) => game.id))
     const recentGameIds = [...new Set(this.account.recentGameIds)].filter((id) =>
       visibleIds.has(id)
@@ -653,6 +673,7 @@ export class GameRepository {
         providerGameId: rawProviderId,
         appId: owned.appId ?? existing?.appId,
         name,
+        libraryAccess: owned.libraryAccess ?? existing?.libraryAccess,
         metadata: nextMetadata,
         metadataRevision: (existing?.metadataRevision ?? 0) + (metadataChanged ? 1 : 0),
         metadataUpdatedAt: metadataChanged ? now : existing?.metadataUpdatedAt,
@@ -712,7 +733,18 @@ export class GameRepository {
     const identityChanged = !existing || existing.name !== name
     const localeChanged = existing?.metadataLocale !== delta.locale
     const sourceChanged = existing?.metadataSource !== delta.source
-    if (existing && !contentChanged && !identityChanged && !localeChanged && !sourceChanged) return false
+    const accessChanged =
+      delta.libraryAccess !== undefined && existing?.libraryAccess !== delta.libraryAccess
+    if (
+      existing &&
+      !contentChanged &&
+      !identityChanged &&
+      !localeChanged &&
+      !sourceChanged &&
+      !accessChanged
+    ) {
+      return false
+    }
 
     this.account.games[id] = {
       ...existing,
@@ -721,6 +753,7 @@ export class GameRepository {
       providerGameId: rawProviderId,
       appId: delta.appId ?? existing?.appId,
       name,
+      libraryAccess: delta.libraryAccess ?? existing?.libraryAccess,
       metadata: nextMetadata,
       metadataRevision:
         contentChanged || localeChanged
@@ -783,13 +816,20 @@ export class GameRepository {
     )
   }
 
-  applyAuthoritativeOwnedDelta(ownedGames: Iterable<SteamOwnedDelta>): void {
+  applyAuthoritativeOwnedDelta(
+    ownedGames: Iterable<SteamOwnedDelta>,
+    sharedGames: Iterable<SteamOwnedDelta> = []
+  ): void {
     this.applyAuthoritativeProviderDelta(
       STEAM_PROVIDER,
-      [...ownedGames].map((game) => ({
+      [
+        ...[...ownedGames].map((game) => ({ ...game, libraryAccess: 'owned' as const })),
+        ...[...sharedGames].map((game) => ({ ...game, libraryAccess: 'shared' as const }))
+      ].map((game) => ({
         providerGameId: String(game.appId),
         appId: game.appId,
         name: game.name,
+        libraryAccess: game.libraryAccess,
         metadata: { iconUrl: game.iconUrl },
         playtimeSeconds: game.playtimeSeconds,
         playtimeMinutes: game.playtimeMinutes,
@@ -805,6 +845,38 @@ export class GameRepository {
         providerGameId: String(game.appId),
         appId: game.appId,
         name: game.name,
+        libraryAccess: 'owned',
+        metadata: { iconUrl: game.iconUrl },
+        playtimeSeconds: game.playtimeSeconds,
+        playtimeMinutes: game.playtimeMinutes,
+        lastPlayedTimestamp: game.lastPlayedTimestamp
+      }))
+    )
+  }
+
+  applyNonAuthoritativeUnclassifiedDelta(games: Iterable<SteamOwnedDelta>): void {
+    this.applyNonAuthoritativeProviderDelta(
+      STEAM_PROVIDER,
+      [...games].map((game) => ({
+        providerGameId: String(game.appId),
+        appId: game.appId,
+        name: game.name,
+        metadata: { iconUrl: game.iconUrl },
+        playtimeSeconds: game.playtimeSeconds,
+        playtimeMinutes: game.playtimeMinutes,
+        lastPlayedTimestamp: game.lastPlayedTimestamp
+      }))
+    )
+  }
+
+  applyNonAuthoritativeSharedDelta(sharedGames: Iterable<SteamOwnedDelta>): void {
+    this.applyNonAuthoritativeProviderDelta(
+      STEAM_PROVIDER,
+      [...sharedGames].map((game) => ({
+        providerGameId: String(game.appId),
+        appId: game.appId,
+        name: game.name,
+        libraryAccess: 'shared',
         metadata: { iconUrl: game.iconUrl },
         playtimeSeconds: game.playtimeSeconds,
         playtimeMinutes: game.playtimeMinutes,
@@ -814,7 +886,10 @@ export class GameRepository {
   }
 
   /** Dynamicstore IDs are non-authoritative because they include DLC/tools. */
-  applyNonAuthoritativeOwnedIds(appIds: Iterable<number>): number[] {
+  applyNonAuthoritativeOwnedIds(
+    appIds: Iterable<number>,
+    libraryAccess?: LibraryAccessKind
+  ): number[] {
     this.ensureOpen()
     const now = Date.now()
     const unresolved: number[] = []
@@ -824,6 +899,7 @@ export class GameRepository {
       const existing = this.account.games[id]
       if (existing && hasUsableName(existing.name)) {
         existing.owned = true
+        existing.libraryAccess = libraryAccess ?? existing.libraryAccess
         existing.lastSeenOnlineAt = now
         existing.updatedAt = now
       } else {
@@ -834,13 +910,18 @@ export class GameRepository {
     return unresolved
   }
 
-  applyMetadataDelta(metadata: SteamMetadataDelta, allowCreate: boolean): boolean {
+  applyMetadataDelta(
+    metadata: SteamMetadataDelta,
+    allowCreate: boolean,
+    libraryAccess?: LibraryAccessKind
+  ): boolean {
     return this.applyProviderMetadataDelta(
       STEAM_PROVIDER,
       {
         providerGameId: String(metadata.appId),
         appId: metadata.appId,
         name: metadata.name,
+        libraryAccess,
         metadata: metadata.metadata,
         locale: metadata.locale,
         source: metadata.source,
@@ -865,6 +946,54 @@ export class GameRepository {
       updatedAt: Date.now()
     }
     this.commit(Date.now())
+    return true
+  }
+
+  updateGameMetadata(input: GameMetadataUpdateInput): boolean {
+    this.ensureOpen()
+    const game = this.account.games[input.gameId]
+    if (!game) return false
+
+    const previousNameOverride = game.nameOverride
+    const previousOverrides = game.metadataOverrides
+    const previousName = previousNameOverride ?? game.name
+    const previousMetadata = applyGameMetadataOverrides(game.metadata, previousOverrides)
+    if (input.resetAll) {
+      delete game.nameOverride
+      delete game.metadataOverrides
+    }
+
+    if (Object.hasOwn(input, 'name')) {
+      if (input.name === null || input.name === game.name) delete game.nameOverride
+      else if (input.name) game.nameOverride = input.name
+    }
+
+    if (input.metadata) {
+      game.metadataOverrides = patchGameMetadataOverrides(
+        game.metadata,
+        game.metadataOverrides,
+        input.metadata
+      )
+    }
+
+    const nextName = game.nameOverride ?? game.name
+    const nextMetadata = applyGameMetadataOverrides(game.metadata, game.metadataOverrides)
+    const overrideStateChanged =
+      previousNameOverride !== game.nameOverride ||
+      !sameGameMetadataOverrides(previousOverrides, game.metadataOverrides)
+    if (
+      !overrideStateChanged &&
+      previousName === nextName &&
+      metadataEquals(previousMetadata, nextMetadata)
+    ) {
+      return false
+    }
+    const now = Date.now()
+    game.metadataRevision += 1
+    game.metadataUpdatedAt = now
+    game.updatedAt = now
+    this.rebuildRecentIds()
+    this.commit(now)
     return true
   }
 
@@ -1168,16 +1297,7 @@ export class GameRepository {
     this.ensureOpen()
     const game = this.account.games[id]
     if (!game) return undefined
-    const {
-      owned: _owned,
-      ownershipSource: _ownershipSource,
-      lastSeenOnlineAt: _online,
-      lastSeenInstalledAt: _local,
-      providerPlaytimeSeconds: _providerPlaytime,
-      pendingPlaytimeSeconds: _pendingPlaytime,
-      ...output
-    } = game
-    return output
+    return toPublicGame(game)
   }
 
   getGamesByProvider(provider: GameProvider): LibraryGame[] {
@@ -1240,6 +1360,7 @@ export class GameRepository {
         ...currentFields
       } = candidate
       const migratedMetadata = migrateMetadata(candidate)
+      const metadataOverrides = sanitizeStoredMetadataOverrides(candidate.metadataOverrides)
       const playtimeSeconds = playtimeSecondsFrom(candidate)
       const inferredProviderPlaytimeSeconds =
         validPlaytimeSeconds(candidate.providerPlaytimeSeconds) ??
@@ -1254,6 +1375,13 @@ export class GameRepository {
         appId,
         name,
         metadata: migratedMetadata,
+        metadataOverrides,
+        nameOverride:
+          typeof candidate.nameOverride === 'string' &&
+          hasUsableName(candidate.nameOverride) &&
+          candidate.nameOverride.trim() !== name
+            ? candidate.nameOverride.trim()
+            : undefined,
         metadataRevision:
           candidate.metadataRevision ?? (Object.keys(migratedMetadata).length > 0 ? 1 : 0),
         playtimeSeconds,
@@ -1264,6 +1392,10 @@ export class GameRepository {
         lastPlayedTimestamp: normalizeLibraryTimestamp(candidate.lastPlayedTimestamp) || undefined,
         lastStartedAt: normalizeLibraryTimestamp(candidate.lastStartedAt) || undefined,
         installed: Boolean(candidate.installed),
+        libraryAccess:
+          candidate.libraryAccess === 'owned' || candidate.libraryAccess === 'shared'
+            ? candidate.libraryAccess
+            : undefined,
         updateAvailable: Boolean(candidate.installed && candidate.updateAvailable),
         local: provider === 'local' ? sanitizeLocalConfig(candidate.local) : undefined,
         retro: provider === 'retro' ? sanitizeRetroConfig(candidate.retro) : undefined,

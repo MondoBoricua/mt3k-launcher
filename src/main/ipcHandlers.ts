@@ -1,23 +1,44 @@
+import { isLanguage } from '@shared/language'
 import { app, ipcMain, shell, type BrowserWindow } from 'electron'
 import { spawn } from 'node:child_process'
+import { isTextScale } from '@shared/textScale'
+import { safeExternalHttpsUrl } from '@shared/externalUrl'
+import {
+  isGameTitleMusicDelay,
+  isGameTitleMusicFade,
+  isGameTitleMusicVolume
+} from '@shared/gameTitleMusic'
+import {
+  isLauncherMusicSource,
+  isLauncherMusicVolume
+} from '@shared/launcherMusic'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  AUDIO_CUE_IDS,
+  AUDIO_CUE_PRESETS,
+  AUDIO_PRESETS,
+  isAudioCueId,
   DOCK_MOTIONS,
   DOCK_SIZES,
   DOCK_THEME_IDS,
+  GAME_CARD_PRIMARY_ACTIONS,
   HARDWARE_CONTROL_BUTTONS,
   HARDWARE_CONTROL_HOLD_SECONDS,
   HOME_BACKDROP_MODES,
   HOME_BACKDROP_MOTIONS,
   FRIENDS_PROVIDERS,
   IPC,
+  isCornerStyleId,
+  isOrbitPlusThemeId,
+  isThemeId,
   LIBRARY_GRID_COLUMN_OPTIONS,
   NOTIFICATION_MOTIONS,
   NOTIFICATION_POSITIONS,
   PLAYSTATION_REMOTE_PLAY_PREFERENCES,
   PROFILE_AVATAR_IDS,
   STARTUP_ANIMATION_MODES,
+  UNINSTALLED_GAME_COLORS,
   type AppControlAction,
   type CustomApplicationCommitInput,
   type CustomApplicationUpdateInput,
@@ -30,8 +51,11 @@ import {
   type FriendsProvider,
   type ImageOrientation,
   type ImageUpdate,
+  type LauncherDownloadActivity,
   type LibraryGame,
+  type LibrarySnapshot,
   type OrbitBackgroundServiceAction,
+  type OrbitPlusConnectionStatus,
   type OrbitSettings,
   type PlayStationLoginStatus,
   type ResolvedImage,
@@ -45,7 +69,8 @@ import {
   type SteamLoginStatus,
   type SystemPowerAction,
   type SystemSettingsTarget,
-  type SystemStatusSnapshot
+  type SystemStatusSnapshot,
+  type XboxLoginStatus
 } from '@shared/ipc'
 import { publicSettingsSnapshot, settingsStore } from './settingsStore'
 import { steamAuthManager } from './steam/steamAuth'
@@ -61,7 +86,7 @@ import { t } from './i18n'
 import { syncCoordinator } from './sync/syncCoordinator'
 import { storeService } from './store/storeService'
 import { getDisplayVersion } from './releaseManifest'
-import { OrbitBackgroundServiceManager } from './orbitBackgroundServiceManager'
+import { OrbitBackgroundMode } from './orbitBackgroundMode'
 import { customArtworkService } from './customArtwork'
 import { artworkPickerService } from './artworkPickerService'
 import { clearSteamGridDbCache, getSteamGridDbTokenStatus } from './steamGridDb'
@@ -69,6 +94,8 @@ import { steamGridDbCredentials } from './steamGridDbCredentials'
 import { profileAvatarService } from './profileAvatarService'
 import { homeWallpaperService } from './homeWallpaperService'
 import { startupVideoService } from './startupVideoService'
+import { launcherMusicService } from './launcherMusicService'
+import { customUiAudioService } from './customUiAudioService'
 import { systemUpdateService } from './systemUpdateService'
 import { SystemStatusService } from './systemStatusService'
 import { launcherDownloadMonitor } from './downloads/launcherDownloadMonitor'
@@ -79,10 +106,19 @@ import {
   parseCustomLaunchArguments
 } from './customLaunchArguments'
 import { RETRO_SYSTEMS } from '@shared/retroSystems'
+import { createGeForceNowDeepLink } from '@shared/geforceNow'
 import { applicationService } from './applicationService'
 import { netflixMediaService } from './netflixMediaService'
 import { retroAchievementsCredentials } from './retro/retroAchievementsCredentials'
 import { applyOrbitWallpaper } from './orbitWallpaperService'
+import { xboxAuthManager } from './xbox/xboxAuth'
+import { achievementService } from './achievements/achievementService'
+import { clearXboxAchievementCaches } from './achievements/xboxAchievements'
+import { geForceNowCatalogService } from './geforceNow/geforceNowCatalogService'
+import { geForceNowWebService } from './geforceNow/geforceNowWebService'
+import { LibraryRefreshScheduler } from './library/libraryRefreshScheduler'
+import { orbitPlusService } from './orbitPlus/orbitPlusService'
+import { validateGameMetadataUpdate } from './library/gameMetadataInput'
 
 const SYSTEM_POWER_ACTIONS: readonly SystemPowerAction[] = ['sleep', 'restart', 'shutdown']
 const SYSTEM_SETTINGS_TARGETS: Record<SystemSettingsTarget, string> = {
@@ -229,11 +265,48 @@ function validateSettingsPartial(value: unknown): asserts value is Partial<Orbit
     throw new Error('Invalid settings payload')
   }
   const partial = value as Record<string, unknown>
+  if ('language' in partial && !isLanguage(partial.language)) {
+    throw new Error('Invalid language')
+  }
+  if ('textScale' in partial && !isTextScale(partial.textScale)) {
+    throw new Error('Invalid text scale')
+  }
+  if ('theme' in partial && !isThemeId(partial.theme)) {
+    throw new Error('Invalid theme')
+  }
+  if ('cornerStyle' in partial && !isCornerStyleId(partial.cornerStyle)) {
+    throw new Error('Invalid corner style')
+  }
   if ('steamGridDbApiKey' in partial) {
     throw new Error('SteamGridDB credentials require the secure credential API')
   }
   if ('steamWebApiKey' in partial) {
     throw new Error('Steam Web API credentials require the secure credential API')
+  }
+  if (
+    'audioPreset' in partial &&
+    !AUDIO_PRESETS.includes(partial.audioPreset as (typeof AUDIO_PRESETS)[number])
+  ) {
+    throw new Error('Invalid audio preset')
+  }
+  if ('audioCuePresets' in partial) {
+    const audioCuePresets = partial.audioCuePresets
+    if (
+      typeof audioCuePresets !== 'object' ||
+      audioCuePresets === null ||
+      Array.isArray(audioCuePresets) ||
+      Object.keys(audioCuePresets).some(
+        (cueId) => !AUDIO_CUE_IDS.includes(cueId as (typeof AUDIO_CUE_IDS)[number])
+      ) ||
+      AUDIO_CUE_IDS.some(
+        (cueId) =>
+          !AUDIO_CUE_PRESETS.includes(
+            (audioCuePresets as Record<string, unknown>)[cueId] as (typeof AUDIO_CUE_PRESETS)[number]
+          )
+      )
+    ) {
+      throw new Error('Invalid manual audio cue presets')
+    }
   }
   if (
     'retroAchievementsUsername' in partial &&
@@ -285,6 +358,20 @@ function validateSettingsPartial(value: unknown): asserts value is Partial<Orbit
     )
   ) {
     throw new Error('Invalid library grid column count')
+  }
+  if (
+    'uninstalledGameColor' in partial &&
+    !UNINSTALLED_GAME_COLORS.includes(
+      partial.uninstalledGameColor as (typeof UNINSTALLED_GAME_COLORS)[number]
+    )
+  ) {
+    throw new Error('Invalid uninstalled game color')
+  }
+  if (
+    'showSteamSharedGames' in partial &&
+    typeof partial.showSteamSharedGames !== 'boolean'
+  ) {
+    throw new Error('Invalid Steam shared-library visibility state')
   }
   if ('favoriteGameIds' in partial) {
     if (
@@ -367,11 +454,58 @@ function validateSettingsPartial(value: unknown): asserts value is Partial<Orbit
   ) {
     throw new Error('Invalid dock motion')
   }
+  if (
+    'gameCardPrimaryAction' in partial &&
+    !GAME_CARD_PRIMARY_ACTIONS.includes(
+      partial.gameCardPrimaryAction as (typeof GAME_CARD_PRIMARY_ACTIONS)[number]
+    )
+  ) {
+    throw new Error('Invalid game card primary action')
+  }
   if ('notificationsEnabled' in partial && typeof partial.notificationsEnabled !== 'boolean') {
     throw new Error('Invalid notification state')
   }
   if ('showFriendsHub' in partial && typeof partial.showFriendsHub !== 'boolean') {
     throw new Error('Invalid Friends Hub visibility state')
+  }
+  if ('backgroundTrailers' in partial && typeof partial.backgroundTrailers !== 'boolean') {
+    throw new Error('Invalid background trailers setting')
+  }
+  if ('launcherMusic' in partial && typeof partial.launcherMusic !== 'boolean') {
+    throw new Error('Invalid launcher music setting')
+  }
+  if (
+    'launcherMusicVolume' in partial &&
+    !isLauncherMusicVolume(partial.launcherMusicVolume)
+  ) {
+    throw new Error('Invalid launcher music volume')
+  }
+  if (
+    'launcherMusicSource' in partial &&
+    !isLauncherMusicSource(partial.launcherMusicSource)
+  ) {
+    throw new Error('Invalid launcher music source')
+  }
+  if ('gameTitleMusic' in partial && typeof partial.gameTitleMusic !== 'boolean') {
+    throw new Error('Invalid game title music setting')
+  }
+  if (
+    'gameTitleMusicVolume' in partial &&
+    !isGameTitleMusicVolume(partial.gameTitleMusicVolume)
+  ) {
+    throw new Error('Invalid game title music volume')
+  }
+  if (
+    'gameTitleMusicDelaySeconds' in partial &&
+    !isGameTitleMusicDelay(partial.gameTitleMusicDelaySeconds)
+  ) {
+    throw new Error('Invalid game title music delay')
+  }
+  if (
+    'gameTitleMusicFadeSeconds' in partial &&
+    !isGameTitleMusicFade(partial.gameTitleMusicFadeSeconds)
+  ) {
+    throw new Error('Invalid game title music fade duration')
   }
   if ('appUpdateAutoDownload' in partial && typeof partial.appUpdateAutoDownload !== 'boolean') {
     throw new Error('Invalid app update download preference')
@@ -557,35 +691,64 @@ function runSystemPowerAction(action: SystemPowerAction): Promise<void> {
 }
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
+  const mainWindowDisposers = new Set<() => void>()
+  const disposeWithMainWindow = (dispose: () => void): void => {
+    mainWindowDisposers.add(dispose)
+  }
+  mainWindow.once('closed', () => {
+    for (const dispose of mainWindowDisposers) {
+      try {
+        dispose()
+      } catch (error) {
+        console.warn('[ipc] Main-window cleanup failed:', error)
+      }
+    }
+    mainWindowDisposers.clear()
+  })
   app.once('before-quit', () => applicationService.dispose())
+  app.once('before-quit', () => geForceNowCatalogService.dispose())
+  disposeWithMainWindow(() => orbitPlusService.cancelPatreonConnection())
   const sendSteamAccountUpdate = (account: SteamAccount): void => {
     if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
     mainWindow.webContents.send(IPC.steamAccountUpdated, account)
   }
   steamAuthManager.on('account', sendSteamAccountUpdate)
-  mainWindow.once('closed', () => steamAuthManager.off('account', sendSteamAccountUpdate))
+  disposeWithMainWindow(() => steamAuthManager.off('account', sendSteamAccountUpdate))
   const sendFriendsUpdate = (): void => {
     if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
     mainWindow.webContents.send(IPC.friendsUpdated, friendsService.getSnapshot())
   }
   friendsService.on('updated', sendFriendsUpdate)
-  mainWindow.once('closed', () => friendsService.off('updated', sendFriendsUpdate))
+  disposeWithMainWindow(() => friendsService.off('updated', sendFriendsUpdate))
   const sendDiscordChatMessage = (event: DiscordChatEvent): void => {
     if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
     mainWindow.webContents.send(IPC.discordChatMessage, event)
   }
   friendsService.on('discord-chat-message', sendDiscordChatMessage)
-  mainWindow.once('closed', () =>
+  disposeWithMainWindow(() =>
     friendsService.off('discord-chat-message', sendDiscordChatMessage)
   )
   app.once('before-quit', () => friendsService.dispose())
   // Warm the provider-neutral cache while the renderer is loading so opening
   // the Friends Hub never becomes the trigger for its first network request.
   void friendsService.refresh()
+  const libraryRefreshScheduler = new LibraryRefreshScheduler((targets) =>
+    libraryService.refreshInstalledProviders(targets)
+  )
+  disposeWithMainWindow(() => libraryRefreshScheduler.dispose())
   const gameSessionManager = new GameSessionManager(mainWindow, {
+    getLibraryGames: () => libraryService.getSnapshot().games,
     onGameConfirmed: (game, detectedAt) => libraryService.markGameStarted(game.id, detectedAt),
-    onSessionCompleted: (game, session) =>
-      libraryService.recordGameSession(game.id, session.durationSeconds, session.endedAt),
+    onSessionCompleted: (game, session) => {
+      const result = libraryService.recordGameSession(
+        game.id,
+        session.durationSeconds,
+        session.endedAt
+      )
+      // recordGameSession already schedules a game-scoped Steam/Epic playtime
+      // reconciliation. Avoid a redundant provider or whole-library scan here.
+      return result
+    },
     onGameEnded: (game) => libraryService.backupCustomGame(game.id)
   })
   let gameSessionDisposed = false
@@ -602,14 +765,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   }
   app.once('before-quit', disposeGameSession)
-  mainWindow.once('closed', disposeGameSession)
-  const backgroundServiceManager = new OrbitBackgroundServiceManager(
-    mainWindow,
-    () => settingsStore.store.hardwareControlEnabled
-  )
+  disposeWithMainWindow(disposeGameSession)
+  const backgroundServiceManager = new OrbitBackgroundMode(mainWindow)
   const disposeBackgroundService = (): void => backgroundServiceManager.dispose()
   app.once('before-quit', disposeBackgroundService)
-  mainWindow.once('closed', disposeBackgroundService)
+  disposeWithMainWindow(disposeBackgroundService)
   const appUpdateService = new AppUpdateService(mainWindow, {
     getGameLaunchPhase: () => gameSessionManager.getStatus().phase,
     hasActiveLauncherDownload: () =>
@@ -630,7 +790,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     appUpdateDisposed = true
     appUpdateService.dispose()
   }
-  mainWindow.once('closed', disposeAppUpdate)
+  disposeWithMainWindow(disposeAppUpdate)
   const systemStatusService = new SystemStatusService()
   const sendSystemStatus = (snapshot: SystemStatusSnapshot): void => {
     if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
@@ -646,7 +806,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     systemStatusService.dispose()
   }
   app.once('before-quit', disposeSystemStatus)
-  mainWindow.once('closed', disposeSystemStatus)
+  disposeWithMainWindow(disposeSystemStatus)
   const sendLauncherDownloads = (): void => {
     if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
     mainWindow.webContents.send(
@@ -655,40 +815,113 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     )
     appUpdateService.refreshBlockers()
   }
+  const refreshLibraryAfterDownload = (activity: LauncherDownloadActivity): void => {
+    libraryRefreshScheduler.request({
+      provider: activity.provider,
+      providerGameId: activity.providerGameId
+    })
+  }
   launcherDownloadMonitor.on('updated', sendLauncherDownloads)
+  launcherDownloadMonitor.on('completed', refreshLibraryAfterDownload)
   launcherDownloadMonitor.start()
   let launcherDownloadsDisposed = false
   const disposeLauncherDownloads = (): void => {
     if (launcherDownloadsDisposed) return
     launcherDownloadsDisposed = true
     launcherDownloadMonitor.off('updated', sendLauncherDownloads)
+    launcherDownloadMonitor.off('completed', refreshLibraryAfterDownload)
     launcherDownloadMonitor.stop()
   }
-  mainWindow.once('closed', disposeLauncherDownloads)
-  libraryService.on('updated', (snapshot) => {
+  disposeWithMainWindow(disposeLauncherDownloads)
+  const sendLibrarySnapshot = (snapshot: LibrarySnapshot): void => {
     if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
     mainWindow.webContents.send(IPC.libraryUpdated, snapshot)
+  }
+  libraryService.on('updated', sendLibrarySnapshot)
+  disposeWithMainWindow(() => libraryService.off('updated', sendLibrarySnapshot))
+  const currentGeForceNowSnapshot = () =>
+    geForceNowCatalogService.getSnapshot(libraryService.getSnapshot().games)
+  const sendGeForceNowSnapshot = (): void => {
+    if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+    mainWindow.webContents.send(IPC.geforceNowCatalogUpdated, currentGeForceNowSnapshot())
+  }
+  geForceNowCatalogService.on('updated', sendGeForceNowSnapshot)
+  libraryService.on('updated', sendGeForceNowSnapshot)
+  disposeWithMainWindow(() => {
+    geForceNowCatalogService.off('updated', sendGeForceNowSnapshot)
+    libraryService.off('updated', sendGeForceNowSnapshot)
   })
-  artworkService.on('updated', (update) => {
+  const sendArtworkUpdate = (update: ImageUpdate): void => {
+    if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
     const customArtwork = customArtworkService.resolve(update.gameId, update.orientation)
     mainWindow.webContents.send(IPC.imageUpdated, {
       ...update,
       image: customArtwork ?? update.image
     })
-  })
-  artworkService.on('invalidated', () => {
+  }
+  const sendArtworkInvalidated = (): void => {
     if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
     mainWindow.webContents.send(IPC.imageCacheInvalidated)
-  })
-  syncCoordinator.on('updated', (status) => {
+  }
+  const sendSyncUpdate = (status: ReturnType<typeof syncCoordinator.getStatus>): void => {
+    if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
     mainWindow.webContents.send(IPC.syncUpdated, status)
-  })
-  storeService.on('updated', (snapshot) => {
+  }
+  const sendStoreUpdate = (snapshot: ReturnType<typeof storeService.getSnapshot>): void => {
+    if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
     mainWindow.webContents.send(IPC.storeUpdated, snapshot)
+  }
+  artworkService.on('updated', sendArtworkUpdate)
+  artworkService.on('invalidated', sendArtworkInvalidated)
+  syncCoordinator.on('updated', sendSyncUpdate)
+  storeService.on('updated', sendStoreUpdate)
+  disposeWithMainWindow(() => {
+    artworkService.off('updated', sendArtworkUpdate)
+    artworkService.off('invalidated', sendArtworkInvalidated)
+    syncCoordinator.off('updated', sendSyncUpdate)
+    storeService.off('updated', sendStoreUpdate)
   })
-  gameSessionManager.on('updated', (status) => {
+  let gameSessionPerformanceEligible = false
+  let returningFromGame = false
+  let backgroundWorkPausedForGame = false
+  const syncGamePerformanceMode = (): void => {
+    if (mainWindow.isFocused()) {
+      libraryRefreshScheduler.handleWindowFocused(Date.now(), !returningFromGame)
+      returningFromGame = false
+    } else libraryRefreshScheduler.handleWindowBlurred()
+    const shouldPause = gameSessionPerformanceEligible && !mainWindow.isFocused()
+    if (backgroundWorkPausedForGame === shouldPause) return
+    backgroundWorkPausedForGame = shouldPause
+    // These services only feed hidden launcher surfaces. Pause them while the
+    // game owns foreground focus, then restore their live behavior as soon as
+    // the user returns to ORBIT.
+    launcherDownloadMonitor.setPollingPaused(shouldPause)
+    systemStatusService.setPaused(shouldPause)
+    storeService.setBackgroundRefreshPaused(shouldPause)
+    libraryService.setBackgroundEnrichmentPaused(shouldPause)
+    // PackageCatalog events are intentionally not kept resident during play.
+    // On return, scan only installed Xbox packages; account and catalog data
+    // are unrelated to a download that completed while ORBIT was hidden.
+    if (!shouldPause) libraryRefreshScheduler.request({ provider: 'xbox' })
+  }
+  mainWindow.on('focus', syncGamePerformanceMode)
+  mainWindow.on('blur', syncGamePerformanceMode)
+  const sendGameSessionUpdate = (status: ReturnType<typeof gameSessionManager.getStatus>): void => {
+    if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+    if (status.phase === 'returning') returningFromGame = true
+    const performanceEligible = status.phase === 'launching' || status.phase === 'running'
+    if (gameSessionPerformanceEligible !== performanceEligible) {
+      gameSessionPerformanceEligible = performanceEligible
+      syncGamePerformanceMode()
+    }
     mainWindow.webContents.send(IPC.gameLaunchStatus, status)
     appUpdateService.refreshBlockers()
+  }
+  gameSessionManager.on('updated', sendGameSessionUpdate)
+  disposeWithMainWindow(() => {
+    mainWindow.off('focus', syncGamePerformanceMode)
+    mainWindow.off('blur', syncGamePerformanceMode)
+    gameSessionManager.off('updated', sendGameSessionUpdate)
   })
 
   ipcMain.handle(IPC.launcherDownloadsGet, () => launcherDownloadMonitor.getSnapshot())
@@ -696,20 +929,71 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(IPC.profileAvatarGetCustom, () => profileAvatarService.resolve())
   ipcMain.handle(IPC.profileAvatarSelectCustom, () => profileAvatarService.select(mainWindow))
-  ipcMain.handle(IPC.homeWallpaperGet, () => homeWallpaperService.resolveUrl())
+  ipcMain.handle(IPC.homeWallpaperGet, () => homeWallpaperService.resolve())
   ipcMain.handle(IPC.homeWallpaperSelect, () => homeWallpaperService.select(mainWindow))
   ipcMain.handle(IPC.homeWallpaperClear, () => homeWallpaperService.clear())
+  ipcMain.handle(IPC.launcherMusicGetCustom, () => launcherMusicService.resolve())
+  ipcMain.handle(IPC.launcherMusicSelectCustom, () => {
+    if (!orbitPlusService.hasFeature('manual-audio')) {
+      throw new Error('ORBIT Plus is required for custom launcher music')
+    }
+    return launcherMusicService.select(mainWindow)
+  })
+  ipcMain.handle(IPC.launcherMusicClearCustom, () => launcherMusicService.clear())
+  ipcMain.handle(IPC.uiAudioGetCustom, () => customUiAudioService.resolveAll())
+  ipcMain.handle(IPC.uiAudioSelectCustom, (_event, cueIdValue: unknown) => {
+    if (!orbitPlusService.hasFeature('manual-audio')) {
+      throw new Error('ORBIT Plus is required for custom interface sounds')
+    }
+    if (!isAudioCueId(cueIdValue)) throw new Error('Invalid interface sound ID')
+    return customUiAudioService.select(mainWindow, cueIdValue)
+  })
+  ipcMain.handle(IPC.uiAudioClearCustom, (_event, cueIdValue: unknown) => {
+    if (!isAudioCueId(cueIdValue)) throw new Error('Invalid interface sound ID')
+    return customUiAudioService.clear(cueIdValue)
+  })
   ipcMain.handle(IPC.startupVideoGet, () => startupVideoService.resolveUrl())
   ipcMain.handle(IPC.startupVideoSelect, () => startupVideoService.select(mainWindow))
 
   ipcMain.handle(IPC.settingsSet, (_e, partial: unknown) => {
     validateSettingsPartial(partial)
+    for (const key of ['backgroundModeEnabled', 'startWithWindows'] as const) {
+      if (key in partial && typeof partial[key] !== 'boolean') throw new Error(`Invalid ${key}`)
+    }
+    if ('startWithWindows' in partial) backgroundServiceManager.setStartWithWindows(partial.startWithWindows!)
+    if (
+      (partial.audioPreset === 'manual' || 'audioCuePresets' in partial) &&
+      !orbitPlusService.hasFeature('manual-audio')
+    ) {
+      throw new Error('ORBIT Plus is required for manual audio')
+    }
+    if (
+      partial.launcherMusicSource === 'custom' &&
+      !orbitPlusService.hasFeature('manual-audio')
+    ) {
+      throw new Error('ORBIT Plus is required for custom launcher music')
+    }
+    if (
+      ((partial.theme !== undefined && isOrbitPlusThemeId(partial.theme)) ||
+        (partial.cornerStyle !== undefined && partial.cornerStyle !== 'theme')) &&
+      !orbitPlusService.hasFeature('premium-appearance')
+    ) {
+      throw new Error('ORBIT Plus is required for premium appearance')
+    }
+    const languageChanged = partial.language !== undefined && partial.language !== settingsStore.get('language')
     const next = { ...publicSettingsSnapshot(), ...partial }
     settingsStore.set(next)
+    if (languageChanged) {
+      geForceNowCatalogService.refreshIfStale()
+      void libraryService.refresh().catch(() => undefined)
+      void storeService.refreshLanguage().catch(() => undefined)
+    }
     if (
       'hardwareControlEnabled' in partial ||
       'hardwareControlButton' in partial ||
-      'hardwareControlHoldSeconds' in partial
+      'hardwareControlHoldSeconds' in partial ||
+      'backgroundModeEnabled' in partial ||
+      'language' in partial
     ) {
       void backgroundServiceManager.reloadSettings()
     }
@@ -724,6 +1008,23 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
     return publicSettingsSnapshot()
   })
+
+  ipcMain.handle(IPC.orbitPlusGet, () => orbitPlusService.restore())
+  ipcMain.handle(IPC.orbitPlusRefresh, () => orbitPlusService.refresh())
+  ipcMain.handle(IPC.orbitPlusPatreonConnect, () => {
+    const sendStatus = (status: OrbitPlusConnectionStatus): void => {
+      if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+      mainWindow.webContents.send(IPC.orbitPlusStatus, status)
+    }
+    return orbitPlusService.startPatreonConnection(sendStatus)
+  })
+  ipcMain.handle(IPC.orbitPlusPatreonCancel, () =>
+    orbitPlusService.cancelPatreonConnection()
+  )
+  ipcMain.handle(IPC.orbitPlusOwnerTestSet, (_event, enabled: unknown) =>
+    orbitPlusService.setOwnerTestAccess(enabled)
+  )
+  ipcMain.handle(IPC.orbitPlusDisconnect, () => orbitPlusService.disconnect())
 
   ipcMain.handle(IPC.retroAchievementsCredentialGet, () =>
     retroAchievementsCredentials.getStatus()
@@ -768,12 +1069,34 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
   ipcMain.handle(IPC.applicationsGet, () => applicationService.getSnapshot())
   ipcMain.handle(IPC.applicationsRefresh, () => applicationService.getSnapshot(true))
-  ipcMain.handle(IPC.applicationsLaunch, (_e, applicationId: unknown) =>
-    applicationService.launch(
-      validatedShortString(applicationId, 'application ID', 160),
-      mainWindow
+  ipcMain.handle(IPC.applicationsLaunch, async (_e, applicationIdValue: unknown) => {
+    const applicationId = validatedShortString(applicationIdValue, 'application ID', 160)
+    const result = await applicationService.launch(applicationId, mainWindow)
+    libraryRefreshScheduler.expectLauncherReturn(applicationId)
+    return result
+  })
+  ipcMain.handle(IPC.geforceNowCatalogGet, () => {
+    geForceNowCatalogService.refreshIfStale()
+    return currentGeForceNowSnapshot()
+  })
+  ipcMain.handle(IPC.geforceNowCatalogRefresh, async () => {
+    await geForceNowCatalogService.refresh(true)
+    return currentGeForceNowSnapshot()
+  })
+  ipcMain.handle(IPC.geforceNowGameLaunch, async (_e, gameIdValue: unknown) => {
+    orbitPlusService.requireFeature('cloud-gaming')
+    const gameId = validatedShortString(gameIdValue, 'GeForce NOW game ID')
+    const game = libraryService.getGame(gameId)
+    if (!game) throw new Error('Game is not available')
+    await geForceNowCatalogService.refresh()
+    const match = geForceNowCatalogService.matchGame(game)
+    if (!match) throw new Error('Game is not available on GeForce NOW')
+    await geForceNowWebService.launch(
+      mainWindow,
+      createGeForceNowDeepLink(match.geforceNowGameId)
     )
-  )
+  })
+  ipcMain.handle(IPC.geforceNowOpenBrowser, () => geForceNowWebService.launchInBrowser())
   ipcMain.on(IPC.mediaKeyboardUpdate, (event, value: unknown) =>
     netflixMediaService.handleKeyboardUpdate(event.sender, value)
   )
@@ -988,6 +1311,46 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     )
   })
 
+  ipcMain.handle(IPC.libraryGameMetadataUpdate, (_e, value: unknown) =>
+    libraryService.updateGameMetadata(validateGameMetadataUpdate(value))
+  )
+
+  ipcMain.handle(IPC.libraryGameMetadataSync, (_e, gameIdValue: unknown) =>
+    libraryService.syncGameMetadata(
+      validatedShortString(gameIdValue, 'metadata sync game ID')
+    )
+  )
+
+  ipcMain.handle(IPC.xboxGetConnection, () => xboxAuthManager.restoreSession())
+
+  ipcMain.handle(IPC.xboxLoginStart, async () => {
+    const sendStatus = (status: XboxLoginStatus): void => {
+      mainWindow.webContents.send(IPC.xboxLoginStatus, status)
+      if (status.state === 'success') {
+        void libraryService.refresh()
+        void friendsService.refresh()
+      }
+    }
+    try {
+      await xboxAuthManager.startLogin(sendStatus, mainWindow)
+    } catch (error) {
+      sendStatus({
+        state: 'error',
+        message: error instanceof Error ? error.message : 'Xbox sign-in failed'
+      })
+    }
+  })
+
+  ipcMain.handle(IPC.xboxLoginCancel, () => xboxAuthManager.cancelLogin())
+
+  ipcMain.handle(IPC.xboxLogout, async () => {
+    await xboxAuthManager.logout()
+    clearXboxAchievementCaches()
+    achievementService.clearProvider('xbox')
+    void libraryService.refresh()
+    void friendsService.refresh()
+  })
+
   ipcMain.handle(IPC.customGameBeginImport, (_e, source: unknown) => {
     if (!CUSTOM_GAME_IMPORT_SOURCES.includes(source as CustomGameImportSource)) {
       throw new Error('Invalid custom game import source')
@@ -1101,7 +1464,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.gameTrackingStop, () => gameSessionManager.stopTracking())
   ipcMain.handle(IPC.gameLaunchGet, () => gameSessionManager.getStatus())
   ipcMain.handle(IPC.gameLaunchRevealLauncher, () => gameSessionManager.revealLauncher())
-
+  ipcMain.handle(IPC.gameTrailerResolve, async (_e, value: unknown) => {
+    const gameId = validatedShortString(value, 'trailer game ID')
+    const game = libraryService.getGame(gameId)
+    if (!game) return null
+    const { resolveGameTrailer } = await import('./trailers/gameTrailerService')
+    return resolveGameTrailer(game, settingsStore.get('language'))
+  })
+  ipcMain.handle(IPC.gameTitleMusicResolve, async (_e, value: unknown) => {
+    const gameId = validatedShortString(value, 'title music game ID')
+    if (settingsStore.get('gameTitleMusic') === false) return null
+    const game = libraryService.getGame(gameId)
+    if (!game) return null
+    const { resolveGameTitleMusic } = await import('./titleMusic/gameTitleMusicService')
+    return resolveGameTitleMusic(game, settingsStore.get('language'))
+  })
   ipcMain.handle(IPC.gameCompletionTimesResolve, async (_e, gameId: string) => {
     return libraryService.resolveCompletionTimes(gameId)
   })
@@ -1281,9 +1658,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
-  ipcMain.handle(IPC.openExternal, async (_e, url: string) => {
-    if (url.startsWith('https://')) {
-      await shell.openExternal(url)
-    }
+  ipcMain.handle(IPC.openExternal, async (_e, value: unknown) => {
+    const url = safeExternalHttpsUrl(value)
+    if (!url) throw new Error('Invalid external URL')
+    await shell.openExternal(url)
   })
 }

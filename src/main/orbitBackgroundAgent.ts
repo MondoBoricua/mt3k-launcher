@@ -132,6 +132,13 @@ export async function startOrbitBackgroundAgent(): Promise<void> {
     app.quit()
     return
   }
+  // The login item stays registered so Hardware Control can be enabled without
+  // another setup step. With the feature off there is no controller work to do,
+  // so do not keep a second Electron runtime resident.
+  if (!settingsStore.store.hardwareControlEnabled) {
+    app.quit()
+    return
+  }
 
   const pipeNames = orbitServicePipeNames(userDataPath)
   let watcher: HardwareControlWatcher | null = null

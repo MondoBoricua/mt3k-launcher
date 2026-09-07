@@ -187,17 +187,26 @@ export class SystemStatusService extends EventEmitter {
   private activeRefresh: Promise<SystemStatusSnapshot> | null = null
   private activeChild: ReturnType<typeof spawn> | null = null
   private disposed = false
+  private running = false
+  private paused = false
 
   start(): void {
-    if (this.disposed || process.platform !== 'win32' || this.refreshTimer) return
+    if (this.disposed || process.platform !== 'win32' || this.running) return
+    this.running = true
     void this.refresh()
-    this.refreshTimer = setInterval(() => void this.refresh(), REFRESH_INTERVAL_MS)
-    this.refreshTimer.unref()
+    this.syncRefreshTimer()
+  }
+
+  setPaused(paused: boolean): void {
+    if (this.disposed || this.paused === paused) return
+    this.paused = paused
+    this.syncRefreshTimer()
   }
 
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.running = false
     if (this.refreshTimer) clearInterval(this.refreshTimer)
     this.refreshTimer = null
     this.activeChild?.kill()
@@ -207,6 +216,14 @@ export class SystemStatusService extends EventEmitter {
 
   getSnapshot(): SystemStatusSnapshot {
     return structuredClone(this.snapshot)
+  }
+
+  private syncRefreshTimer(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer)
+    this.refreshTimer = null
+    if (!this.running || this.paused) return
+    this.refreshTimer = setInterval(() => void this.refresh(), REFRESH_INTERVAL_MS)
+    this.refreshTimer.unref()
   }
 
   refresh(): Promise<SystemStatusSnapshot> {

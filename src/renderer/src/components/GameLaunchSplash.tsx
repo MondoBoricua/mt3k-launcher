@@ -223,7 +223,9 @@ export function GameLaunchSplash({ status }: Props): JSX.Element {
   const failureTitle =
     status.failureReason === 'launch-rejected'
       ? t('launch.failed')
-      : t('launch.monitorUnavailable')
+      : status.failureReason === 'monitor-unavailable'
+        ? t('launch.startedWithoutTracking')
+        : t('launch.monitorUnavailable')
   const failureDescription =
     status.failureReason === 'launch-rejected'
       ? t('launch.failureLaunchRejected')
@@ -247,6 +249,8 @@ export function GameLaunchSplash({ status }: Props): JSX.Element {
           : failureTitle
   const gameName = status.gameName ?? t('launch.gameFallback')
   const elapsed = status.phase === 'running' ? elapsedLabel(status.detectedAt) : null
+  const launchAcceptedWithoutTracking =
+    status.phase === 'error' && status.failureReason === 'monitor-unavailable'
   const showLauncher =
     !cancelableUntil && (status.phase === 'launching' || status.phase === 'running')
 
@@ -318,7 +322,13 @@ export function GameLaunchSplash({ status }: Props): JSX.Element {
           </motion.div>
 
           {status.phase === 'error' && (
-            <div className="absolute -bottom-2 -right-1 flex h-12 w-12 items-center justify-center rounded-full border border-red-200/25 bg-red-500/85 text-white shadow-2xl">
+            <div
+              className={`absolute -bottom-2 -right-1 flex h-12 w-12 items-center justify-center rounded-full border text-white shadow-2xl ${
+                launchAcceptedWithoutTracking
+                  ? 'border-amber-200/25 bg-amber-500/85'
+                  : 'border-red-200/25 bg-red-500/85'
+              }`}
+            >
               <AlertTriangle size={22} />
             </div>
           )}

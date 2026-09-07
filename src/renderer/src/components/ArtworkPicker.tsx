@@ -27,6 +27,7 @@ interface Props {
   onApplied: (orientation: PickerOrientation) => void
   onReset: (orientation: PickerOrientation) => void
   onClose: () => void
+  initialOrientation?: PickerOrientation
 }
 
 type BusyAction = string | null
@@ -42,14 +43,15 @@ export function ArtworkPicker({
   hasOverrides,
   onApplied,
   onReset,
-  onClose
+  onClose,
+  initialOrientation = 'vertical'
 }: Props): JSX.Element {
   const t = useT()
   const compact = usePreferencesStore((state) => state.uiDensity === 'compact')
   const customRef = useRef<HTMLButtonElement>(null)
   const requestGenerationRef = useRef(0)
   const initialQuery = gameName.trim().slice(0, MAX_QUERY_LENGTH)
-  const [orientation, setOrientation] = useState<PickerOrientation>('vertical')
+  const [orientation, setOrientation] = useState<PickerOrientation>(initialOrientation)
   const [query, setQuery] = useState(initialQuery)
   const [submittedQuery, setSubmittedQuery] = useState(initialQuery)
   const [queryTooShort, setQueryTooShort] = useState(initialQuery.length < MIN_QUERY_LENGTH)
@@ -116,11 +118,11 @@ export function ArtworkPicker({
 
   useEffect(() => {
     const nextQuery = gameName.trim().slice(0, MAX_QUERY_LENGTH)
-    setOrientation('vertical')
+    setOrientation(initialOrientation)
     setQuery(nextQuery)
     setSubmittedQuery(nextQuery)
-    load('vertical', nextQuery)
-  }, [gameId, load])
+    load(initialOrientation, nextQuery)
+  }, [gameId, initialOrientation, load])
 
   useEffect(
     () => () => {

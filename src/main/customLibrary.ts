@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
 import {
@@ -27,7 +28,6 @@ import {
   normalizeCustomLaunchArguments,
   parseCustomLaunchArguments
 } from './customLaunchArguments'
-import { settingsStore } from './settingsStore'
 
 const DRAFT_TTL_MS = 30 * 60_000
 const MAX_SCAN_DEPTH = 4
@@ -62,14 +62,6 @@ interface ExecutableCandidate {
 
 type ArtworkImage = ReturnType<typeof nativeImage.createFromPath>
 
-function isGerman(): boolean {
-  return settingsStore.store.language === 'de'
-}
-
-function message(de: string, en: string): string {
-  return isGerman() ? de : en
-}
-
 function cleanGameName(executablePath: string, installDir: string): string {
   const executableName = parse(executablePath).name
     .replace(/[-_. ]+(shipping|win32|win64|x64|x86|dx11|dx12)$/i, '')
@@ -78,7 +70,7 @@ function cleanGameName(executablePath: string, installDir: string): string {
     .trim()
   const directoryName = basename(installDir).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()
   const candidate = GENERIC_EXECUTABLE_PATTERN.test(executableName) ? directoryName : executableName
-  return candidate || directoryName || message('Eigenes Spiel', 'Custom game')
+  return candidate || directoryName || t("Custom game")
 }
 
 function scoreExecutable(candidate: ExecutableCandidate, installDir: string): number {
@@ -136,7 +128,7 @@ async function validatedExecutable(value: string): Promise<string> {
   const resolved = await realpath(value)
   const info = await stat(resolved)
   if (!info.isFile() || extname(resolved).toLocaleLowerCase('en-US') !== '.exe') {
-    throw new Error(message('Die ausgewählte Datei ist keine ausführbare EXE.', 'The selected file is not an executable.'))
+    throw new Error(t("The selected file is not an executable."))
   }
   return resolved
 }
@@ -193,7 +185,7 @@ async function persistArtwork(
   if (selectedArtworkPath) {
     const selected = nativeImage.createFromPath(selectedArtworkPath)
     if (selected.isEmpty()) {
-      throw new Error(message('Das ausgewählte Bild konnte nicht gelesen werden.', 'The selected image could not be read.'))
+      throw new Error(t("The selected image could not be read."))
     }
     const verticalPath = join(artworkDirectory, 'cover.png')
     const horizontalPath = join(artworkDirectory, 'hero.png')
@@ -231,7 +223,7 @@ function requireDraft(drafts: Map<string, PendingDraft>, draftId: string): Pendi
   const draft = drafts.get(draftId)
   if (!draft || Date.now() - draft.touchedAt > DRAFT_TTL_MS) {
     drafts.delete(draftId)
-    throw new Error(message('Diese Auswahl ist abgelaufen. Bitte wähle das Spiel erneut.', 'This selection expired. Please choose the game again.'))
+    throw new Error(t("This selection expired. Please choose the game again."))
   }
   draft.touchedAt = Date.now()
   return draft
@@ -261,11 +253,11 @@ export class CustomLibraryService {
     const folder = source === 'folder'
     const result = await dialog.showOpenDialog(mainWindow, {
       title: folder
-        ? message('ORBIT · Spieleordner auswählen', 'ORBIT · Select game folder')
-        : message('ORBIT · Spiel-EXE auswählen', 'ORBIT · Select game executable'),
-      buttonLabel: message('Spiel erkennen', 'Detect game'),
+        ? t("ORBIT · Select game folder")
+        : t("ORBIT · Select game executable"),
+      buttonLabel: t("Detect game"),
       properties: folder ? ['openDirectory'] : ['openFile'],
-      filters: folder ? undefined : [{ name: 'Windows games', extensions: ['exe'] }]
+      filters: folder ? undefined : [{ name: t('Windows games'), extensions: ['exe'] }]
     })
     if (result.canceled || !result.filePaths[0]) return null
 
@@ -274,7 +266,7 @@ export class CustomLibraryService {
       ? await findMainExecutable(selectedPath)
       : await validatedExecutable(selectedPath)
     if (!executablePath) {
-      throw new Error(message('In diesem Ordner wurde keine passende Spiel-EXE gefunden.', 'No suitable game executable was found in this folder.'))
+      throw new Error(t("No suitable game executable was found in this folder."))
     }
 
     const validatedPath = await validatedExecutable(executablePath)
@@ -294,16 +286,16 @@ export class CustomLibraryService {
   async selectArtwork(mainWindow: BrowserWindow, draftId: string): Promise<CustomGameDraft | null> {
     const draft = requireDraft(this.drafts, draftId)
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: message('ORBIT · Cover auswählen', 'ORBIT · Select cover'),
-      buttonLabel: message('Bild verwenden', 'Use image'),
+      title: t("ORBIT · Select cover"),
+      buttonLabel: t("Use image"),
       properties: ['openFile'],
-      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp'] }]
+      filters: [{ name: t('Images'), extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp'] }]
     })
     if (result.canceled || !result.filePaths[0]) return null
     const artworkPath = await realpath(result.filePaths[0])
     const artwork = nativeImage.createFromPath(artworkPath)
     if (artwork.isEmpty()) {
-      throw new Error(message('Das ausgewählte Bild konnte nicht gelesen werden.', 'The selected image could not be read.'))
+      throw new Error(t("The selected image could not be read."))
     }
     draft.artworkPath = artworkPath
     draft.artworkPreviewUrl = artwork.toDataURL()
@@ -319,9 +311,9 @@ export class CustomLibraryService {
     const folder = source === 'folder'
     const result = await dialog.showOpenDialog(mainWindow, {
       title: folder
-        ? message('ORBIT · Savegame-Ordner auswählen', 'ORBIT · Select save folder')
-        : message('ORBIT · Savegame-Datei auswählen', 'ORBIT · Select save file'),
-      buttonLabel: message('Für Backups verwenden', 'Use for backups'),
+        ? t("ORBIT · Select save folder")
+        : t("ORBIT · Select save file"),
+      buttonLabel: t("Use for backups"),
       properties: folder ? ['openDirectory'] : ['openFile']
     })
     if (result.canceled || !result.filePaths[0]) return null
@@ -347,7 +339,7 @@ export class CustomLibraryService {
     const draft = requireDraft(this.drafts, draftId)
     const name = requestedName.normalize('NFKC').replace(/[\u0000-\u001f\u007f]/g, '').trim()
     if (!name || name.length > 120) {
-      throw new Error(message('Der Spielname muss zwischen 1 und 120 Zeichen lang sein.', 'The game name must be between 1 and 120 characters.'))
+      throw new Error(t("The game name must be between 1 and 120 characters."))
     }
 
     const executablePath = await validatedExecutable(draft.executablePath)

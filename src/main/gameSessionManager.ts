@@ -16,11 +16,21 @@ import {
   GAME_PROCESS_CANDIDATE_STABILITY_MS,
   LaunchStartupTracker,
   ancestryIncludesTrackedPid,
-  hasEligibleGameProcessIdentity,
+  providerSessionTimestamps,
   provisionalHandoffGraceMs,
+  selectGameTrackingMethod,
+  windowsExecutableInsideDirectory,
   windowsPackageIdentityMatches
 } from './gameLaunchDetectionPolicy'
 import { settingsStore } from './settingsStore'
+import type { GameTrackingMethod } from '@shared/gameTracking'
+import { SteamGameActivityReader } from './steam/steamGameActivity'
+import {
+  detectLibraryGamePresences,
+  type GamePresenceProcess,
+  type ProviderReportedGameActivity
+} from './gamePresence'
+import { livingProcessRecords, processIdStillExists } from './processLiveness'
 
 const WINDOWS_POWERSHELL_PATH = path.join(
   process.env.SystemRoot ?? 'C:\\Windows',
@@ -30,16 +40,7 @@ const WINDOWS_POWERSHELL_PATH = path.join(
   'powershell.exe'
 )
 
-interface WindowsProcess {
-  ProcessId?: number
-  ParentProcessId?: number
-  Name?: string
-  ExecutablePath?: string
-  CommandLine?: string
-  StartedAt?: number
-  MainWindowHandle?: number
-  MainWindowTitle?: string
-}
+interface WindowsProcess extends GamePresenceProcess {}
 
 interface ProcessSnapshot {
   sequence: number
@@ -61,6 +62,8 @@ interface ScoredProcess {
   key: string
   score: number
   visible: boolean
+  trackingMethod: GameTrackingMethod
+  trackingFallbackIndex: number
 }
 
 interface PendingLaunchDelay {
@@ -80,6 +83,7 @@ export interface CompletedGameSessionResult {
 }
 
 export interface GameSessionCallbacks {
+  getLibraryGames?: () => readonly LibraryGame[]
   onGameConfirmed?: (game: LibraryGame, detectedAt: number) => void | Promise<void>
   onSessionCompleted?: (
     game: LibraryGame,
@@ -88,7 +92,7 @@ export interface GameSessionCallbacks {
   onGameEnded?: (game: LibraryGame) => Promise<LocalGameBackupResult>
 }
 
-const PROCESS_SAMPLE_INTERVAL_MS = 250
+const PROCESS_SAMPLE_INTERVAL_MS = 500
 const SNAPSHOT_TIMEOUT_MS = 2_000
 const PROCESS_STALL_TIMEOUT_MS = 6_000
 const BASELINE_TIMEOUT_MS = 3_000
@@ -102,8 +106,10 @@ const BACKUP_RESULT_SPLASH_MS = 1_400
 const RETURN_FOCUS_GUARD_MS = 1_800
 const FOCUS_GUARD_POLL_MS = 250
 const ERROR_SPLASH_MS = 5_000
-const MIN_GAME_PROCESS_SCORE = 90
-
+const PROVIDER_PRESENCE_POLL_MS = 750
+const PROVIDER_PRESENCE_EXIT_GRACE_MS = 1_500
+const PROVIDER_PRESENCE_STALL_TIMEOUT_MS = 2_500
+const PROVIDER_LIVENESS_POLL_MS = 500
 type LauncherFamily =
   | 'steam'
   | 'epic'
@@ -253,18 +259,8 @@ function New-ProcessRow($entry, $details) {
 }
 
 $live = @(Get-Process)
-foreach ($cim in @(Get-CimInstance Win32_Process)) {
-  $metadata[[int]$cim.ProcessId] = [pscustomobject]@{
-    ParentProcessId = [int]$cim.ParentProcessId
-    Name = [string]$cim.Name
-    ExecutablePath = [string]$cim.ExecutablePath
-    CommandLine = [string]$cim.CommandLine
-  }
-}
 foreach ($entry in $live) {
-  if (-not $metadata.ContainsKey([int]$entry.Id)) {
-    $metadata[[int]$entry.Id] = New-FallbackMetadata $entry
-  }
+  $metadata[[int]$entry.Id] = New-FallbackMetadata $entry
 }
 $initialRows = @($live | ForEach-Object {
   $windowState[[int]$_.Id] = "$( [int64]$_.MainWindowHandle ):$([string]$_.MainWindowTitle)"
@@ -275,6 +271,10 @@ $initialRows = @($live | ForEach-Object {
   Processes = [object[]]$initialRows
 }) -Compress -Depth 3))
 [Console]::Out.Flush()
+
+# A slow or damaged WMI provider must never delay launch dispatch or lifetime
+# monitoring. New processes receive targeted CIM metadata in the loop; the
+# baseline already has PID, executable path and window state from Get-Process.
 
 while ($true) {
   Start-Sleep -Milliseconds ${PROCESS_SAMPLE_INTERVAL_MS}
@@ -388,12 +388,6 @@ function hasVisibleWindow(candidate: WindowsProcess): boolean {
   return Boolean(candidate.MainWindowHandle)
 }
 
-function isInsideInstallDir(candidate: WindowsProcess, installDir?: string): boolean {
-  const root = normalizedPath(installDir)
-  const executable = normalizedPath(candidate.ExecutablePath)
-  return Boolean(root && executable && (executable === root || executable.startsWith(`${root}\\`)))
-}
-
 function launcherFamily(candidate: WindowsProcess): LauncherFamily | undefined {
   const knownFamily = LAUNCHER_PROCESS_FAMILIES.get(processName(candidate))
   if (knownFamily) return knownFamily
@@ -485,7 +479,8 @@ function scoreGameProcess(
   baselineByPid: ReadonlyMap<number, WindowsProcess>,
   processesByPid: ReadonlyMap<number, WindowsProcess>,
   trackedPids: ReadonlySet<number>,
-  directlySpawnedGamePids: ReadonlySet<number>
+  directlySpawnedGamePids: ReadonlySet<number>,
+  providerReportedGamePids: ReadonlySet<number>
 ): ScoredProcess | null {
   const pid = processId(candidate)
   const name = processName(candidate)
@@ -499,13 +494,18 @@ function scoreGameProcess(
     (Boolean(providerExecutableHint) && name === providerExecutableHint) ||
     (Boolean(importedExecutableHint) && name === importedExecutableHint)
   const directlySpawnedGame = directlySpawnedGamePids.has(pid)
+  const providerReportedGame = providerReportedGamePids.has(pid)
   const exactExecutable = Boolean(executable && expectedExecutable && executable === expectedExecutable)
-  const insideInstallDir = isInsideInstallDir(candidate, game.installDir)
+  const insideInstallDir = windowsExecutableInsideDirectory(
+    candidate.ExecutablePath,
+    game.installDir
+  )
   const commandLine = (candidate.CommandLine ?? '').toLowerCase()
   const packageFamilyMatches = windowsPackageIdentityMatches(
     game.metadata.launchUri,
     executable,
-    commandLine
+    commandLine,
+    game.metadata.providerPackageFamilyName
   )
   const reusableRemotePlayProcess =
     game.provider === 'playstation' && executableHintMatches && visible
@@ -522,6 +522,7 @@ function scoreGameProcess(
     SYSTEM_PROCESSES.has(name) ||
     (NON_GAME_PROCESS.test(name) &&
       !directlySpawnedGame &&
+      !providerReportedGame &&
       !exactExecutable &&
       !executableHintMatches)
   ) {
@@ -539,27 +540,26 @@ function scoreGameProcess(
   )
   const windowsAppsProcess = executable.includes('\\windowsapps\\')
 
-  // Visibility is presentation state, not identity. In particular, accepting
-  // `xbox + visible` alone made any newly opened app look like the launched game.
-  if (
-    !hasEligibleGameProcessIdentity({
-      directlySpawnedGame,
-      exactExecutable,
-      insideInstallDir,
-      packageFamilyMatches,
-      idMatches,
-      executableHintMatches,
-      fromTrackedGame,
-      fromLauncher,
-      visible,
-      nameMatches,
-      windowsAppsProcess
-    })
-  ) {
-    return null
-  }
+  const selectedTracking = selectGameTrackingMethod(game.provider, {
+    providerReportedGame,
+    directlySpawnedGame,
+    exactExecutable,
+    insideInstallDir,
+    packageFamilyMatches,
+    idMatches,
+    executableHintMatches,
+    fromTrackedGame,
+    fromLauncher,
+    visible,
+    nameMatches,
+    windowsAppsProcess
+  })
+  if (!selectedTracking) return null
 
-  let score = 0
+  // Provider order dominates presentation hints. A Steam process inside the
+  // game's install folder must beat a coincidentally similar visible process.
+  let score = 10_000 - selectedTracking.fallbackIndex * 1_000
+  if (providerReportedGame) score += 500
   if (directlySpawnedGame) score += 400
   if (exactExecutable) score += 320
   if (insideInstallDir) score += 140
@@ -573,8 +573,15 @@ function scoreGameProcess(
   if (game.provider === 'xbox' && visible) score += 25
   if (windowsAppsProcess) score += 20
 
-  if (score < MIN_GAME_PROCESS_SCORE) return null
-  return { process: candidate, pid, key: processKey(candidate), score, visible }
+  return {
+    process: candidate,
+    pid,
+    key: processKey(candidate),
+    score,
+    visible,
+    trackingMethod: selectedTracking.method,
+    trackingFallbackIndex: selectedTracking.fallbackIndex
+  }
 }
 
 function asArray<T>(value: T | T[] | undefined): T[] {
@@ -890,12 +897,33 @@ export class GameSessionManager extends EventEmitter {
   private launchTargetRevealed = false
   private pendingLaunchDelay: PendingLaunchDelay | null = null
   private activeGame: LibraryGame | null = null
+  private readonly steamActivityReader = new SteamGameActivityReader()
+  private providerPresenceTimer: ReturnType<typeof setTimeout> | null = null
+  private providerLivenessTimer: ReturnType<typeof setInterval> | null = null
+  private providerPresenceSampler: WindowsProcessSampler | null = null
+  private providerPresenceDisposed = false
+  private providerAttachedGameId: string | undefined
+  private providerPresenceMissingSince: number | undefined
+  private providerPresenceCandidateKey: string | undefined
+  private providerPresenceCandidateSince: number | undefined
+  private readonly providerAttachedProcessIds = new Set<number>()
+  private providerReturnInFlight = false
+  private readonly suppressedProviderGameIds = new Set<string>()
 
   constructor(
     private readonly mainWindow: BrowserWindow,
     private readonly callbacks: GameSessionCallbacks = {}
   ) {
     super()
+    if (callbacks.getLibraryGames) {
+      this.ensureProviderPresenceSampler()
+      this.scheduleProviderPresencePoll()
+      this.providerLivenessTimer = setInterval(
+        () => this.checkProviderAttachedProcessLiveness(),
+        PROVIDER_LIVENESS_POLL_MS
+      )
+      this.providerLivenessTimer.unref()
+    }
   }
 
   getStatus(): GameLaunchStatus {
@@ -951,6 +979,7 @@ export class GameSessionManager extends EventEmitter {
     // Invalidate the monitor before its next process snapshot. This stops only
     // ORBIT's bookkeeping; the game and its launcher remain untouched.
     const token = ++this.activeToken
+    this.suppressedProviderGameIds.add(game.id)
     this.sampler?.stop()
     this.sampler = null
     this.releaseLaunchShield(false)
@@ -970,6 +999,8 @@ export class GameSessionManager extends EventEmitter {
       detectedAt: status.detectedAt,
       endedAt,
       sessionDurationSeconds: completedSession.durationSeconds,
+      trackingMethod: status.trackingMethod,
+      trackingFallbackIndex: status.trackingFallbackIndex,
       returnTask: 'tracking-stopped'
     })
     await this.focusOrbit(token)
@@ -1012,34 +1043,42 @@ export class GameSessionManager extends EventEmitter {
     })
     this.maintainLaunchShield(token)
 
-    const sampler = new WindowsProcessSampler()
+    const sampler = this.takeProviderPresenceSampler() ?? new WindowsProcessSampler()
     this.sampler = sampler
-    let baseline: ProcessSnapshot
+    let baseline: ProcessSnapshot | undefined
+    let monitorFailureMessage = 'Game process monitor did not provide an initial snapshot'
+    let baselineAttempt: Promise<{ snapshot?: ProcessSnapshot; error?: unknown }>
     try {
       sampler.start()
-      const baselinePromise = sampler.waitForNext(0, BASELINE_TIMEOUT_MS)
-      const [initialBaseline, shouldLaunch] = await Promise.all([
-        baselinePromise,
-        this.waitForLaunchWindow(token, cancelableUntil)
-      ])
-      if (!shouldLaunch || token !== this.activeToken) return
-      const latestBaseline = sampler.getLatest()
-      baseline =
-        latestBaseline.sequence > initialBaseline.sequence ? latestBaseline : initialBaseline
-      if (baseline.sequence <= 0) {
-        throw new Error('Game process monitor did not provide an initial snapshot')
-      }
+      baselineAttempt = sampler
+        .waitForNext(0, BASELINE_TIMEOUT_MS)
+        .then((snapshot) => ({ snapshot }), (error: unknown) => ({ error }))
     } catch (error) {
+      baselineAttempt = Promise.resolve({ error })
+    }
+
+    const [baselineResult, shouldLaunch] = await Promise.all([
+      baselineAttempt,
+      this.waitForLaunchWindow(token, cancelableUntil)
+    ])
+    if (!shouldLaunch || token !== this.activeToken) return
+    if (baselineResult.snapshot) {
+      const latestBaseline = sampler.getLatest()
+      const candidateBaseline =
+        latestBaseline.sequence > baselineResult.snapshot.sequence
+          ? latestBaseline
+          : baselineResult.snapshot
+      if (candidateBaseline.sequence > 0) baseline = candidateBaseline
+    }
+    if (!baseline) {
+      if (baselineResult.error instanceof Error) {
+        monitorFailureMessage = baselineResult.error.message
+      }
+      // Process tracking improves automatic focus return and playtime, but it
+      // must never be a prerequisite for dispatching a game. This also keeps
+      // launches working when PowerShell/WMI is restricted by local policy.
       sampler.stop()
       if (this.sampler === sampler) this.sampler = null
-      this.settlePendingLaunchDelay(token, false)
-      if (token !== this.activeToken) return
-      await this.fail(
-        token,
-        error instanceof Error ? error.message : 'Game process monitor unavailable',
-        'monitor-unavailable'
-      )
-      return
     }
 
     if (token !== this.activeToken) return
@@ -1068,6 +1107,11 @@ export class GameSessionManager extends EventEmitter {
         error instanceof Error ? error.message : 'Launch failed',
         'launch-rejected'
       )
+      return
+    }
+
+    if (!baseline) {
+      void this.fail(token, monitorFailureMessage, 'monitor-unavailable')
       return
     }
 
@@ -1105,6 +1149,7 @@ export class GameSessionManager extends EventEmitter {
     )
     const ownedLauncherFamilies = new Set<LauncherFamily>()
     const trackedPids = new Set<number>()
+    const providerReportedGamePids = new Set<number>()
     const trackedProcessKeysByPid = new Map<number, string>()
     const primaryProcessKeys = new Set<string>()
     const candidateSeenAt = new Map<string, number>()
@@ -1115,6 +1160,8 @@ export class GameSessionManager extends EventEmitter {
     let lastFreshSnapshotAt = Date.now()
     let detectedAt: number | undefined
     let primaryStableSince: number | undefined
+    let activeTrackingMethod: GameTrackingMethod | undefined
+    let activeTrackingFallbackIndex: number | undefined
     let sessionConfirmed = false
     let gameFocusHandedOff = false
     let missingSince: number | undefined
@@ -1151,6 +1198,13 @@ export class GameSessionManager extends EventEmitter {
           previousProcesses.map((candidate) => [processId(candidate), candidate] as const)
         )
         for (const [pid, process] of processesByPid) ancestryProcessesByPid.set(pid, process)
+        providerReportedGamePids.clear()
+        if (game.provider === 'steam' && game.appId) {
+          const activeSteamPids = await this.steamActivityReader.getActiveProcessIds(game.appId)
+          for (const pid of activeSteamPids) {
+            if (processesByPid.has(pid)) providerReportedGamePids.add(pid)
+          }
+        }
         for (const pid of directlySpawnedGamePids) {
           if (processesByPid.has(pid)) observedDirectGamePids.add(pid)
           else if (observedDirectGamePids.has(pid)) directlySpawnedGamePids.delete(pid)
@@ -1170,7 +1224,8 @@ export class GameSessionManager extends EventEmitter {
               baselineByPid,
               ancestryProcessesByPid,
               trackedPids,
-              directlySpawnedGamePids
+              directlySpawnedGamePids,
+              providerReportedGamePids
             )
           )
           .filter((candidate): candidate is ScoredProcess => Boolean(candidate))
@@ -1191,6 +1246,8 @@ export class GameSessionManager extends EventEmitter {
               startupTracker.noteCandidateStabilized()
               detectedAt = seenAt
               primaryStableSince = now
+              activeTrackingMethod = best.trackingMethod
+              activeTrackingFallbackIndex = best.trackingFallbackIndex
               sessionConfirmed = false
               trackedPids.add(best.pid)
               trackedProcessKeysByPid.set(best.pid, best.key)
@@ -1258,7 +1315,9 @@ export class GameSessionManager extends EventEmitter {
             pid,
             key,
             score: Number.MAX_SAFE_INTEGER,
-            visible: hasVisibleWindow(process)
+            visible: hasVisibleWindow(process),
+            trackingMethod: activeTrackingMethod ?? 'executable',
+            trackingFallbackIndex: activeTrackingFallbackIndex ?? 0
           })
         }
 
@@ -1278,12 +1337,7 @@ export class GameSessionManager extends EventEmitter {
             activePrimaryByPid.set(candidate.pid, candidate)
             continue
           }
-          if (missingSince && candidate.visible && candidate.score >= 110) {
-            primaryProcessKeys.add(candidate.key)
-            activePrimaryByPid.set(candidate.pid, candidate)
-            continue
-          }
-          if (missingSince && candidate.score >= 140) {
+          if (missingSince) {
             primaryProcessKeys.add(candidate.key)
             activePrimaryByPid.set(candidate.pid, candidate)
           }
@@ -1306,7 +1360,9 @@ export class GameSessionManager extends EventEmitter {
             }
           }
           primaryStableSince ??= now
-          if (now - primaryStableSince >= GAME_CONFIRMATION_MS && !sessionConfirmed) {
+          const confirmationMs =
+            activeTrackingMethod === 'provider-handoff' ? GAME_CONFIRMATION_MS : 0
+          if (now - primaryStableSince >= confirmationMs && !sessionConfirmed) {
             sessionConfirmed = true
             directlySpawnedGamePids.clear()
             this.update({
@@ -1316,7 +1372,9 @@ export class GameSessionManager extends EventEmitter {
               provider: game.provider,
               requestedAt: this.status.requestedAt,
               startedAt,
-              detectedAt
+              detectedAt,
+              trackingMethod: activeTrackingMethod,
+              trackingFallbackIndex: activeTrackingFallbackIndex
             })
             try {
               await this.callbacks.onGameConfirmed?.(game, detectedAt)
@@ -1334,6 +1392,8 @@ export class GameSessionManager extends EventEmitter {
             startupTracker.noteCandidateMissing(now)
             detectedAt = undefined
             primaryStableSince = undefined
+            activeTrackingMethod = undefined
+            activeTrackingFallbackIndex = undefined
             gameFocusHandedOff = false
             missingSince = undefined
             trackedPids.clear()
@@ -1401,6 +1461,13 @@ export class GameSessionManager extends EventEmitter {
 
     const token = this.activeToken
     this.activeToken++
+    this.providerPresenceDisposed = true
+    if (this.providerPresenceTimer) clearTimeout(this.providerPresenceTimer)
+    this.providerPresenceTimer = null
+    if (this.providerLivenessTimer) clearInterval(this.providerLivenessTimer)
+    this.providerLivenessTimer = null
+    this.providerPresenceSampler?.stop()
+    this.providerPresenceSampler = null
     this.settlePendingLaunchDelay(token, false)
     this.sampler?.stop()
     this.sampler = null
@@ -1438,6 +1505,8 @@ export class GameSessionManager extends EventEmitter {
       detectedAt,
       endedAt,
       sessionDurationSeconds: completedSession.durationSeconds,
+      trackingMethod: this.status.trackingMethod,
+      trackingFallbackIndex: this.status.trackingFallbackIndex,
       returnTask: shouldBackup ? 'backing-up' : undefined
     })
     await this.focusOrbit(token)
@@ -1493,15 +1562,284 @@ export class GameSessionManager extends EventEmitter {
     // A rejected dispatch is definitive. Process-based negative evidence is
     // not: protected or unusually structured games may still be running. Do
     // not steal focus back from a game after ORBIT already handed it off.
+    const launchWasAcceptedWithoutMonitoring =
+      failureReason === 'monitor-unavailable' && Boolean(this.status.startedAt)
     const shouldRestoreOrbit =
-      failureReason === 'launch-rejected' || !this.mainWindow.isMinimized()
-    this.releaseLaunchShield(false)
+      failureReason === 'launch-rejected' ||
+      (!launchWasAcceptedWithoutMonitoring && !this.mainWindow.isMinimized())
+    // A monitoring failure happens after the OS accepted the launch request.
+    // Yield to that game instead of covering it with an error screen.
+    this.releaseLaunchShield(launchWasAcceptedWithoutMonitoring)
     if (shouldRestoreOrbit) await this.focusOrbit(token)
     await wait(ERROR_SPLASH_MS)
     if (token === this.activeToken) {
       this.releaseLaunchShield(false)
       this.update({ phase: 'idle' })
     }
+  }
+
+  private scheduleProviderPresencePoll(delay = PROVIDER_PRESENCE_POLL_MS): void {
+    if (this.providerPresenceDisposed || this.providerPresenceTimer) return
+    this.providerPresenceTimer = setTimeout(() => {
+      this.providerPresenceTimer = null
+      void this.pollProviderPresence().finally(() => this.scheduleProviderPresencePoll())
+    }, delay)
+  }
+
+  private ensureProviderPresenceSampler(): WindowsProcessSampler | null {
+    if (this.providerPresenceDisposed || process.platform !== 'win32') return null
+    if (this.providerPresenceSampler) return this.providerPresenceSampler
+    const sampler = new WindowsProcessSampler()
+    try {
+      sampler.start()
+      this.providerPresenceSampler = sampler
+      return sampler
+    } catch {
+      sampler.stop()
+      return null
+    }
+  }
+
+  private takeProviderPresenceSampler(): WindowsProcessSampler | null {
+    const sampler = this.providerPresenceSampler
+    this.providerPresenceSampler = null
+    return sampler
+  }
+
+  private async getProviderPresenceSnapshot(): Promise<ProcessSnapshot | undefined> {
+    let sampler = this.ensureProviderPresenceSampler()
+    if (!sampler) return undefined
+    let current = sampler.getLatest()
+    if (
+      current.sequence > 0 &&
+      Date.now() - current.capturedAt <= PROVIDER_PRESENCE_STALL_TIMEOUT_MS
+    ) {
+      return current
+    }
+    if (current.sequence > 0) {
+      sampler.stop()
+      if (this.providerPresenceSampler === sampler) this.providerPresenceSampler = null
+      sampler = this.ensureProviderPresenceSampler()
+      if (!sampler) return undefined
+      current = sampler.getLatest()
+    }
+    try {
+      const snapshot = await sampler.waitForNext(0, SNAPSHOT_TIMEOUT_MS)
+      return snapshot.sequence > 0 &&
+        Date.now() - snapshot.capturedAt <= PROVIDER_PRESENCE_STALL_TIMEOUT_MS
+        ? snapshot
+        : undefined
+    } catch {
+      if (this.providerPresenceSampler === sampler) {
+        sampler.stop()
+        this.providerPresenceSampler = null
+      }
+      return undefined
+    }
+  }
+
+  private checkProviderAttachedProcessLiveness(): void {
+    if (
+      this.providerPresenceDisposed ||
+      !this.providerAttachedGameId ||
+      this.status.phase !== 'running' ||
+      !this.activeGame ||
+      this.providerReturnInFlight
+    ) {
+      return
+    }
+    if ([...this.providerAttachedProcessIds].some(processIdStillExists)) {
+      this.providerPresenceMissingSince = undefined
+      return
+    }
+    const now = Date.now()
+    this.providerPresenceMissingSince ??= now
+    if (now - this.providerPresenceMissingSince < PROVIDER_PRESENCE_EXIT_GRACE_MS) return
+    void this.finishProviderAttachedSession(this.providerPresenceMissingSince)
+  }
+
+  private async finishProviderAttachedSession(endedAt: number): Promise<void> {
+    if (
+      this.providerReturnInFlight ||
+      !this.providerAttachedGameId ||
+      this.status.phase !== 'running' ||
+      !this.activeGame
+    ) {
+      return
+    }
+    this.providerReturnInFlight = true
+    try {
+      await this.returnToOrbit(
+        this.activeToken,
+        this.activeGame,
+        this.status.startedAt ?? endedAt,
+        this.status.detectedAt ?? endedAt,
+        endedAt,
+        [],
+        new Set<LauncherFamily>()
+      )
+    } finally {
+      this.providerReturnInFlight = false
+    }
+  }
+
+  /**
+   * Provider-native activity is preferred, then the live process table is
+   * reconciled with every installed library identity. This lets externally
+   * started games use the same authoritative session as ORBIT-launched games.
+   */
+  private async pollProviderPresence(): Promise<void> {
+    if (
+      this.providerPresenceDisposed ||
+      (!this.providerAttachedGameId && this.status.phase !== 'idle')
+    ) {
+      return
+    }
+
+    const libraryGames = this.callbacks.getLibraryGames?.() ?? []
+    const [activeSteamGames, processSnapshot] = await Promise.all([
+      this.steamActivityReader.getActiveGames(),
+      this.getProviderPresenceSnapshot()
+    ])
+    if (this.providerPresenceDisposed) return
+    const providerActivities = new Map<string, ProviderReportedGameActivity>()
+    const processes = livingProcessRecords(processSnapshot?.processes ?? [])
+    const knownProcessIds = new Set(processes.map((candidate) => processId(candidate)))
+    for (const activity of activeSteamGames) {
+      const game = libraryGames.find(
+        (candidate) =>
+          candidate.provider === 'steam' &&
+          (candidate.appId === activity.appId ||
+            candidate.providerGameId === String(activity.appId))
+      )
+      if (!game) continue
+      providerActivities.set(game.id, {
+        processIds: new Set(activity.processIds),
+        startedAt: activity.startedAt
+      })
+      // Steam's native registry remains useful if WMI cannot inspect a
+      // protected process. A synthetic row carries only the already validated
+      // PID and cannot make a heuristic match for another provider.
+      for (const pid of activity.processIds) {
+        if (knownProcessIds.has(pid)) continue
+        processes.push({
+          ProcessId: pid,
+          Name: 'provider-game.exe',
+          StartedAt: activity.startedAt
+        })
+        knownProcessIds.add(pid)
+      }
+    }
+    const activeLibraryGames = detectLibraryGamePresences(
+      processes,
+      libraryGames,
+      providerActivities
+    )
+
+    const activeGameIds = new Set(activeLibraryGames.map(({ game }) => game.id))
+    for (const gameId of this.suppressedProviderGameIds) {
+      if (!activeGameIds.has(gameId)) this.suppressedProviderGameIds.delete(gameId)
+    }
+
+    if (this.providerAttachedGameId) {
+      if (
+        this.status.phase !== 'running' ||
+        this.status.gameId !== this.providerAttachedGameId ||
+        !this.activeGame
+      ) {
+        return
+      }
+      if (activeGameIds.has(this.providerAttachedGameId)) {
+        const activePresence = activeLibraryGames.find(
+          ({ game }) => game.id === this.providerAttachedGameId
+        )
+        this.providerAttachedProcessIds.clear()
+        for (const pid of activePresence?.processIds ?? []) {
+          this.providerAttachedProcessIds.add(pid)
+        }
+        this.providerPresenceMissingSince = undefined
+        return
+      }
+      const trackedPidStillAlive = [...this.providerAttachedProcessIds].some(
+        processIdStillExists
+      )
+      // Once confirmed, PID lifetime remains authoritative even when a protected
+      // process temporarily loses its path/package metadata in the next sample.
+      if (trackedPidStillAlive) {
+        this.providerPresenceMissingSince = undefined
+        return
+      }
+      const now = Date.now()
+      this.providerPresenceMissingSince ??= now
+      if (now - this.providerPresenceMissingSince < PROVIDER_PRESENCE_EXIT_GRACE_MS) return
+      await this.finishProviderAttachedSession(this.providerPresenceMissingSince)
+      return
+    }
+
+    if (this.status.phase !== 'idle') {
+      this.providerPresenceCandidateKey = undefined
+      this.providerPresenceCandidateSince = undefined
+      return
+    }
+    const latest = activeLibraryGames
+      .filter(({ game }) => !this.suppressedProviderGameIds.has(game.id))
+      .sort(
+        (left, right) =>
+          (right.startedAt ?? 0) - (left.startedAt ?? 0)
+      )[0]
+    if (!latest || this.status.phase !== 'idle') {
+      this.providerPresenceCandidateKey = undefined
+      this.providerPresenceCandidateSince = undefined
+      return
+    }
+
+    const now = Date.now()
+    const candidateKey = `${latest.game.id}:${latest.trackingMethod}:${latest.processIds
+      .slice()
+      .sort((left, right) => left - right)
+      .join(',')}`
+    if (latest.trackingMethod !== 'provider-process') {
+      if (this.providerPresenceCandidateKey !== candidateKey) {
+        this.providerPresenceCandidateKey = candidateKey
+        this.providerPresenceCandidateSince = now
+        return
+      }
+      if (
+        !this.providerPresenceCandidateSince ||
+        now - this.providerPresenceCandidateSince < GAME_PROCESS_CANDIDATE_STABILITY_MS
+      ) {
+        return
+      }
+    }
+    this.providerPresenceCandidateKey = undefined
+    this.providerPresenceCandidateSince = undefined
+    const { startedAt: providerStartedAt, detectedAt } = providerSessionTimestamps(
+      now,
+      latest.startedAt
+    )
+    const token = ++this.activeToken
+    this.activeGame = latest.game
+    this.providerAttachedGameId = latest.game.id
+    this.providerAttachedProcessIds.clear()
+    for (const pid of latest.processIds) this.providerAttachedProcessIds.add(pid)
+    this.providerPresenceMissingSince = undefined
+    this.update({
+      phase: 'running',
+      gameId: latest.game.id,
+      gameName: latest.game.name,
+      provider: latest.game.provider,
+      requestedAt: providerStartedAt,
+      startedAt: providerStartedAt,
+      detectedAt,
+      trackingMethod: latest.trackingMethod,
+      trackingFallbackIndex: latest.trackingFallbackIndex
+    })
+    try {
+      await this.callbacks.onGameConfirmed?.(latest.game, detectedAt)
+    } catch {
+      // Provider presence remains authoritative even when recency persistence fails.
+    }
+    if (token !== this.activeToken) return
   }
 
   private async focusOrbit(token: number): Promise<void> {
@@ -1582,8 +1920,26 @@ export class GameSessionManager extends EventEmitter {
   }
 
   private update(status: GameLaunchStatus): void {
-    if (status.phase === 'idle') this.activeGame = null
+    const previous = this.status
+    if (status.phase === 'idle') {
+      this.activeGame = null
+      this.providerAttachedGameId = undefined
+      this.providerPresenceMissingSince = undefined
+      this.providerAttachedProcessIds.clear()
+      this.providerReturnInFlight = false
+      this.providerPresenceCandidateKey = undefined
+      this.providerPresenceCandidateSince = undefined
+    }
     this.status = status
+    if (
+      previous.phase !== status.phase ||
+      previous.gameId !== status.gameId ||
+      previous.trackingMethod !== status.trackingMethod
+    ) {
+      console.info(
+        `[game-session] phase=${status.phase} game=${status.gameId ?? 'none'} tracking=${status.trackingMethod ?? 'pending'}`
+      )
+    }
     this.emit('updated', this.getStatus())
   }
 }

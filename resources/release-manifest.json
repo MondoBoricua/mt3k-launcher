@@ -3,11 +3,11 @@
   "product": "ORBIT",
   "appId": "com.orbit.launcher",
   "channel": "stable",
-  "displayVersion": "0.1.2",
-  "packageVersion": "0.1.2",
-  "windowsFileVersion": "0.1.2.2",
-  "xboxPackageVersion": "0.1.2.2",
-  "releaseSequence": 12,
+  "displayVersion": "0.1.3",
+  "packageVersion": "0.1.3",
+  "windowsFileVersion": "0.1.3.0",
+  "xboxPackageVersion": "0.1.3.0",
+  "releaseSequence": 13,
   "platform": "windows",
   "architecture": "x64",
   "packageFormats": ["nsis", "appx"],
@@ -20,6 +20,9 @@
     "checkIntervalHours": 6,
     "autoDownload": true,
     "signerThumbprints": ["61E90C0AACBF2F407A575903FCC197F45B61706D"]
+  },
+  "integrations": {
+    "xboxClientId": "3785b570-8c14-4c8a-acf8-2cae0220960f"
   },
   "publisher": "Open Source Developer Luis Antonio Garcia Roque",
   "signingCertificate": {

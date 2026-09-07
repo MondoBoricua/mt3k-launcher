@@ -1,7 +1,12 @@
 import { create } from 'zustand'
 import type { GameProvider } from '@shared/ipc'
 
-export type LibrarySource = 'favorites' | 'all' | GameProvider | `collection:${string}`
+export type LibrarySource =
+  | 'favorites'
+  | 'all'
+  | 'geforce-now'
+  | GameProvider
+  | `collection:${string}`
 export type LibrarySortOrder =
   | 'installed-first'
   | 'title-ascending'
@@ -16,6 +21,7 @@ export const ALL_LIBRARY_CATEGORIES = 'all'
 export const LIBRARY_SOURCE_ORDER: LibrarySource[] = [
   'favorites',
   'all',
+  'geforce-now',
   'steam',
   'epic',
   'gog',

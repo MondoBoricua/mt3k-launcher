@@ -229,3 +229,17 @@ export function deriveEpicDownloadActivity(
     updatedAt: now
   }
 }
+
+export function hasEpicPendingDownloadSettled(
+  lastSeenAt: number,
+  now = Date.now(),
+  graceMs = 5_000
+): boolean {
+  return (
+    Number.isFinite(lastSeenAt) &&
+    Number.isFinite(now) &&
+    Number.isFinite(graceMs) &&
+    graceMs >= 0 &&
+    now - lastSeenAt > graceMs
+  )
+}

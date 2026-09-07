@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+         IgnorableNamespaces="uap uap3">
+  <Identity Name="OrbitHud.Preview" Publisher="CN=Orbit HUD Preview" Version="0.1.0.0" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>ORBIT HUD Preview</DisplayName>
+    <PublisherDisplayName>ORBIT HUD</PublisherDisplayName>
+    <Description>An independent Game Bar HUD preview</Description>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+    <PackageDependency Name="Microsoft.VCLibs.140.00" Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" MinVersion="14.0.30704.0" />
+  </Dependencies>
+  <Resources><Resource Language="de-DE" /><Resource Language="en-US" /></Resources>
+  <Applications>
+    <Application Id="App" Executable="OrbitHud.exe" EntryPoint="OrbitHud.App">
+      <uap:VisualElements DisplayName="ORBIT HUD Preview" Description="A quick glance. Then back to play."
+                          Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png" BackgroundColor="#101316">
+        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#101316" />
+      </uap:VisualElements>
+      <Extensions>
+        <uap3:Extension Category="windows.appExtension">
+          <uap3:AppExtension Name="microsoft.gameBarUIExtension" Id="OrbitHud" DisplayName="ORBIT HUD" Description="Clock, power and your session" PublicFolder="GameBar">
+            <uap3:Properties>
+              <GameBarWidget Type="Standard">
+                <HomeMenuVisible>true</HomeMenuVisible>
+                <PinningSupported>false</PinningSupported>
+                <Window>
+                  <Size><Width>480</Width><Height>560</Height><MinWidth>360</MinWidth><MinHeight>400</MinHeight><MaxWidth>800</MaxWidth><MaxHeight>1000</MaxHeight></Size>
+                  <ResizeSupported><Horizontal>true</Horizontal><Vertical>true</Vertical></ResizeSupported>
+                </Window>
+              </GameBarWidget>
+            </uap3:Properties>
+          </uap3:AppExtension>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <!-- SDK runtime classes and private COM marshaling interfaces are generated from the pinned SDK metadata. -->
+</Package>

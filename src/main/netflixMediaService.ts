@@ -1,3 +1,5 @@
+import { t } from './i18n'
+import { languageLocale, normalizeLanguage } from '@shared/language'
 import { app, BrowserWindow, screen, type Rectangle, type WebContents } from 'electron'
 import Store from 'electron-store'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
@@ -109,15 +111,13 @@ function bundledAssetPath(...segments: string[]): string {
 
 function netflixLaunchLocale(): string {
   const orbitLanguage = settingsStore.store.language
-  const prefix = orbitLanguage === 'de' ? 'de' : 'en'
+  const prefix = normalizeLanguage(orbitLanguage)
   const preferred = [app.getLocale(), ...app.getPreferredSystemLanguages()]
     .map((locale) => locale.replaceAll('_', '-').trim())
     .find((locale) => locale.toLowerCase() === prefix || locale.toLowerCase().startsWith(`${prefix}-`))
   return preferred && /^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(preferred)
     ? preferred
-    : orbitLanguage === 'de'
-      ? 'de-DE'
-      : 'en-US'
+    : languageLocale(orbitLanguage)
 }
 
 function normalizedKeyboardUpdate(value: unknown): MediaKeyboardUpdatePayload | null {
@@ -580,13 +580,10 @@ class NetflixMediaService {
     const overlayWindow = this.keyboardWindow
     if (!overlayWindow || overlayWindow.isDestroyed()) return
     await this.keyboardReady
-    const german = settingsStore.store.language === 'de'
     const payload: MediaOverlayHintPayload = {
       id: 'netflix-first-login',
-      title: german ? 'Netflix zum ersten Mal' : 'First time with Netflix',
-      message: german
-        ? 'Nutze bitte einmalig deine Tastatur, um dich anzumelden. Danach kannst du dein Gamepad wie gewohnt verwenden.'
-        : 'Please use your keyboard once to sign in. After that, you can use your gamepad as usual.'
+      title: t("First time with Netflix"),
+      message: t("Please use your keyboard once to sign in. After that, you can use your gamepad as usual.")
     }
     overlayWindow.setIgnoreMouseEvents(true, { forward: true })
     overlayWindow.webContents.send(IPC.mediaOverlayHintOpen, payload)

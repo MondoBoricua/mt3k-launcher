@@ -11,6 +11,13 @@ html[data-orbit-media-keyboard='true'] #root {
   background-image: none !important;
 }
 
+/* A stationary desktop cursor should not float above controller navigation.
+   Pointer movement or a pointer press removes this mode immediately. */
+html[data-orbit-controller-mode='true'],
+html[data-orbit-controller-mode='true'] * {
+  cursor: none !important;
+}
+
 @layer base {
   * {
     @apply border-white/5;
@@ -23,6 +30,7 @@ html[data-orbit-media-keyboard='true'] #root {
   }
 
   body {
+    font-size: 1rem;
     @apply bg-base text-text antialiased overflow-hidden select-none font-sans;
     background-image: var(--theme-ambient);
   }
@@ -1327,12 +1335,20 @@ html[data-orbit-media-keyboard='true'] #root {
 
 }
 
+/* Owned games that are unavailable locally need to read as a state, not as a
+   subtle artwork treatment. The separate color layer can tint this neutral
+   base without weakening the installation distinction. */
+[data-game-card='true'][data-game-unavailable-locally='true'] .game-card-artwork {
+  filter: grayscale(1) saturate(0) brightness(0.62) contrast(0.9);
+}
+
 /* Rolling keeps the selected game anchored as a wide leading tile while the
    remaining library stays in ORBIT's familiar poster format. */
 .rolling-home {
   --rolling-card-height: clamp(17rem, 53vh, 35.75rem);
   --rolling-hero-width: min(68vw, calc(var(--rolling-card-height) * 2.05));
   --rolling-poster-width: calc(var(--rolling-card-height) * 0.6667);
+  --rolling-focus-safe-area: clamp(0.5rem, 0.65vw, 0.75rem);
   --rolling-backdrop-opacity: 0.58;
   --rolling-backdrop-brightness: 0.7;
   --rolling-backdrop-saturation: 0.82;
@@ -1373,9 +1389,14 @@ html[data-orbit-media-keyboard='true'] #root {
 
 .rolling-game-row {
   position: relative;
+  width: calc(
+    100% + var(--rolling-focus-safe-area) + var(--rolling-focus-safe-area)
+  );
   height: calc(var(--rolling-card-height) + 7.5rem);
   min-height: calc(var(--rolling-card-height) + 7.5rem);
-  scroll-padding-inline: clamp(1rem, 2vw, 2rem);
+  margin-inline: calc(0px - var(--rolling-focus-safe-area));
+  padding-inline: var(--rolling-focus-safe-area);
+  scroll-padding-inline: var(--rolling-focus-safe-area);
   overscroll-behavior-inline: contain;
 }
 
@@ -1501,6 +1522,15 @@ html[data-orbit-media-keyboard='true'] #root {
   }
 }
 
+/* When a confirmed game owns the foreground, decorative work must stop even if
+   the user briefly reveals ORBIT. State and controls stay live; only perpetual
+   CSS animation and custom wallpaper decoding are suspended. */
+html[data-orbit-performance='game'] *,
+html[data-orbit-performance='game'] *::before,
+html[data-orbit-performance='game'] *::after {
+  animation-play-state: paused !important;
+}
+
 .ticker-track {
   animation: orbit-ticker 28s linear infinite;
 }
@@ -1509,7 +1539,7 @@ html[data-orbit-media-keyboard='true'] #root {
   top: 3vh;
   right: 2vw;
   bottom: 3vh;
-  width: 84vw;
+  width: min(92vw, 96rem);
   contain: paint;
   isolation: isolate;
   backface-visibility: hidden;
@@ -1519,12 +1549,12 @@ html[data-orbit-media-keyboard='true'] #root {
 .game-detail-layout {
   grid-template-rows: minmax(0, 1fr) auto;
   gap: clamp(0.9rem, 1.8vh, 1.5rem);
-  padding: clamp(4.5rem, 8vh, 6.5rem) clamp(1.4rem, 3vw, 3.5rem)
+  padding: clamp(3.75rem, 7vh, 5.25rem) clamp(1.4rem, 3vw, 3.5rem)
     clamp(1.3rem, 3vh, 2.75rem);
 }
 
 .game-detail-overview {
-  grid-template-columns: minmax(15rem, 0.82fr) minmax(24rem, 1.18fr);
+  grid-template-columns: minmax(18rem, 0.9fr) minmax(24rem, 1.1fr);
   gap: clamp(1.25rem, 2.5vw, 3rem);
 }
 
@@ -1540,6 +1570,14 @@ html[data-orbit-media-keyboard='true'] #root {
 .game-detail-backup,
 .game-detail-completion {
   margin-bottom: clamp(0.75rem, 1.5vh, 1.15rem);
+}
+
+.game-detail-actions {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.game-detail-action--primary {
+  grid-column: span 2;
 }
 
 .game-detail-action {
@@ -1576,12 +1614,12 @@ html[data-orbit-media-keyboard='true'] #root {
 
   .game-detail-layout {
     gap: clamp(0.75rem, 1.4vh, 1rem);
-    padding: clamp(4.5rem, 12vh, 6rem) clamp(1.2rem, 2.5vw, 2rem)
+    padding: clamp(3.75rem, 8vh, 4.75rem) clamp(1.2rem, 2.5vw, 2rem)
       clamp(1.1rem, 2.5vh, 1.6rem);
   }
 
   .game-detail-overview {
-    grid-template-columns: minmax(14rem, 0.78fr) minmax(22rem, 1.22fr);
+    grid-template-columns: minmax(14rem, 0.9fr) minmax(22rem, 1.1fr);
     gap: clamp(1rem, 2vw, 1.6rem);
   }
 }
@@ -1596,7 +1634,7 @@ html[data-orbit-media-keyboard='true'] #root {
 
   .game-detail-layout {
     gap: 0.65rem;
-    padding: 4.25rem 1.25rem 1rem;
+    padding: 3.85rem 1.25rem 1rem;
   }
 
   .game-detail-overview {
@@ -1615,6 +1653,10 @@ html[data-orbit-media-keyboard='true'] #root {
     margin-bottom: 0.65rem;
   }
 
+  .game-detail-statuses {
+    margin-top: 0.45rem;
+  }
+
   .game-detail-action {
     min-height: 2.85rem;
     padding: 0.4rem 0.75rem;
@@ -1623,6 +1665,115 @@ html[data-orbit-media-keyboard='true'] #root {
 
   .game-detail-achievements {
     padding: 0.7rem;
+  }
+}
+
+/* The metadata workspace deliberately leaves the narrow detail-panel layout.
+   Its three panes collapse without hiding editable fields on 720p-class screens. */
+.metadata-editor {
+  isolation: isolate;
+  contain: paint;
+}
+
+.metadata-editor-body {
+  min-height: 0;
+}
+
+@media (max-width: 1180px) {
+  .metadata-editor-body {
+    grid-template-columns: 11.5rem minmax(0, 1fr);
+  }
+
+  .metadata-editor-preview {
+    display: none;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 720px) {
+  .metadata-editor {
+    max-height: calc(100vh - 0.5rem);
+    border-radius: 1rem;
+  }
+
+  .metadata-editor-body > nav {
+    padding: 0.55rem;
+  }
+
+  .metadata-editor-body > nav button {
+    padding-block: 0.58rem;
+  }
+
+  .metadata-editor-body > main {
+    padding-block: 0.8rem;
+  }
+}
+
+@media (max-width: 720px), (orientation: portrait) {
+  .metadata-editor-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .metadata-editor-body > nav {
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid rgb(255 255 255 / 0.07);
+  }
+
+  .metadata-editor-body > nav > div:first-child {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  .metadata-editor-body > nav button {
+    width: auto;
+    min-width: max-content;
+  }
+
+  .metadata-editor-body > nav > div:last-child {
+    display: none;
+  }
+}
+
+@media (max-width: 900px), (orientation: portrait) {
+  .game-detail-panel {
+    top: 0.5rem;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    left: 0.5rem;
+    width: auto;
+  }
+
+  .game-detail-layout {
+    grid-template-rows: auto auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 4rem 1rem 1rem;
+  }
+
+  .game-detail-overview {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+    overflow: visible;
+  }
+
+  .game-detail-actions,
+  .game-detail-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .game-detail-stats > .col-span-3 {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .game-detail-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .game-detail-action--primary {
+    grid-column: span 1;
   }
 }
 
@@ -1637,18 +1788,19 @@ html[data-orbit-media-keyboard='true'] #root {
 
 .home-backdrop-frame {
   transform-origin: center;
-  backface-visibility: hidden;
 }
 
 .home-backdrop-frame[data-backdrop-motion='still'] {
-  transform: scale(1.02);
+  transform: none;
 }
 
 .home-backdrop-frame[data-backdrop-motion='drift'] {
+  backface-visibility: hidden;
   animation: orbit-home-backdrop-drift 20s linear infinite alternate;
 }
 
 .home-backdrop-frame[data-backdrop-motion='cinematic'] {
+  backface-visibility: hidden;
   animation: orbit-home-backdrop-cinematic 24s linear infinite alternate;
 }
 
@@ -1707,7 +1859,7 @@ html[data-orbit-media-keyboard='true'] #root {
 @media (prefers-reduced-motion: reduce) {
   .home-backdrop-frame {
     animation: none !important;
-    transform: scale(1.02) !important;
+    transform: none !important;
   }
 
   .backdrop-motion-preview-art {

@@ -21,6 +21,7 @@ export interface EpicInstalledManifest {
   bIsApplication?: boolean
   bIsExecutable?: boolean
   AppName?: string
+  CatalogItemId?: string
   CatalogNamespace?: string
   AppCategories?: string[]
   CompatibleApps?: string[]
@@ -169,6 +170,7 @@ export function scanInstalledEpicApps(programDataRoot?: string): Map<string, Ins
       name,
       installDir: normalize(installDir),
       metadata: {
+        providerStoreId: manifest.CatalogItemId?.trim() || undefined,
         platforms: ['windows'],
         launchExecutable: manifest.LaunchExecutable?.trim() || undefined,
         artwork: thumbnail

@@ -1,3 +1,4 @@
+import { languageLocale } from '@shared/language'
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -122,6 +123,7 @@ function statusCopy(
 
 export function HardwareControlPanel(): JSX.Element {
   const t = useT()
+  const language = usePreferencesStore((s) => s.language)
   const {
     hardwareControlEnabled,
     hardwareControlButton,
@@ -154,7 +156,7 @@ export function HardwareControlPanel(): JSX.Element {
   const inputDiagnostic = status.lastTriggerAt
     ? {
         copy: t('settings.hardwareControl.input.triggered', {
-          time: new Date(status.lastTriggerAt).toLocaleTimeString([], {
+          time: new Date(status.lastTriggerAt).toLocaleTimeString(languageLocale(language), {
             hour: '2-digit',
             minute: '2-digit',
             second: '2-digit'
@@ -189,22 +191,13 @@ export function HardwareControlPanel(): JSX.Element {
   const toggleHardwareControl = async (): Promise<void> => {
     setToggleBusy(true)
     try {
-      if (!hardwareControlEnabled) {
-        const service = await window.api.backgroundService.getStatus()
-        if (service.installation === 'not-installed') {
-          await window.api.backgroundService.control('install')
-        } else if (service.installation === 'repair-needed') {
-          await window.api.backgroundService.control('repair')
-        } else if (service.installation === 'unsupported') {
-          throw new Error('Background service is unavailable for this package')
-        }
-      }
       await setHardwareControlEnabled(!hardwareControlEnabled)
-    } catch {
+    } catch (error) {
       setStatus({
         state: 'unavailable',
         connectedControllers: 0,
-        reason: 'service-not-running'
+        reason: 'monitor-failed',
+        detail: error instanceof Error ? error.message : String(error)
       })
     } finally {
       setToggleBusy(false)
@@ -279,6 +272,14 @@ export function HardwareControlPanel(): JSX.Element {
         </motion.button>
       </div>
 
+      {status.state === 'unavailable' && <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-300/20 p-3 text-xs text-amber-200" role="alert">
+        <span>{status.detail || t('settings.hardwareControl.status.unavailable')}</span>
+        <button data-focusable type="button" disabled={toggleBusy} className="rounded-lg bg-white/10 px-3 py-2 font-bold"
+          onClick={() => { setToggleBusy(true); void window.api.backgroundService.control('restart')
+            .then((next) => setStatus(next.hardwareControl))
+            .catch((error) => setStatus({ ...status, detail: String(error) }))
+            .finally(() => setToggleBusy(false)) }}>{t('settings.backgroundMode.retry')}</button>
+      </div>}
       <div className="grid gap-4 xl:grid-cols-2">
         <HardwareChoiceGroup
           icon={<Gamepad2 size={15} />}

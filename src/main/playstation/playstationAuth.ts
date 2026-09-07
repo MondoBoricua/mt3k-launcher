@@ -1,3 +1,5 @@
+import { acceptLanguages } from '@shared/language'
+import { settingsStore } from '../settingsStore'
 import { randomUUID } from 'node:crypto'
 import { BrowserWindow, safeStorage, session } from 'electron'
 import Store from 'electron-store'
@@ -67,7 +69,7 @@ function getLoginSession(): Electron.Session {
   if (loginSessionConfigured) return loginSession
   loginSessionConfigured = true
 
-  loginSession.setUserAgent(LOGIN_USER_AGENT, 'de-DE,de,en-US,en')
+  loginSession.setUserAgent(LOGIN_USER_AGENT, acceptLanguages(settingsStore.store.language))
   loginSession.setPermissionCheckHandler(() => false)
   loginSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   loginSession.webRequest.onBeforeSendHeaders(
@@ -103,7 +105,7 @@ async function configureLoginIdentity(webContents: Electron.WebContents): Promis
     webContents.debugger.attach('1.3')
     await webContents.debugger.sendCommand('Emulation.setUserAgentOverride', {
       userAgent: LOGIN_USER_AGENT,
-      acceptLanguage: 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+      acceptLanguage: acceptLanguages(settingsStore.store.language),
       platform: 'Win32',
       userAgentMetadata: {
         brands: [

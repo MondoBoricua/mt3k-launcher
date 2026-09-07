@@ -65,6 +65,7 @@ const CUSTOM_CACHE_FILE = /^custom-(?:cover|background|icon|logo)-[a-f0-9]{12}-[
 const MAX_CONCURRENCY = 3
 const LIBRETRO_ARTWORK_ROLE_POLICY_VERSION = 15
 const PIPELINE_VERSION = 17
+const COMPATIBLE_PIPELINE_VERSIONS = new Set([17, 18])
 const ARTWORK_ORIENTATIONS: ImageOrientation[] = ['vertical', 'horizontal', 'logo', 'icon']
 
 type ArtworkSource =
@@ -259,6 +260,10 @@ function isSupportedArtworkResponse(contentType: string | null, sourceUrl: strin
   // bounded nativeImage decode below remains the final content validation.
   const extension = extname(new URL(sourceUrl).pathname).slice(1).toLowerCase()
   return ['ico', 'jpeg', 'jpg', 'png', 'webp'].includes(extension)
+}
+
+function isCompatiblePipelineVersion(version: number): boolean {
+  return COMPATIBLE_PIPELINE_VERSIONS.has(version)
 }
 
 function validateImage(
@@ -659,13 +664,13 @@ function needsRefresh(
   return (
     !isEntryFresh(entry) ||
     (entry.source !== 'none' && !isEntryUsable(entry)) ||
-    entry.pipelineVersion !== PIPELINE_VERSION ||
+    !isCompatiblePipelineVersion(entry.pipelineVersion) ||
     entry.artworkFingerprint !== fingerprint ||
     (entry.source === 'library-match' &&
       (!libraryMatchSource ||
         libraryMatchSource.source === 'library-match' ||
         !isEntryUsable(libraryMatchSource) ||
-        libraryMatchSource.pipelineVersion !== PIPELINE_VERSION ||
+        !isCompatiblePipelineVersion(libraryMatchSource.pipelineVersion) ||
         libraryMatchSource.revision !== entry.libraryMatchSourceRevision))
   )
 }
@@ -1429,7 +1434,7 @@ class ArtworkService extends EventEmitter {
         !entry ||
         !isEntryUsable(entry) ||
         entry.source === 'library-match' ||
-        entry.pipelineVersion !== PIPELINE_VERSION ||
+        !isCompatiblePipelineVersion(entry.pipelineVersion) ||
         entry.artworkFingerprint !== artworkFingerprint(match, orientation)
       ) {
         continue

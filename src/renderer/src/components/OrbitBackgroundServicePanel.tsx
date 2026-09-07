@@ -1,230 +1,69 @@
 import { useEffect, useState } from 'react'
-import { motion } from 'framer-motion'
-import { CheckCircle2, CircleAlert, Loader2, Power, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
-import type {
-  OrbitBackgroundServiceAction,
-  OrbitBackgroundServiceStatus
-} from '@shared/ipc'
+import { Check, Loader2, Monitor } from 'lucide-react'
+import type { OrbitBackgroundServiceStatus } from '@shared/ipc'
 import { useT } from '@renderer/i18n/useT'
-import { usePreferencesStore } from '@renderer/state/preferencesStore'
-
-const INITIAL_STATUS: OrbitBackgroundServiceStatus = {
-  installation: 'not-installed',
-  runtime: 'stopped',
-  hardwareControl: { state: 'disabled', connectedControllers: 0 }
-}
-
-function presentation(
-  status: OrbitBackgroundServiceStatus,
-  t: ReturnType<typeof useT>
-): { label: string; tone: string; icon: JSX.Element } {
-  if (status.installation === 'unsupported') {
-    return {
-      label: t(
-        status.reason === 'unsupported-package'
-          ? 'settings.backgroundService.status.unsupportedPackage'
-          : 'settings.backgroundService.status.unsupported'
-      ),
-      tone: 'border-amber-300/25 bg-amber-300/10 text-amber-200',
-      icon: <CircleAlert size={12} />
-    }
-  }
-  if (status.installation === 'repair-needed') {
-    return {
-      label: t(
-        status.reason === 'machine-configuration-mismatch'
-          ? 'settings.backgroundService.status.managedRepairNeeded'
-          : 'settings.backgroundService.status.repairNeeded'
-      ),
-      tone: 'border-amber-300/25 bg-amber-300/10 text-amber-200',
-      icon: <CircleAlert size={12} />
-    }
-  }
-  if (status.installation === 'not-installed') {
-    return {
-      label: t('settings.backgroundService.status.notInstalled'),
-      tone: 'border-white/10 bg-white/[0.04] text-white/45',
-      icon: <Power size={12} />
-    }
-  }
-  if (
-    status.runtime === 'running' &&
-    (status.hardwareControl.state === 'starting' || status.hardwareControl.state === 'unavailable')
-  ) {
-    return {
-      label: t('settings.backgroundService.status.recovering'),
-      tone: 'border-amber-300/25 bg-amber-300/10 text-amber-200',
-      icon:
-        status.hardwareControl.state === 'starting' ? (
-          <Loader2 size={12} className="animate-spin" />
-        ) : (
-          <CircleAlert size={12} />
-        )
-    }
-  }
-  if (status.runtime === 'running' && status.reason === 'machine-login-item') {
-    return {
-      label: t('settings.backgroundService.status.managed'),
-      tone: 'border-sky-300/25 bg-sky-300/10 text-sky-200',
-      icon: <ShieldCheck size={12} />
-    }
-  }
-  if (status.runtime === 'running') {
-    return {
-      label: t('settings.backgroundService.status.running'),
-      tone: 'border-emerald-300/25 bg-emerald-300/10 text-emerald-200',
-      icon: <CheckCircle2 size={12} />
-    }
-  }
-  return {
-    label: t(
-      status.runtime === 'starting'
-        ? 'settings.backgroundService.status.starting'
-        : 'settings.backgroundService.status.stopped'
-    ),
-    tone: 'border-accent/25 bg-accent/10 text-accent',
-    icon:
-      status.runtime === 'starting' ? (
-        <Loader2 size={12} className="animate-spin" />
-      ) : (
-        <CircleAlert size={12} />
-      )
-  }
-}
 
 export function OrbitBackgroundServicePanel(): JSX.Element {
   const t = useT()
-  const setHardwareControlEnabled = usePreferencesStore(
-    (state) => state.setHardwareControlEnabled
-  )
-  const [status, setStatus] = useState(INITIAL_STATUS)
-  const [busy, setBusy] = useState<OrbitBackgroundServiceAction | null>(null)
-  const [failed, setFailed] = useState(false)
-  const isMachineManaged =
-    status.reason === 'machine-login-item' ||
-    status.reason === 'machine-configuration-mismatch'
-
+  const [background, setBackground] = useState(true)
+  const [startup, setStartup] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [status, setStatus] = useState<OrbitBackgroundServiceStatus>()
   useEffect(() => {
-    let mounted = true
-    const unsubscribe = window.api.backgroundService.onStatus((next) => {
-      if (mounted) setStatus(next)
-    })
-    void window.api.backgroundService.getStatus().then((next) => {
-      if (mounted) setStatus(next)
-    })
+    let alive = true
+    const refreshStatus = (): void => {
+      if (document.hidden) return
+      void window.api.backgroundService.getStatus()
+        .then((next) => { if (alive) setStatus(next) })
+        .catch(() => { /* Keep the last known status during a transient IPC failure. */ })
+    }
+    const refreshTimer = window.setInterval(refreshStatus, 5000)
+    window.addEventListener('focus', refreshStatus)
+    const off = window.api.backgroundService.onStatus((next) => { if (alive) setStatus(next) })
+    void Promise.all([window.api.settings.get(), window.api.backgroundService.getStatus()])
+      .then(([settings, current]) => {
+        if (!alive) return
+        setBackground(settings.backgroundModeEnabled !== false)
+        setStartup(current.startWithWindows ?? settings.startWithWindows === true)
+        setStatus(current)
+      }).catch((failure) => { if (alive) setError(String(failure)) })
+      .finally(() => { if (alive) setLoading(false) })
     return () => {
-      mounted = false
-      unsubscribe()
+      alive = false; off()
+      window.clearInterval(refreshTimer)
+      window.removeEventListener('focus', refreshStatus)
     }
   }, [])
-
-  const run = async (action: OrbitBackgroundServiceAction): Promise<void> => {
-    setBusy(action)
-    setFailed(false)
+  const save = async (key: 'backgroundModeEnabled' | 'startWithWindows', value: boolean): Promise<void> => {
+    setBusy(true); setError('')
     try {
-      const next = await window.api.backgroundService.control(action)
-      if (action === 'remove') await setHardwareControlEnabled(false)
-      setStatus(next)
-    } catch {
-      setFailed(true)
-    } finally {
-      setBusy(null)
-    }
+      const next = await window.api.settings.set({ [key]: value })
+      setBackground(next.backgroundModeEnabled !== false)
+      setStartup(next.startWithWindows === true)
+    } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)) }
+    finally { setBusy(false) }
   }
-
-  const statusPresentation = presentation(status, t)
-  const primaryAction: OrbitBackgroundServiceAction =
-    status.installation === 'not-installed'
-      ? 'install'
-      : status.installation === 'repair-needed'
-        ? 'repair'
-        : 'restart'
-  const primaryLabel =
-    primaryAction === 'install'
-      ? t('settings.backgroundService.install')
-      : primaryAction === 'repair'
-        ? t('settings.backgroundService.repair')
-        : t('settings.backgroundService.restart')
-  const disabled =
-    busy !== null ||
-    status.installation === 'unsupported' ||
-    status.reason === 'machine-configuration-mismatch'
-
-  return (
-    <div className="rounded-2xl border border-white/[0.07] bg-black/25 p-4">
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-accent/12 text-accent">
-            <ShieldCheck size={21} />
-          </span>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-sm font-bold text-white/88">
-                {t('settings.backgroundService.name')}
-              </h3>
-              <span
-                role="status"
-                className={
-                  'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider ' +
-                  statusPresentation.tone
-                }
-              >
-                {statusPresentation.icon}
-                {statusPresentation.label}
-              </span>
-            </div>
-            <p className="mt-1 max-w-3xl text-xs leading-relaxed text-white/45">
-              {t('settings.backgroundService.body')}
-            </p>
-            <p className="mt-2 text-[10px] leading-relaxed text-white/32">
-              {t(
-                isMachineManaged
-                  ? 'settings.backgroundService.managedNote'
-                  : 'settings.backgroundService.noAdmin'
-              )}
-            </p>
-            {failed && (
-              <p className="mt-2 flex items-center gap-1.5 text-[10px] font-semibold text-amber-200">
-                <CircleAlert size={11} />
-                {t('settings.backgroundService.failed')}
-              </p>
-            )}
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {status.installation === 'installed' && !isMachineManaged && (
-            <motion.button
-              data-focusable
-              type="button"
-              disabled={busy !== null}
-              onClick={() => void run('remove')}
-              whileTap={{ scale: 0.96 }}
-              className="flex min-h-10 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3.5 text-xs font-bold text-white/48 disabled:opacity-40"
-            >
-              {busy === 'remove' ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-              {t('settings.backgroundService.remove')}
-            </motion.button>
-          )}
-          <motion.button
-            data-focusable
-            type="button"
-            disabled={disabled}
-            onClick={() => void run(primaryAction)}
-            whileTap={{ scale: 0.96 }}
-            className="flex min-h-10 items-center gap-2 rounded-full border border-accent/70 bg-accent px-4 text-xs font-bold text-black disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {busy === primaryAction ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : primaryAction === 'restart' ? (
-              <RefreshCw size={14} />
-            ) : (
-              <ShieldCheck size={14} />
-            )}
-            {primaryLabel}
-          </motion.button>
-        </div>
-      </div>
-    </div>
-  )
+  return <div className="space-y-3">
+    <p className="px-1 text-xs leading-relaxed text-white/50">{t('settings.backgroundMode.body')}</p>
+    {([
+      ['backgroundModeEnabled', background, 'settings.backgroundMode.keep', 'settings.backgroundMode.keepBody'],
+      ['startWithWindows', startup, 'settings.backgroundMode.startup', 'settings.backgroundMode.startupBody']
+    ] as const).filter(([key]) => key !== 'startWithWindows' || status?.startsThroughXboxMode !== true)
+      .map(([key, checked, label, body]) => <div key={key} className="flex items-center justify-between gap-5 rounded-2xl border border-white/[0.07] bg-black/25 p-4">
+      <div className="flex items-start gap-3"><Monitor size={19} className="mt-1 shrink-0 text-accent" />
+        <div><h3 className="text-sm font-bold text-white/85">{t(label)}</h3>
+          <p className="mt-1 text-xs leading-relaxed text-white/45">{t(body)}</p></div></div>
+      <button data-focusable type="button" role="switch" aria-label={t(label)} aria-checked={checked}
+        disabled={loading || busy || status?.backgroundModeAvailable === false} onClick={() => void save(key, !checked)}
+        className={'flex min-w-28 shrink-0 items-center justify-between gap-3 rounded-full px-4 py-3 text-xs font-bold disabled:opacity-40 ' + (checked ? 'bg-accent text-black' : 'bg-white/10 text-white/60')}>
+        {t(checked ? 'settings.hardwareControl.on' : 'settings.hardwareControl.off')}
+        {loading || busy ? <Loader2 size={14} className="animate-spin" /> : checked ? <Check size={14} /> : <span className="h-3 w-3 rounded-full border border-white/25" />}
+      </button>
+    </div>)}
+    {(error || status?.detail) && <p role="alert" className="rounded-xl border border-amber-300/20 bg-amber-300/5 p-3 text-xs text-amber-200">{error || status?.detail}</p>}
+    {status?.backgroundModeAvailable === false && <p className="text-xs text-white/50">{t('settings.backgroundService.status.unsupportedPackage')}</p>}
+    {status?.lastActivationResult === 'failed' && <p role="status" className="p-3 text-xs text-amber-200">{t('settings.backgroundMode.focusFailed')}</p>}
+  </div>
 }

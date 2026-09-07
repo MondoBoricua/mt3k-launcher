@@ -12,8 +12,17 @@ import {
   isAutomaticLibraryTitleAllowed,
   isConfirmedNonGameSteamAppType
 } from '../src/shared/libraryContentPolicy.ts'
-import { scanXboxAppLibrary } from '../src/main/xbox/xboxAppLibrary.ts'
+import {
+  sameXboxAppCacheFingerprint,
+  scanXboxAppLibrary
+} from '../src/main/xbox/xboxAppLibrary.ts'
 import { parseXboxCatalogProducts } from '../src/main/xbox/xboxCatalogParser.ts'
+import {
+  advanceXboxGamePassHistory,
+  emptyXboxGamePassHistory,
+  isNewXboxGamePassMembership,
+  XBOX_GAME_PASS_NEW_WINDOW_MS
+} from '../src/shared/xboxGamePassHistory.ts'
 
 const sameTitleCopies = projectVisibleLibraryRecords([
   { id: 'steam:10', name: 'Same Game', provider: 'steam', owned: true, installed: false },
@@ -165,12 +174,30 @@ assert.deepEqual(
     supplementalSourcesComplete: true,
     localLibraryComplete: false
   }),
-  { state: 'partial', issue: 'source-unavailable' },
+  { state: 'partial', issue: 'local-source-unavailable' },
   'an unreadable secondary Steam library must not be reported as complete'
 )
 
 const xboxCache = await scanXboxAppLibrary()
+assert.equal(xboxCache.reusedScanCache, false, 'an uncached audit must report a fresh scan')
+assert.equal(
+  sameXboxAppCacheFingerprint(
+    { database: { size: 10, mtimeMs: 20 }, wal: { size: 30, mtimeMs: 40 } },
+    { database: { size: 10, mtimeMs: 20 }, wal: { size: 30, mtimeMs: 40 } }
+  ),
+  true,
+  'identical Xbox database and WAL fingerprints must reuse the persisted scan'
+)
+assert.equal(
+  sameXboxAppCacheFingerprint(
+    { database: { size: 10, mtimeMs: 20 } },
+    { database: { size: 11, mtimeMs: 20 } }
+  ),
+  false,
+  'a changed Xbox database must invalidate the persisted scan'
+)
 if (xboxCache.available && xboxCache.activeSubscription) {
+  assert.deepEqual(xboxCache.subscriptions, ['xbox-game-pass'])
   assert.equal(xboxCache.games.size, xboxCache.resolvedProductCount)
   assert.ok(xboxCache.resolvedProductCount <= xboxCache.eligibleProductCount)
   if (xboxCache.unresolvedProductCount > 0) assert.equal(xboxCache.complete, false)
@@ -179,7 +206,44 @@ if (xboxCache.available && xboxCache.activeSubscription) {
     xboxCache.games.size,
     'Xbox records may only deduplicate exact Store product IDs'
   )
+  for (const game of xboxCache.games.values()) {
+    assert.deepEqual(game.metadata.entitlement, {
+      kind: 'subscription',
+      subscription: 'xbox-game-pass',
+      evidence: 'local-cache'
+    })
+  }
 }
+
+const gamePassNow = Date.parse('2026-09-05T12:00:00.000Z')
+const gamePassBaseline = advanceXboxGamePassHistory(
+  emptyXboxGamePassHistory(),
+  ['BASEGAME0001'],
+  gamePassNow
+)
+assert.equal(
+  gamePassBaseline.currentDetectedAt.size,
+  0,
+  'the first Game Pass catalog must become a baseline instead of marking every title new'
+)
+const gamePassAddition = advanceXboxGamePassHistory(
+  gamePassBaseline.state,
+  ['BASEGAME0001', 'NEWGAME00001'],
+  gamePassNow + 60_000
+)
+assert.equal(gamePassAddition.currentDetectedAt.get('NEWGAME00001'), gamePassNow + 60_000)
+assert.equal(gamePassAddition.currentDetectedAt.has('BASEGAME0001'), false)
+assert.equal(
+  isNewXboxGamePassMembership(gamePassNow + 60_000, gamePassNow + 120_000),
+  true
+)
+assert.equal(
+  isNewXboxGamePassMembership(
+    gamePassNow + 60_000,
+    gamePassNow + 60_000 + XBOX_GAME_PASS_NEW_WINDOW_MS + 1
+  ),
+  false
+)
 
 const catalogFallback = parseXboxCatalogProducts(
   {

@@ -1,10 +1,10 @@
 # ORBIT Windows packaging
 
-ORBIT `0.1.2` is distributed as a signed x64 Windows release. The primary public artifact is the self-contained Xbox Mode setup:
+ORBIT `0.1.3` is distributed as a signed x64 Windows release. The primary public artifact is the self-contained Xbox Mode setup:
 
-`release/ORBIT-XboxMode-Setup-0.1.2-x64.exe`
+`release/ORBIT-XboxMode-Setup-0.1.3-x64.exe`
 
-This single executable embeds the complete signed AppX, the public ORBIT certificate and the hardened installation script. Releases beginning with `0.1.2-beta.2`, including stable `0.1.2`, use the non-exportable Certum SimplySign cloud key; the historical stable `0.1.1` release remains self-signed. No PFX, PIN, OTP or SimplySign token is stored in the repository, build output or release asset.
+This single executable embeds the complete signed AppX, the public ORBIT certificate and the hardened installation script. Releases beginning with `0.1.2-beta.2`, including stable `0.1.3`, use the non-exportable Certum SimplySign cloud key; the historical stable `0.1.1` release remains self-signed. No PFX, PIN, OTP or SimplySign token is stored in the repository, build output or release asset.
 
 The release pipeline also creates a normal NSIS installer as a local verification and fallback artifact. It is not required as a second public download when the Xbox Mode setup is the selected distribution path.
 
@@ -18,11 +18,11 @@ The already published `0.1.0` build predates this updater and therefore cannot d
 
 Version metadata must move together across `package.json`, `package-lock.json`, `electron-builder.yml`, `resources/release-manifest.json` and `build/xbox/AppxManifest.xml`. Stable product versions use three-part SemVer (`X.Y.Z`); Windows and AppX identities use four numeric components.
 
-For the `0.1.2` stable promotion:
+For the `0.1.3` stable release:
 
-- product and Git tag: `0.1.2` / `v0.1.2`;
-- Windows and AppX identity: `0.1.2.2`;
-- release sequence: `12`.
+- product and Git tag: `0.1.3` / `v0.1.3`;
+- Windows and AppX identity: `0.1.3.0`;
+- release sequence: `13`.
 
 Build and verify the normal Windows installer first, then create the Xbox package from the same compiled source:
 
@@ -58,7 +58,7 @@ instead of modifying an unreviewed dependency.
 
 Before modifying Windows, setup validates certificate lifetime and usage, the public Certum trust chain, AppX hash/signature, identity, architecture, Gaming Home declarations, registration metadata, SCCD and the packaged release contract. It never installs the public Certum certificate into a Windows certificate store. It enables Developer Mode for the SCCD capability, installs the AppX for the interactive account, verifies registration and opens **Settings > Gaming > Xbox mode**.
 
-The first Certum-signed AppX has a different Microsoft package family because an AppX publisher must exactly match the certificate subject. During the one-time transition, setup installs and validates the new package first and deliberately retains a legacy `CN=ORBIT Development` package. Windows supports `Remove-AppxPackage -PreserveApplicationData` only for loose-file development registrations, not a packaged Beta 1 AppX, and package data is scoped to its publisher-derived family. Automatic removal would therefore risk deleting user state. Windows owns the selected Gaming Home value, so Beta users may have selected the visibly distinct **ORBIT Beta** registration once in Settings and should keep the legacy package until the new state has been confirmed. The Xbox package builder derives this display name from the release channel; stable `0.1.2` updates the same Certum package identity and appears as **ORBIT**.
+The first Certum-signed AppX has a different Microsoft package family because an AppX publisher must exactly match the certificate subject. During the one-time transition, setup installs and validates the new package first and deliberately retains a legacy `CN=ORBIT Development` package. Windows supports `Remove-AppxPackage -PreserveApplicationData` only for loose-file development registrations, not a packaged Beta 1 AppX, and package data is scoped to its publisher-derived family. Automatic removal would therefore risk deleting user state. Windows owns the selected Gaming Home value, so Beta users may have selected the visibly distinct **ORBIT Beta** registration once in Settings and should keep the legacy package until the new state has been confirmed. The Xbox package builder derives this display name from the release channel; stable `0.1.3` updates the same Certum package identity and appears as **ORBIT**.
 
 The installer refuses downgrades, treats an equal package version as an idempotent verification, restores the previous Developer Mode value after a clean first-install failure, and writes diagnostics atomically to `C:\ProgramData\ORBIT\Logs\xbox-mode-diagnostics.json`.
 
