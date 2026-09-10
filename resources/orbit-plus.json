@@ -1,4 +1,24 @@
 {
   "patreonMembershipUrl": "https://www.patreon.com/cw/GAMINGCONSOLEMODE/membership",
-  "serviceUrl": "https://getorbitlauncher.com"
+  "serviceUrl": "https://getorbitlauncher.com",
+  "gumroad": {
+    "enabled": true,
+    "testMode": false,
+    "offers": {
+      "annual": {
+        "checkoutUrl": "https://luisgarcia850.gumroad.com/l/yxzbb?wanted=true",
+        "productId": "zkpocK00pDuRYyH0VRXxjA==",
+        "priceCents": 1999,
+        "currency": "EUR",
+        "billing": "yearly"
+      },
+      "lifetime": {
+        "checkoutUrl": "https://luisgarcia850.gumroad.com/l/vdomon",
+        "productId": "cM7QDxBO4m2EcKD9FvjGtA==",
+        "priceCents": 4999,
+        "currency": "EUR",
+        "billing": "one-time"
+      }
+    }
+  }
 }

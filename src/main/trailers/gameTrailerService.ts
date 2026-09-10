@@ -1,6 +1,6 @@
 import { type Language, languageLocale, steamLanguage, languageCountry } from '@shared/language'
 import type { LibraryGame } from '@shared/ipc'
-import { trailerMediaUrl, type GameTrailer } from '@shared/gameTrailer'
+import { customGameTrailerMedia, type GameTrailer } from '@shared/gameTrailer'
 import { fetchWithElectronNet } from '../networkFetch'
 import { parseSteamTrailer, parseXboxTrailer, exactSteamTrailerMatch } from './trailerProviders'
 
@@ -8,27 +8,13 @@ const cache = new Map<string, { trailer: GameTrailer | null; expires: number }>(
 const pending = new Map<string, Promise<GameTrailer | null>>()
 
 function manualTrailer(game: LibraryGame): GameTrailer | null {
-  const value = game.metadata.trailerUrl
-  if (!value) return null
-  try {
-    const safeUrl = trailerMediaUrl(value, true)
-    if (!safeUrl) return null
-    const url = new URL(safeUrl)
-    const path = url.pathname.toLocaleLowerCase('en-US')
-    const format = path.endsWith('.m3u8')
-      ? 'hls'
-      : /\.(?:mp4|m4v|webm|mov)$/u.test(path)
-        ? 'file'
-        : 'external'
-    return {
-      url: url.href,
-      format,
-      title: `${game.name} — Trailer`,
-      source: 'custom',
-      matchedByTitle: false
-    }
-  } catch {
-    return null
+  const media = customGameTrailerMedia(game.metadata.trailerUrl)
+  if (!media) return null
+  return {
+    ...media,
+    title: `${game.name} — Trailer`,
+    source: 'custom',
+    matchedByTitle: false
   }
 }
 

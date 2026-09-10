@@ -13,6 +13,7 @@ interface Props {
 }
 
 const FADE_DURATION_MS = 900
+const PLAY_RETRY_DELAY_MS = 1_500
 const activeFades = new WeakMap<HTMLAudioElement, number>()
 
 function cancelFade(audio: HTMLAudioElement): void {
@@ -72,14 +73,32 @@ export function LauncherBackgroundMusic({
 }: Props): null {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const retiringAudiosRef = useRef(new Set<HTMLAudioElement>())
+  const playRetryTimerRef = useRef<number | undefined>(undefined)
+  const playRetryAttemptedRef = useRef<string | null>(null)
+  const [playRetryRevision, setPlayRetryRevision] = useState(0)
   const [failedCustomUrl, setFailedCustomUrl] = useState<string | null>(null)
   const useCustom = source === 'custom' && Boolean(customUrl) && failedCustomUrl !== customUrl
   const sourceUrl = useCustom ? customUrl! : orbitAmbientUrl
   const targetVolume = normalizeLauncherMusicVolume(volume) / 100
 
   useEffect(() => {
-    if (failedCustomUrl && failedCustomUrl !== customUrl) setFailedCustomUrl(null)
-  }, [customUrl, failedCustomUrl])
+    // A temporary Plus fallback or a later focus cycle must never require the
+    // user to reselect an otherwise valid custom song.
+    if (
+      failedCustomUrl &&
+      (!active || source !== 'custom' || failedCustomUrl !== customUrl)
+    ) {
+      setFailedCustomUrl(null)
+    }
+  }, [active, customUrl, failedCustomUrl, source])
+
+  useEffect(() => {
+    if (playRetryTimerRef.current !== undefined) {
+      window.clearTimeout(playRetryTimerRef.current)
+      playRetryTimerRef.current = undefined
+    }
+    playRetryAttemptedRef.current = null
+  }, [active, customUrl, source])
 
   useEffect(() => {
     if (!active) {
@@ -135,16 +154,48 @@ export function LauncherBackgroundMusic({
 
     cancelFade(audio)
     void audio.play().then(() => {
-      if (audioRef.current === audio) fadeVolume(audio, targetVolume)
+      if (audioRef.current === audio) {
+        playRetryAttemptedRef.current = null
+        fadeVolume(audio, targetVolume)
+      }
     }).catch(() => {
       if (audioRef.current !== audio) return
+      const mediaFailed = audio.error !== null
       audioRef.current = null
       disposeAudio(audio)
-      if (useCustom && customUrl) setFailedCustomUrl(customUrl)
+      if (useCustom && customUrl && mediaFailed) {
+        setFailedCustomUrl(customUrl)
+        return
+      }
+      // Chromium can reject play() once during focus, output-device or source
+      // transitions even though the copied media is valid. Retry once before
+      // treating the custom song as unavailable and falling back to Ambient.
+      if (playRetryAttemptedRef.current !== sourceUrl) {
+        playRetryAttemptedRef.current = sourceUrl
+        playRetryTimerRef.current = window.setTimeout(() => {
+          playRetryTimerRef.current = undefined
+          setPlayRetryRevision((revision) => revision + 1)
+        }, PLAY_RETRY_DELAY_MS)
+      } else if (useCustom && customUrl) {
+        setFailedCustomUrl(customUrl)
+      }
     })
-  }, [active, customUrl, immediateStop, sourceUrl, suspended, targetVolume, useCustom])
+  }, [
+    active,
+    customUrl,
+    immediateStop,
+    playRetryRevision,
+    sourceUrl,
+    suspended,
+    targetVolume,
+    useCustom
+  ])
 
   useEffect(() => () => {
+    if (playRetryTimerRef.current !== undefined) {
+      window.clearTimeout(playRetryTimerRef.current)
+      playRetryTimerRef.current = undefined
+    }
     const audio = audioRef.current
     audioRef.current = null
     if (audio) disposeAudio(audio)

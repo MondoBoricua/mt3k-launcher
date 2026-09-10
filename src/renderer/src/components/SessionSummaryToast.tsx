@@ -53,7 +53,7 @@ export function SessionSummaryToast({ status, visibleSeconds }: Props): JSX.Elem
           <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-accent">
             {t('launch.summaryTitle')}
           </p>
-          <p className="mt-1 truncate text-base font-bold">{gameName}</p>
+          <p className="mt-1 truncate text-base font-bold text-white">{gameName}</p>
         </div>
       </div>
 

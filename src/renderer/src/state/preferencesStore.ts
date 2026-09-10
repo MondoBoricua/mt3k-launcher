@@ -3,6 +3,7 @@ import { DEFAULT_LANGUAGE, normalizeLanguage, isLanguage } from '@shared/languag
 export { LANGUAGE_OPTIONS } from '@shared/language'
 import { create } from 'zustand'
 import { normalizeTextScale } from '@shared/textScale'
+import { isGeForceNowLaunchMode, normalizeGeForceNowLaunchMode } from '@shared/geforceNow'
 import { applyTextScale, readCachedTextScale, scheduleTextScaleSave } from '@renderer/lib/textScalePreference'
 import {
   AUDIO_CUE_IDS,
@@ -12,6 +13,7 @@ import {
   GAME_CARD_PRIMARY_ACTIONS,
   HOME_BACKDROP_MODES,
   HOME_BACKDROP_MOTIONS,
+  HOME_LAYOUT_IDS,
   LIBRARY_GRID_COLUMN_OPTIONS,
   UNINSTALLED_GAME_COLORS,
   type AudioCueId,
@@ -25,6 +27,7 @@ import {
   type DockThemeId,
   type GameCardSize,
   type GameCardPrimaryAction,
+  type GeForceNowLaunchMode,
   type HomeLayoutId,
   type HardwareControlButton,
   type HardwareControlHoldSeconds,
@@ -44,6 +47,8 @@ import {
   type UiDensity,
   type UninstalledGameColor,
   type Language,
+  isThemeId,
+  isOrbitPlusHomeLayoutId,
   isOrbitPlusThemeId
 } from '@shared/ipc'
 import { setUiAudioCustomCues, setUiAudioPreset } from '@renderer/lib/uiAudio'
@@ -113,6 +118,9 @@ interface PreferencesState {
   gameTitleMusicDelaySeconds: number
   gameTitleMusicFadeSeconds: number
   gameCardPrimaryAction: GameCardPrimaryAction
+  geForceNowLaunchMode: GeForceNowLaunchMode
+  geForceNowLaunchModeSaving: boolean
+  setGeForceNowLaunchMode: (mode: GeForceNowLaunchMode) => Promise<void>
   closeLaunchersAfterGame: boolean
   notificationsEnabled: boolean
   notificationPosition: NotificationPosition
@@ -204,6 +212,7 @@ export const HOME_LAYOUT_OPTIONS: { id: HomeLayoutId; label: string }[] = [
   { id: 'orbit', label: 'ORBIT' },
   { id: 'rolling', label: 'Rolling' },
   { id: 'float', label: 'FLOAT' },
+  { id: 'cuadro', label: 'Cuadro' },
   { id: 'coresense', label: 'CoreSense' },
   { id: 'xmode', label: 'XMODE' }
 ]
@@ -214,13 +223,67 @@ export const UNINSTALLED_GAME_COLOR_OPTIONS: UninstalledGameColor[] = [
   ...UNINSTALLED_GAME_COLORS
 ]
 
-export const UNINSTALLED_GAME_COLOR_RGB: Record<UninstalledGameColor, string> = {
-  gray: '124 132 148',
-  blue: '82 124 166',
-  violet: '124 92 154',
-  green: '73 130 103',
-  amber: '151 112 55',
-  rose: '148 76 91'
+interface UninstalledGameVisualStyle {
+  color: string
+  artworkFilter: string
+  tintOpacity: number
+  dimOpacity: number
+}
+
+const FULL_TINT_FILTER = 'grayscale(1) saturate(0) brightness(0.62) contrast(0.9)'
+
+export const UNINSTALLED_GAME_VISUAL_STYLES: Record<
+  UninstalledGameColor,
+  UninstalledGameVisualStyle
+> = {
+  gray: {
+    color: '124 132 148',
+    artworkFilter: FULL_TINT_FILTER,
+    tintOpacity: 1,
+    dimOpacity: 1
+  },
+  'soft-gray': {
+    color: '124 132 148',
+    artworkFilter: 'grayscale(0.48) saturate(0.72) brightness(0.82) contrast(0.94)',
+    tintOpacity: 0,
+    dimOpacity: 0.45
+  },
+  none: {
+    color: '255 255 255',
+    artworkFilter: 'none',
+    tintOpacity: 0,
+    dimOpacity: 0
+  },
+  blue: {
+    color: '82 124 166',
+    artworkFilter: FULL_TINT_FILTER,
+    tintOpacity: 1,
+    dimOpacity: 1
+  },
+  violet: {
+    color: '124 92 154',
+    artworkFilter: FULL_TINT_FILTER,
+    tintOpacity: 1,
+    dimOpacity: 1
+  },
+  green: {
+    color: '73 130 103',
+    artworkFilter: FULL_TINT_FILTER,
+    tintOpacity: 1,
+    dimOpacity: 1
+  },
+  amber: {
+    color: '151 112 55',
+    artworkFilter: FULL_TINT_FILTER,
+    tintOpacity: 1,
+    dimOpacity: 1
+  },
+  rose: {
+    color: '148 76 91',
+    artworkFilter: FULL_TINT_FILTER,
+    tintOpacity: 1,
+    dimOpacity: 1
+  }
 }
 
 export const BACKDROP_INTENSITY_OPTIONS: BackdropIntensity[] = [
@@ -260,18 +323,51 @@ function applyDomAttributes(
   backdropIntensity: BackdropIntensity,
   cornerStyle: CornerStyleId
 ): void {
+  const root = document.documentElement
   const appearanceUnlocked = useOrbitPlusStore
     .getState()
     .hasFeature('premium-appearance')
   const effectiveTheme = isOrbitPlusThemeId(theme) && !appearanceUnlocked ? 'midnight' : theme
   const effectiveCornerStyle =
     cornerStyle !== 'theme' && !appearanceUnlocked ? 'theme' : cornerStyle
-  document.documentElement.setAttribute('data-theme', effectiveTheme)
-  document.documentElement.setAttribute('data-corner-style', effectiveCornerStyle)
-  document.documentElement.setAttribute('data-density', density)
-  document.documentElement.setAttribute('data-home-layout', homeLayout)
-  document.documentElement.setAttribute('data-card-size', gameCardSize)
-  document.documentElement.setAttribute('data-backdrop-intensity', backdropIntensity)
+  const effectiveHomeLayout =
+    isOrbitPlusHomeLayoutId(homeLayout) && !appearanceUnlocked ? 'orbit' : homeLayout
+  setDomAttribute(root, 'data-theme', effectiveTheme)
+  setDomAttribute(root, 'data-corner-style', effectiveCornerStyle)
+  setDomAttribute(root, 'data-density', density)
+  setDomAttribute(root, 'data-home-layout', effectiveHomeLayout)
+  setDomAttribute(root, 'data-card-size', gameCardSize)
+  setDomAttribute(root, 'data-backdrop-intensity', backdropIntensity)
+}
+
+function setDomAttribute(root: HTMLElement, name: string, value: string): void {
+  if (root.getAttribute(name) !== value) root.setAttribute(name, value)
+}
+
+let themeTransitionCleanupFrame: number | undefined
+
+function markThemeSwitchInProgress(root: HTMLElement): void {
+  root.setAttribute('data-orbit-theme-switching', 'true')
+  if (themeTransitionCleanupFrame !== undefined) {
+    window.cancelAnimationFrame(themeTransitionCleanupFrame)
+  }
+  themeTransitionCleanupFrame = window.requestAnimationFrame(() => {
+    themeTransitionCleanupFrame = window.requestAnimationFrame(() => {
+      root.removeAttribute('data-orbit-theme-switching')
+      themeTransitionCleanupFrame = undefined
+    })
+  })
+}
+
+function applyThemeAttribute(theme: ThemeId, optimizeLiveSwitch = false): void {
+  const root = document.documentElement
+  const appearanceUnlocked = useOrbitPlusStore
+    .getState()
+    .hasFeature('premium-appearance')
+  const effectiveTheme = isOrbitPlusThemeId(theme) && !appearanceUnlocked ? 'midnight' : theme
+  if (root.getAttribute('data-theme') === effectiveTheme) return
+  if (optimizeLiveSwitch) markThemeSwitchInProgress(root)
+  root.setAttribute('data-theme', effectiveTheme)
 }
 
 function applyHomeCardBubbleEffect(enabled: boolean): void {
@@ -279,13 +375,62 @@ function applyHomeCardBubbleEffect(enabled: boolean): void {
 }
 
 function applyUninstalledGameColor(color: UninstalledGameColor): void {
-  document.documentElement.style.setProperty(
-    '--color-uninstalled-game',
-    UNINSTALLED_GAME_COLOR_RGB[color]
-  )
+  const root = document.documentElement
+  const visualStyle = UNINSTALLED_GAME_VISUAL_STYLES[color]
+  root.setAttribute('data-uninstalled-game-color', color)
+  root.style.setProperty('--color-uninstalled-game', visualStyle.color)
+  root.style.setProperty('--uninstalled-game-artwork-filter', visualStyle.artworkFilter)
+  root.style.setProperty('--uninstalled-game-tint-opacity', String(visualStyle.tintOpacity))
+  root.style.setProperty('--uninstalled-game-dim-opacity', String(visualStyle.dimOpacity))
 }
 
 let textScaleRevision = 0
+
+const THEME_SAVE_DEBOUNCE_MS = 180
+let themeSaveTimer: number | undefined
+let pendingTheme: ThemeId | undefined
+let themeSaveQueue: Promise<void> = Promise.resolve()
+let themeRevision = 0
+let confirmedTheme: ThemeId = 'midnight'
+let themeSaveWaiters: Array<{
+  resolve: () => void
+  reject: (error: unknown) => void
+}> = []
+
+function scheduleThemeSettingsSave(theme: ThemeId): Promise<void> {
+  pendingTheme = theme
+  if (themeSaveTimer !== undefined) window.clearTimeout(themeSaveTimer)
+  const result = new Promise<void>((resolve, reject) => {
+    themeSaveWaiters.push({ resolve, reject })
+  })
+  themeSaveTimer = window.setTimeout(() => {
+    void flushThemeSettingsSave()
+  }, THEME_SAVE_DEBOUNCE_MS)
+  return result
+}
+
+export function flushThemeSettingsSave(): Promise<void> {
+  if (themeSaveTimer !== undefined) {
+    window.clearTimeout(themeSaveTimer)
+    themeSaveTimer = undefined
+  }
+  if (pendingTheme === undefined) return themeSaveQueue
+
+  const theme = pendingTheme
+  const waiters = themeSaveWaiters
+  pendingTheme = undefined
+  themeSaveWaiters = []
+  const save = themeSaveQueue.catch(() => undefined).then(async () => {
+    const saved = await window.api.settings.set({ theme })
+    confirmedTheme = isThemeId(saved.theme) ? saved.theme : theme
+  })
+  themeSaveQueue = save
+  void save.then(
+    () => waiters.forEach(({ resolve }) => resolve()),
+    (error: unknown) => waiters.forEach(({ reject }) => reject(error))
+  )
+  return save
+}
 
 let musicSettingsSaveTimer: number | undefined
 let pendingMusicSettings: Partial<OrbitSettings> = {}
@@ -374,6 +519,8 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
   gameTitleMusicDelaySeconds: GAME_TITLE_MUSIC_DELAY_DEFAULT,
   gameTitleMusicFadeSeconds: GAME_TITLE_MUSIC_FADE_DEFAULT,
   gameCardPrimaryAction: 'launch',
+  geForceNowLaunchMode: 'web',
+  geForceNowLaunchModeSaving: false,
   closeLaunchersAfterGame: false,
   notificationsEnabled: true,
   notificationPosition: 'top-right',
@@ -400,7 +547,7 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
         window.api.launcherMusic.getCustom(),
         window.api.uiAudio.getCustom()
       ])
-    const homeLayout = settings.homeLayout ?? 'orbit'
+    const homeLayout = HOME_LAYOUT_IDS.includes(settings.homeLayout) ? settings.homeLayout : 'orbit'
     const cornerStyle = settings.cornerStyle ?? 'theme'
     const gameCardSize = settings.gameCardSize ?? 'standard'
     const libraryGridColumns = LIBRARY_GRID_COLUMN_OPTIONS.includes(settings.libraryGridColumns)
@@ -426,10 +573,11 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
     )
       ? (settings.launcherMusicSource as LauncherMusicSource)
       : LAUNCHER_MUSIC_SOURCE_DEFAULT
-    const launcherMusicSource =
-      requestedLauncherMusicSource === 'custom' && !customLauncherMusic
-        ? LAUNCHER_MUSIC_SOURCE_DEFAULT
-        : requestedLauncherMusicSource
+    // Keep the user's explicit source choice even when the copied file cannot be
+    // resolved during this hydration pass. Playback already degrades to ORBIT
+    // Ambient, while persisting that fallback here would silently destroy the
+    // preference after one transient file or entitlement check failure.
+    const launcherMusicSource = requestedLauncherMusicSource
     const requestedAudioPreset = AUDIO_PRESETS.includes(settings.audioPreset)
       ? settings.audioPreset
       : 'orbit'
@@ -450,13 +598,11 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
     if (homeBackdropMode !== requestedHomeBackdropMode) {
       void window.api.settings.set({ homeBackdropMode })
     }
-    if (launcherMusicSource !== requestedLauncherMusicSource) {
-      void window.api.settings.set({ launcherMusicSource })
-    }
     confirmedLanguage = normalizeLanguage(settings.language)
     document.documentElement.lang = confirmedLanguage
     const textScale = normalizeTextScale(settings.textScale)
     applyTextScale(textScale)
+    confirmedTheme = settings.theme
     applyDomAttributes(
       settings.theme,
       settings.uiDensity,
@@ -520,6 +666,7 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
         ? settings.gameCardPrimaryAction
         : 'launch',
       closeLaunchersAfterGame: settings.closeLaunchersAfterGame ?? false,
+      geForceNowLaunchMode: normalizeGeForceNowLaunchMode(settings.geForceNowLaunchMode),
       notificationsEnabled: settings.notificationsEnabled ?? true,
       notificationPosition: settings.notificationPosition ?? 'top-right',
       notificationMotion: settings.notificationMotion ?? 'slide',
@@ -538,16 +685,22 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
     ) {
       return
     }
-    applyDomAttributes(
-      theme,
-      get().uiDensity,
-      get().homeLayout,
-      get().gameCardSize,
-      get().backdropIntensity,
-      get().cornerStyle
-    )
+    if (get().theme === theme) return
+    const revision = ++themeRevision
+    applyThemeAttribute(theme, true)
     set({ theme })
-    await window.api.settings.set({ theme })
+    try {
+      await scheduleThemeSettingsSave(theme)
+    } catch {
+      if (revision !== themeRevision) return
+      applyThemeAttribute(confirmedTheme, true)
+      set({ theme: confirmedTheme })
+      useNotificationStore.getState().push({
+        titleKey: 'settings.theme.title',
+        messageKey: 'settings.saveFailed',
+        force: true
+      })
+    }
   },
 
   setCornerStyle: async (cornerStyle) => {
@@ -595,6 +748,12 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
   },
 
   setHomeLayout: async (homeLayout) => {
+    if (
+      isOrbitPlusHomeLayoutId(homeLayout) &&
+      !useOrbitPlusStore.getState().hasFeature('premium-appearance')
+    ) {
+      return
+    }
     const showHomeBanners = homeLayout === 'orbit'
     applyDomAttributes(
       get().theme,
@@ -718,6 +877,17 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
     set({ customStartupVideoUrl, startupAnimationMode: 'custom' })
     await window.api.settings.set({ startupAnimationMode: 'custom' })
     return true
+  },
+
+  setGeForceNowLaunchMode: async (mode) => {
+    if (!isGeForceNowLaunchMode(mode) || get().geForceNowLaunchModeSaving || mode === get().geForceNowLaunchMode) return
+    set({ geForceNowLaunchModeSaving: true })
+    try {
+      const saved = await window.api.settings.set({ geForceNowLaunchMode: mode })
+      set({ geForceNowLaunchMode: normalizeGeForceNowLaunchMode(saved.geForceNowLaunchMode) })
+    } finally {
+      set({ geForceNowLaunchModeSaving: false })
+    }
   },
 
   setDockTheme: async (dockTheme) => {

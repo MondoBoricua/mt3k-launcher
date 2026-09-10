@@ -4,6 +4,7 @@ import { motion, useReducedMotion } from 'framer-motion'
 import {
   AlertTriangle,
   CheckCircle2,
+  ClipboardPaste,
   Database,
   Image as ImageIcon,
   Info,
@@ -15,6 +16,7 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
   ShieldCheck,
   Sparkles,
   Trophy,
@@ -26,6 +28,7 @@ import type {
   GameMetadataOverrides,
   GameMetadataSyncResult,
   GameMetadataUpdateInput,
+  GameMediaLinkKind,
   ImageOrientation,
   ImageUpdate,
   LibraryGame,
@@ -33,15 +36,18 @@ import type {
 } from '@shared/ipc'
 import { safeExternalHttpsUrl } from '@shared/externalUrl'
 import { youtubeVideoIdFromUrl } from '@shared/gameTitleMusic'
+import { patchesGameMetadataField } from '@shared/gameMetadataOverrides'
 import { useBackHandler } from '@renderer/hooks/useBackHandler'
 import { focusElement } from '@renderer/lib/spatialNavigation'
-import { useT } from '@renderer/i18n/useT'
+import { useT, type TFunction } from '@renderer/i18n/useT'
 import { useLibraryStore } from '@renderer/state/libraryStore'
 import { GameImage } from './GameImage'
 import { ArtworkPicker } from './ArtworkPicker'
+import { MediaLinkSearchDialog } from './MediaLinkSearchDialog'
 
 type SectionId = 'overview' | 'media' | 'facts' | 'system' | 'advanced'
 type EditorState = 'idle' | 'saving' | 'syncing' | 'saved' | 'saved-sync-error' | 'error'
+type MediaLinkFeedback = 'selected' | 'pasted' | 'empty' | 'invalid' | 'error'
 
 type ValidationMessage =
   | 'metadata.validation.name'
@@ -209,19 +215,26 @@ function validHttps(value: string): boolean {
   return !value.trim() || Boolean(safeExternalHttpsUrl(value.trim()))
 }
 
-function findDraftIssue(draft: Draft): DraftIssue | undefined {
+function findDraftIssue(draft: Draft, update: GameMetadataUpdateInput): DraftIssue | undefined {
+  const changed = (key: EditableGameMetadataKey): boolean =>
+    patchesGameMetadataField(update, key)
   if (!draft.name.trim()) {
     return { section: 'overview', field: 'name', message: 'metadata.validation.name' }
   }
   for (const field of ['website', 'storeUrl', 'trailerUrl', 'achievementsUrl'] as const) {
-    if (!validHttps(draft[field])) {
+    if (changed(field) && !validHttps(draft[field])) {
       return { section: 'media', field, message: 'metadata.validation.https' }
     }
   }
-  if (draft.titleMusicUrl.trim() && !youtubeVideoIdFromUrl(draft.titleMusicUrl.trim())) {
+  if (
+    changed('titleMusicUrl') &&
+    draft.titleMusicUrl.trim() &&
+    !youtubeVideoIdFromUrl(draft.titleMusicUrl.trim())
+  ) {
     return { section: 'media', field: 'titleMusicUrl', message: 'metadata.validation.youtube' }
   }
-  if (draft.hltbUrl.trim()) {
+  const completionTimesChanged = changed('completionTimes')
+  if (completionTimesChanged && draft.hltbUrl.trim()) {
     const safe = safeExternalHttpsUrl(draft.hltbUrl.trim())
     const host = safe ? new URL(safe).hostname.toLocaleLowerCase('en-US') : ''
     if (!safe || (host !== 'howlongtobeat.com' && !host.endsWith('.howlongtobeat.com'))) {
@@ -234,19 +247,20 @@ function findDraftIssue(draft: Draft): DraftIssue | undefined {
     'completionistHours',
     'allStylesHours'
   ] as const) {
-    if (!validHours(draft[field])) {
+    if (completionTimesChanged && !validHours(draft[field])) {
       return { section: 'media', field, message: 'metadata.validation.hours' }
     }
   }
   for (const field of LIST_FIELDS) {
-    if (!validList(draft[field])) {
+    if (changed(field) && !validList(draft[field])) {
       return { section: 'facts', field, message: 'metadata.validation.list' }
     }
   }
-  if (!validList(draft.platforms)) {
+  if (changed('platforms') && !validList(draft.platforms)) {
     return { section: 'facts', field: 'platforms', message: 'metadata.validation.list' }
   }
   if (
+    changed('platforms') &&
     cleanList(draft.platforms)?.some(
       (platform) => !PLATFORM_VALUES.has(platform.toLocaleLowerCase('en-US'))
     )
@@ -259,7 +273,7 @@ function findDraftIssue(draft: Draft): DraftIssue | undefined {
     ['requiredAge', 0, 99],
     ['achievementCount', 0, 1_000_000]
   ] as const) {
-    if (!validInteger(draft[field], minimum, maximum)) {
+    if (changed(field) && !validInteger(draft[field], minimum, maximum)) {
       return { section: 'facts', field, message: 'metadata.validation.integer' }
     }
   }
@@ -377,6 +391,12 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
   const [confirmClose, setConfirmClose] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [artworkPicker, setArtworkPicker] = useState<ImageOrientation | null>(null)
+  const [mediaSearchKind, setMediaSearchKind] = useState<GameMediaLinkKind | null>(null)
+  const [mediaPasteBusy, setMediaPasteBusy] = useState<GameMediaLinkKind | null>(null)
+  const [mediaFeedback, setMediaFeedback] = useState<{
+    kind: GameMediaLinkKind
+    state: MediaLinkFeedback
+  } | null>(null)
   const [hasArtworkOverrides, setHasArtworkOverrides] = useState<Record<ImageOrientation, boolean>>({
     vertical: false,
     horizontal: false,
@@ -385,7 +405,7 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
   })
 
   const update = useMemo(() => buildUpdate(game, draft), [draft, game])
-  const draftIssue = useMemo(() => findDraftIssue(draft), [draft])
+  const draftIssue = useMemo(() => findDraftIssue(draft, update), [draft, update])
   const dirty = Boolean(update.name !== undefined || update.metadata)
   const manualOverrideCount =
     Object.keys(game.metadataOverrides ?? {}).length + (game.nameOverride ? 1 : 0)
@@ -396,6 +416,32 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
     setState('idle')
     setSyncResult(null)
     setConfirmClose(false)
+    if (key === 'trailerUrl' || key === 'titleMusicUrl') setMediaFeedback(null)
+  }
+
+  const applyMediaLink = (
+    kind: GameMediaLinkKind,
+    url: string,
+    feedback: Extract<MediaLinkFeedback, 'selected' | 'pasted'>
+  ): void => {
+    set(kind === 'trailer' ? 'trailerUrl' : 'titleMusicUrl', url)
+    setMediaFeedback({ kind, state: feedback })
+    setMediaSearchKind(null)
+  }
+
+  const pasteMediaLink = async (kind: GameMediaLinkKind): Promise<void> => {
+    if (busy || mediaPasteBusy) return
+    setMediaPasteBusy(kind)
+    setMediaFeedback(null)
+    try {
+      const result = await window.api.library.metadata.pasteMediaLink(kind)
+      if (result.state === 'ready' && result.url) applyMediaLink(kind, result.url, 'pasted')
+      else setMediaFeedback({ kind, state: result.state === 'ready' ? 'invalid' : result.state })
+    } catch {
+      setMediaFeedback({ kind, state: 'error' })
+    } finally {
+      setMediaPasteBusy(null)
+    }
   }
 
   const invalid = (field: keyof Draft): boolean =>
@@ -425,10 +471,10 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
   useEffect(() => {
     const root = rootRef.current
     if (!root) return
-    if (artworkPicker) root.setAttribute('inert', '')
+    if (artworkPicker || mediaSearchKind) root.setAttribute('inert', '')
     else root.removeAttribute('inert')
     return () => root.removeAttribute('inert')
-  }, [artworkPicker])
+  }, [artworkPicker, mediaSearchKind])
 
   useEffect(() => {
     let active = true
@@ -534,7 +580,7 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
   const editor = (
     <motion.div
       ref={rootRef}
-      data-focus-scope={artworkPicker ? undefined : 'active'}
+      data-focus-scope={artworkPicker || mediaSearchKind ? undefined : 'active'}
       role="dialog"
       aria-modal="true"
       aria-label={t('metadata.title')}
@@ -654,12 +700,34 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
                   ))}
                 </div>
                 <div className="grid gap-4 xl:grid-cols-2">
-                  <Field label={t('metadata.trailerUrl')} manual={manual('trailerUrl')} icon={<Video size={14} />} hint={t('metadata.trailerHint')}>
-                    <input data-focusable data-metadata-field="trailerUrl" aria-invalid={invalid('trailerUrl')} type="url" maxLength={4_096} placeholder="https://…" value={draft.trailerUrl} onChange={(event) => set('trailerUrl', event.target.value)} className={inputClass('trailerUrl')} />
-                  </Field>
-                  <Field label={t('metadata.titleMusicUrl')} manual={manual('titleMusicUrl')} icon={<Music2 size={14} />} hint={t('metadata.musicHint')}>
-                    <input data-focusable data-metadata-field="titleMusicUrl" aria-invalid={invalid('titleMusicUrl')} type="url" maxLength={4_096} placeholder="https://youtube.com/watch?v=…" value={draft.titleMusicUrl} onChange={(event) => set('titleMusicUrl', event.target.value)} className={inputClass('titleMusicUrl')} />
-                  </Field>
+                  <MediaLinkField
+                    id="metadata-trailer-url"
+                    label={t('metadata.trailerUrl')}
+                    manual={manual('trailerUrl')}
+                    icon={<Video size={14} />}
+                    hint={t('metadata.trailerHint')}
+                    feedback={mediaLinkFeedbackText(t, mediaFeedback, 'trailer')}
+                    actions={<>
+                      <MediaLinkAction icon={<Search size={13} />} label={t('metadata.mediaSearch.action')} disabled={busy || Boolean(mediaPasteBusy)} onClick={() => setMediaSearchKind('trailer')} />
+                      <MediaLinkAction icon={mediaPasteBusy === 'trailer' ? <Loader2 size={13} className="animate-spin" /> : <ClipboardPaste size={13} />} label={t('metadata.mediaPaste.action')} disabled={busy || Boolean(mediaPasteBusy)} onClick={() => void pasteMediaLink('trailer')} />
+                    </>}
+                  >
+                    <input id="metadata-trailer-url" data-focusable data-metadata-field="trailerUrl" aria-invalid={invalid('trailerUrl')} type="url" maxLength={4_096} placeholder="https://…" value={draft.trailerUrl} onChange={(event) => set('trailerUrl', event.target.value)} className={inputClass('trailerUrl')} />
+                  </MediaLinkField>
+                  <MediaLinkField
+                    id="metadata-title-music-url"
+                    label={t('metadata.titleMusicUrl')}
+                    manual={manual('titleMusicUrl')}
+                    icon={<Music2 size={14} />}
+                    hint={t('metadata.musicHint')}
+                    feedback={mediaLinkFeedbackText(t, mediaFeedback, 'title-music')}
+                    actions={<>
+                      <MediaLinkAction icon={<Search size={13} />} label={t('metadata.mediaSearch.action')} disabled={busy || Boolean(mediaPasteBusy)} onClick={() => setMediaSearchKind('title-music')} />
+                      <MediaLinkAction icon={mediaPasteBusy === 'title-music' ? <Loader2 size={13} className="animate-spin" /> : <ClipboardPaste size={13} />} label={t('metadata.mediaPaste.action')} disabled={busy || Boolean(mediaPasteBusy)} onClick={() => void pasteMediaLink('title-music')} />
+                    </>}
+                  >
+                    <input id="metadata-title-music-url" data-focusable data-metadata-field="titleMusicUrl" aria-invalid={invalid('titleMusicUrl')} type="url" maxLength={4_096} placeholder="https://youtube.com/watch?v=…" value={draft.titleMusicUrl} onChange={(event) => set('titleMusicUrl', event.target.value)} className={inputClass('titleMusicUrl')} />
+                  </MediaLinkField>
                   <Field label={t('metadata.website')} manual={manual('website')} icon={<Link2 size={14} />}>
                     <input data-focusable data-metadata-field="website" aria-invalid={invalid('website')} type="url" maxLength={4_096} placeholder="https://…" value={draft.website} onChange={(event) => set('website', event.target.value)} className={inputClass('website')} />
                   </Field>
@@ -831,6 +899,15 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
           onClose={() => setArtworkPicker(null)}
         />
       )}
+      {mediaSearchKind && (
+        <MediaLinkSearchDialog
+          gameId={game.id}
+          gameName={draft.name || game.name}
+          kind={mediaSearchKind}
+          onSelect={(url) => applyMediaLink(mediaSearchKind, url, 'selected')}
+          onClose={() => setMediaSearchKind(null)}
+        />
+      )}
     </>,
     document.body
   )
@@ -850,6 +927,103 @@ function Field({ label, hint, manual, icon, children }: { label: string; hint?: 
     {children}
     {hint && <span className="mt-1.5 block text-[11px] leading-relaxed text-white/30">{hint}</span>}
   </label>
+}
+
+function MediaLinkField({
+  id,
+  label,
+  hint,
+  manual,
+  icon,
+  actions,
+  feedback,
+  children
+}: {
+  id: string
+  label: string
+  hint: string
+  manual: boolean
+  icon: ReactNode
+  actions: ReactNode
+  feedback?: { text: string; error: boolean }
+  children: ReactNode
+}): JSX.Element {
+  const t = useT()
+  return (
+    <div className="block">
+      <div className="mb-2 flex min-h-7 items-center gap-2">
+        <label htmlFor={id} className="flex min-w-0 items-center gap-2 text-xs font-bold text-white/58">
+          {icon}
+          <span className="truncate">{label}</span>
+          {manual && (
+            <span className="rounded-full border border-accent/20 bg-accent/10 px-2 py-0.5 text-[9px] uppercase tracking-[0.12em] text-accent">
+              {t('metadata.manual')}
+            </span>
+          )}
+        </label>
+        <span className="ml-auto flex shrink-0 items-center gap-1.5">{actions}</span>
+      </div>
+      {children}
+      {feedback ? (
+        <p
+          role={feedback.error ? 'alert' : 'status'}
+          aria-live="polite"
+          className={`mt-1.5 text-[11px] font-medium ${feedback.error ? 'text-rose-200/85' : 'text-emerald-200/75'}`}
+        >
+          {feedback.text}
+        </p>
+      ) : (
+        <p className="mt-1.5 text-[11px] leading-relaxed text-white/30">{hint}</p>
+      )}
+    </div>
+  )
+}
+
+function MediaLinkAction({
+  icon,
+  label,
+  disabled,
+  onClick
+}: {
+  icon: ReactNode
+  label: string
+  disabled: boolean
+  onClick: () => void
+}): JSX.Element {
+  return (
+    <button
+      data-focusable
+      data-disabled={disabled ? 'true' : undefined}
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1.5 text-[10px] font-bold text-white/55 hover:bg-white/10 hover:text-white disabled:opacity-40 data-[focused=true]:border-accent/60 data-[focused=true]:bg-accent/[0.12] data-[focused=true]:text-white"
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  )
+}
+
+function mediaLinkFeedbackText(
+  t: TFunction,
+  feedback: { kind: GameMediaLinkKind; state: MediaLinkFeedback } | null,
+  kind: GameMediaLinkKind
+): { text: string; error: boolean } | undefined {
+  if (!feedback || feedback.kind !== kind) return undefined
+  if (feedback.state === 'selected') {
+    return { text: t('metadata.mediaLink.selected'), error: false }
+  }
+  if (feedback.state === 'pasted') {
+    return { text: t('metadata.mediaLink.pasted'), error: false }
+  }
+  if (feedback.state === 'empty') {
+    return { text: t('metadata.mediaLink.empty'), error: true }
+  }
+  if (feedback.state === 'invalid') {
+    return { text: t('metadata.mediaLink.invalid'), error: true }
+  }
+  return { text: t('metadata.mediaLink.error'), error: true }
 }
 
 function CompactNumber({ field, invalid, label, value, onChange, suffix, max }: { field: keyof Draft; invalid: boolean; label: string; value: string; onChange: (value: string) => void; suffix?: string; max?: number }): JSX.Element {

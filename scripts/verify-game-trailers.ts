@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { trailerMediaUrl } from '../src/shared/gameTrailer.ts'
+import {
+  customGameTrailerMedia,
+  GAME_TRAILER_INTRO_SKIP_SECONDS,
+  gameTrailerStartPosition,
+  trailerMediaUrl,
+  YOUTUBE_TRAILER_APP_REFERRER,
+  youtubeTrailerEmbedUrl
+} from '../src/shared/gameTrailer.ts'
 import { exactSteamTrailerMatch, parseSteamTrailer, parseXboxTrailer } from '../src/main/trailers/trailerProviders.ts'
 
 for (const url of ['file:///C:/secret.mp4', 'javascript:alert(1)', 'https://steamstatic.com.evil.test/a',
@@ -8,6 +15,39 @@ for (const url of ['file:///C:/secret.mp4', 'javascript:alert(1)', 'https://stea
 }
 assert.equal(trailerMediaUrl('http://xbl-smooth-ssl-xboxlive-com.akamaized.net/video/test.mp4'),
   'https://xbl-smooth-ssl-xboxlive-com.akamaized.net/video/test.mp4')
+assert.deepEqual(customGameTrailerMedia('https://youtu.be/dQw4w9WgXcQ?t=42'), {
+  url: 'https://youtu.be/dQw4w9WgXcQ?t=42',
+  format: 'youtube',
+  youtubeVideoId: 'dQw4w9WgXcQ'
+})
+assert.equal(customGameTrailerMedia('https://cdn.example.com/trailer.m3u8')?.format, 'hls')
+assert.equal(customGameTrailerMedia('https://cdn.example.com/trailer.mp4?token=public')?.format, 'file')
+assert.equal(customGameTrailerMedia('https://example.com/trailer')?.format, 'external')
+assert.equal(customGameTrailerMedia('file:///C:/secret.mp4'), undefined)
+const youtubeBackground = new URL(youtubeTrailerEmbedUrl('dQw4w9WgXcQ', 'background')!)
+assert.equal(youtubeBackground.origin, 'https://www.youtube-nocookie.com')
+assert.equal(youtubeBackground.pathname, '/embed/dQw4w9WgXcQ')
+assert.equal(youtubeBackground.searchParams.get('autoplay'), '1')
+assert.equal(youtubeBackground.searchParams.get('mute'), '1')
+assert.equal(youtubeBackground.searchParams.get('vq'), null)
+assert.equal(youtubeBackground.searchParams.get('controls'), '0')
+assert.equal(youtubeBackground.searchParams.get('enablejsapi'), '1')
+assert.equal(youtubeBackground.searchParams.get('start'), '5')
+assert.equal(youtubeBackground.searchParams.has('playlist'), false)
+assert.equal(youtubeBackground.searchParams.has('loop'), false)
+const youtubePlayer = new URL(youtubeTrailerEmbedUrl('dQw4w9WgXcQ', 'player')!)
+assert.equal(youtubePlayer.searchParams.get('controls'), '0')
+assert.equal(youtubePlayer.searchParams.get('disablekb'), '1')
+assert.equal(youtubePlayer.searchParams.get('fs'), '0')
+assert.equal(youtubePlayer.searchParams.has('mute'), false)
+assert.equal(youtubeTrailerEmbedUrl('../malicious', 'player'), undefined)
+assert.equal(YOUTUBE_TRAILER_APP_REFERRER, 'https://com.orbit.launcher/')
+assert.equal(GAME_TRAILER_INTRO_SKIP_SECONDS, 5)
+assert.equal(gameTrailerStartPosition(120), 5)
+assert.equal(gameTrailerStartPosition(Number.POSITIVE_INFINITY), 5)
+assert.equal(gameTrailerStartPosition(5.25), 0)
+assert.equal(gameTrailerStartPosition(3), 0)
+assert.equal(gameTrailerStartPosition(90, 120), 125)
 const steamUrl = 'https://video.akamai.steamstatic.com/store_trailers/1/test/hls_264_master.m3u8'
 assert.equal(parseSteamTrailer({ 1: { success: true, data: { movies: [{ hls_h264: steamUrl, name: 'Trailer' }] } } }, '1')?.format, 'hls')
 assert.equal(parseSteamTrailer({ 2: { success: true, data: { movies: [{ hls_h264: steamUrl }] } } }, '1'), null)
@@ -25,7 +65,7 @@ assert.equal(exactSteamTrailerMatch(search, 'Game 2'), '42')
 assert.equal(exactSteamTrailerMatch(search, 'Game'), null)
 assert.equal(exactSteamTrailerMatch({ items: [...search.items, search.items[0]] }, 'Game 2'), null)
 assert.equal(exactSteamTrailerMatch({ items: [{ type: 'app', id: 1, name: '東京' }] }, '北京'), null)
-console.log('Trailer checks passed: provider isolation, exact-title matching, malformed/missing data, HLS/file formats and URL boundaries.')
+console.log('Trailer checks passed: provider isolation, exact-title matching, malformed/missing data, HLS/file/YouTube formats, embeds and URL boundaries.')
 
 if (process.argv.includes('--live')) {
   const steamResponse = await fetch('https://store.steampowered.com/api/appdetails?appids=1245620&l=german')

@@ -1,4 +1,9 @@
-import type { GameMetadata, GameMetadataOverrides } from './ipc'
+import type {
+  EditableGameMetadataKey,
+  GameMetadata,
+  GameMetadataOverrides,
+  GameMetadataUpdateInput
+} from './ipc'
 
 function sameValue(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
@@ -53,4 +58,14 @@ export function sameGameMetadataOverrides(
       )
     )
   )
+}
+
+/** Provider values may use trusted native deep links or legacy formats that are
+ * intentionally not valid manual overrides. Editor validation must therefore
+ * inspect only fields that the pending patch will actually persist. */
+export function patchesGameMetadataField(
+  update: Pick<GameMetadataUpdateInput, 'metadata'>,
+  key: EditableGameMetadataKey
+): boolean {
+  return Boolean(update.metadata && Object.hasOwn(update.metadata, key))
 }

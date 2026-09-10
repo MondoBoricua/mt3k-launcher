@@ -94,6 +94,34 @@ assert.equal(isLauncherMusicVolume(-1), false)
 assert.equal(isLauncherMusicSource('orbit'), true)
 assert.equal(isLauncherMusicSource('custom'), true)
 assert.equal(isLauncherMusicSource('remote'), false)
+const preferencesStoreSource = await readFile(
+  new URL('../src/renderer/src/state/preferencesStore.ts', import.meta.url),
+  'utf8'
+)
+assert.match(
+  preferencesStoreSource,
+  /const launcherMusicSource = requestedLauncherMusicSource/u,
+  'hydration must preserve the selected custom source when its file is temporarily unavailable'
+)
+assert.doesNotMatch(
+  preferencesStoreSource,
+  /void window\.api\.settings\.set\(\{ launcherMusicSource \}\)/u,
+  'hydration must not persist an automatic launcher-music fallback'
+)
+const launcherBackgroundMusicSource = await readFile(
+  new URL('../src/renderer/src/components/LauncherBackgroundMusic.tsx', import.meta.url),
+  'utf8'
+)
+assert.match(
+  launcherBackgroundMusicSource,
+  /!active \|\| source !== 'custom' \|\| failedCustomUrl !== customUrl/u,
+  'a focus or entitlement fallback must allow the selected custom song to recover'
+)
+assert.match(
+  launcherBackgroundMusicSource,
+  /playRetryAttemptedRef\.current !== sourceUrl/u,
+  'a transient play rejection must retry before falling back to Ambient'
+)
 const orbitAmbient = await readFile(new URL('../src/renderer/src/assets/audio/orbit-ambient.wav', import.meta.url))
 assert.equal(orbitAmbient.subarray(0, 4).toString('ascii'), 'RIFF')
 assert.equal(orbitAmbient.subarray(8, 12).toString('ascii'), 'WAVE')

@@ -18,6 +18,5 @@ Thumbs.db
 .orbit-relauncher-build/
 .pnpm-store/
 pnpm-lock.yaml
-pnpm-workspace.yaml
 resources/discord-social-sdk/win32-x64/discord_partner_sdk.dll
 website/

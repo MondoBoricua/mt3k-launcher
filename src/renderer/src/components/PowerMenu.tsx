@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, Loader2, LogOut, Moon, Power, RefreshCw, RotateCcw, X } from 'lucide-react'
 import type { AppControlAction, SystemPowerAction } from '@shared/ipc'
 import { useBackHandler } from '@renderer/hooks/useBackHandler'
+import { useFocusScope } from '@renderer/hooks/useFocusScope'
 import { useT } from '@renderer/i18n/useT'
 import type { TranslationKey } from '@renderer/i18n/translations'
-import { focusElement } from '@renderer/lib/spatialNavigation'
 
 interface PowerOption {
   id: SystemPowerAction | AppControlAction
@@ -70,6 +70,7 @@ interface PowerMenuProps {
 
 export function PowerMenu({ onOpenChange }: PowerMenuProps): JSX.Element {
   const [open, setOpen] = useState(false)
+  const buttonRef = useRef<HTMLButtonElement>(null)
   const t = useT()
 
   const openMenu = (): void => {
@@ -85,6 +86,7 @@ export function PowerMenu({ onOpenChange }: PowerMenuProps): JSX.Element {
   return (
     <>
       <motion.button
+        ref={buttonRef}
         data-focusable
         type="button"
         aria-label={t('system.power.open')}
@@ -103,7 +105,9 @@ export function PowerMenu({ onOpenChange }: PowerMenuProps): JSX.Element {
 
       {createPortal(
         <AnimatePresence>
-          {open && <PowerMenuDialog onClose={closeMenu} />}
+          {open && (
+            <PowerMenuDialog returnFocus={buttonRef.current} onClose={closeMenu} />
+          )}
         </AnimatePresence>,
         document.body
       )}
@@ -111,8 +115,15 @@ export function PowerMenu({ onOpenChange }: PowerMenuProps): JSX.Element {
   )
 }
 
-function PowerMenuDialog({ onClose }: { onClose: () => void }): JSX.Element {
+function PowerMenuDialog({
+  returnFocus,
+  onClose
+}: {
+  returnFocus: HTMLButtonElement | null
+  onClose: () => void
+}): JSX.Element {
   const t = useT()
+  const scopeRef = useRef<HTMLDivElement>(null)
   const firstOptionRef = useRef<HTMLButtonElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
   const [pendingAction, setPendingAction] = useState<
@@ -131,20 +142,12 @@ function PowerMenuDialog({ onClose }: { onClose: () => void }): JSX.Element {
     }
   })
 
-  useEffect(() => {
-    const previousFocus = document.activeElement as HTMLElement | null
-    const frame = requestAnimationFrame(() => focusElement(firstOptionRef.current))
-    return () => {
-      cancelAnimationFrame(frame)
-      if (previousFocus?.isConnected) requestAnimationFrame(() => focusElement(previousFocus))
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!pendingAction) return
-    const frame = requestAnimationFrame(() => focusElement(cancelRef.current))
-    return () => cancelAnimationFrame(frame)
-  }, [pendingAction])
+  useFocusScope({
+    scopeRef,
+    resolveFocusTarget: () =>
+      pendingAction ? cancelRef.current : firstOptionRef.current,
+    returnFocus
+  })
 
   const selected = POWER_OPTIONS.find((option) => option.id === pendingAction)
 
@@ -167,6 +170,7 @@ function PowerMenuDialog({ onClose }: { onClose: () => void }): JSX.Element {
 
   return (
     <motion.div
+      ref={scopeRef}
       data-focus-scope="active"
       role="dialog"
       aria-modal="true"
@@ -190,13 +194,12 @@ function PowerMenuDialog({ onClose }: { onClose: () => void }): JSX.Element {
       >
         <div className="pointer-events-none absolute -right-16 -top-20 h-40 w-40 rounded-full bg-accent/10 blur-3xl" />
         <div className="relative rounded-[1.05rem] border border-white/[0.06] bg-[#10151d] p-3">
-          <AnimatePresence mode="wait" initial={false}>
+          <>
             {!selected ? (
               <motion.div
                 key="options"
                 initial={{ opacity: 0, x: -14 }}
                 animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -14 }}
                 transition={{ duration: 0.16 }}
               >
                 <div className="mb-3 flex items-start justify-between gap-3 px-1">
@@ -307,7 +310,6 @@ function PowerMenuDialog({ onClose }: { onClose: () => void }): JSX.Element {
                 key={`confirm-${selected.id}`}
                 initial={{ opacity: 0, x: 18 }}
                 animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 18 }}
                 transition={{ duration: 0.16 }}
                 className="px-1 py-1"
               >
@@ -363,7 +365,7 @@ function PowerMenuDialog({ onClose }: { onClose: () => void }): JSX.Element {
                 </div>
               </motion.div>
             )}
-          </AnimatePresence>
+          </>
         </div>
       </motion.section>
     </motion.div>

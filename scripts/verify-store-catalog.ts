@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import type { StoreProduct } from '../src/shared/ipc.ts'
 import {
   hasStoreArtwork,
-  isStoreDiscoverProductVisible
+  isStoreDiscoverProductVisible,
+  isStoreWishlistProductVisible
 } from '../src/shared/storeVisibility.ts'
 
 const featuredPreview: StoreProduct = {
@@ -56,5 +57,26 @@ assert.equal(
   true,
   'wishlist entries retain their fallback card while details load'
 )
+assert.equal(
+  isStoreWishlistProductVisible({
+    ...featuredPreview,
+    headerUrl: undefined,
+    artworkStatus: 'pending',
+    steamWishlisted: true
+  }),
+  true,
+  'Steam wishlist identities remain visible while details and artwork load'
+)
+assert.equal(
+  isStoreWishlistProductVisible({
+    ...featuredPreview,
+    headerUrl: undefined,
+    artworkStatus: 'missing',
+    orbitWishlisted: true
+  }),
+  true,
+  'explicit ORBIT wishlist entries remain visible with generated fallback art'
+)
+assert.equal(isStoreWishlistProductVisible(featuredPreview), false)
 
 console.log('Store catalog visibility verification passed.')

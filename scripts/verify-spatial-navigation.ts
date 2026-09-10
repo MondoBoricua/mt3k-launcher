@@ -35,6 +35,9 @@ class FakeElement {
   }
 
   matches(selector: string): boolean {
+    if (selector === '[data-home-game-card="true"]') {
+      return this.dataset.homeGameCard === 'true'
+    }
     if (selector === '[data-rolling-game="true"]') {
       return this.dataset.rollingGame === 'true'
     }
@@ -130,6 +133,35 @@ class FakeRollingRoot {
   }
 }
 
+class FakeFocusScope {
+  readonly offsetParent = null
+  readonly children: FakeElement[]
+
+  constructor(children: FakeElement[]) {
+    this.children = children
+  }
+
+  closest(): null {
+    return null
+  }
+
+  contains(element: unknown): boolean {
+    return this.children.includes(element as FakeElement)
+  }
+
+  getClientRects(): DOMRect[] {
+    return [domRect(0, 0, 400, 400)]
+  }
+
+  querySelector(): FakeElement | null {
+    return this.children[0] ?? null
+  }
+
+  querySelectorAll(): FakeElement[] {
+    return this.children
+  }
+}
+
 function domRect(left: number, top: number, width = 80, height = 40): DOMRect {
   return {
     x: left,
@@ -149,17 +181,24 @@ const rollingRoot = new FakeRollingRoot()
 let focusables: FakeElement[] = []
 let activeElement: FakeElement | null = null
 let rollingVisible = false
+let activeFocusScope: FakeFocusScope | null = null
+let homeJumpBack: FakeElement | null = null
+let homeBannerRevealEvents = 0
 
 const fakeDocument = {
   get activeElement(): FakeElement | null {
     return activeElement
   },
-  querySelector(selector: string): FakeTopNavRoot | FakeRollingRoot | null {
+  querySelector(selector: string): FakeTopNavRoot | FakeRollingRoot | FakeElement | null {
     if (selector === '[data-top-nav]' && topNavRoot.children.length > 0) return topNavRoot
     if (selector === '[data-home-layout="rolling"]' && rollingVisible) return rollingRoot
+    if (selector === '[data-home-jump-back="true"]') return homeJumpBack
     return null
   },
   querySelectorAll(selector: string): FakeElement[] {
+    if (selector === '[data-focus-scope="active"]') {
+      return activeFocusScope ? [activeFocusScope as unknown as FakeElement] : []
+    }
     if (selector === '[data-focused="true"]') {
       return focusables.filter((item) => item.getAttribute('data-focused') === 'true')
     }
@@ -173,11 +212,24 @@ Object.defineProperty(globalThis, 'document', {
   value: fakeDocument
 })
 
+Object.defineProperty(globalThis, 'window', {
+  configurable: true,
+  value: {
+    dispatchEvent(event: Event): boolean {
+      if (event.type === 'orbit:home-show-banners') homeBannerRevealEvents += 1
+      return true
+    }
+  }
+})
+
 function setScene(elements: FakeElement[], current: FakeElement): void {
   focusables = elements
   topNavRoot.children = elements.filter((item) => item.layer === 'top')
   rollingRoot.children = []
   rollingVisible = false
+  activeFocusScope = null
+  homeJumpBack = null
+  homeBannerRevealEvents = 0
   activeElement = current
 }
 
@@ -192,6 +244,7 @@ function setRollingScene(
   topNavRoot.children = topItems
   rollingRoot.children = [...games, ...tabs, ...shelfItems]
   rollingVisible = true
+  activeFocusScope = null
   activeElement = current
 }
 
@@ -232,6 +285,47 @@ assert.equal(
 assert.equal(activeElement, secondary)
 assert.equal(moveFocus('up'), true, 'A second fresh Up press must enter the top bar')
 assert.equal(activeElement, top)
+
+const homeBanner = new FakeElement('home-banner', 'content', domRect(80, 150, 520, 180))
+homeBanner.dataset.homeGameCard = 'true'
+homeBanner.dataset.homeJumpBack = 'true'
+const homeRowCard = new FakeElement('home-row-card', 'content', domRect(80, 430, 180, 220))
+homeRowCard.dataset.homeGameCard = 'true'
+setScene([top, homeBanner, homeRowCard], homeRowCard)
+homeJumpBack = homeBanner
+assert.equal(moveFocus('up'), true, 'Home game Up must request the banner row')
+assert.equal(homeBannerRevealEvents, 1, 'Home game Up must emit exactly one banner reveal event')
+assert.equal(
+  activeElement,
+  homeRowCard,
+  'The Home view owns focus transfer after rendering the banner row'
+)
+
+activeElement = homeBanner
+assert.equal(moveFocus('up'), true, 'Home banner Up must continue into the top navigation')
+assert.equal(
+  homeBannerRevealEvents,
+  1,
+  'An already focused Home banner must not restart the banner reveal transition'
+)
+assert.equal(activeElement, top)
+
+const dialogCancel = new FakeElement('dialog-cancel', 'content', domRect(500, 300))
+const dialogConfirm = new FakeElement('dialog-confirm', 'content', domRect(620, 300))
+setScene([top, dialogCancel, dialogConfirm], top)
+activeFocusScope = new FakeFocusScope([dialogCancel, dialogConfirm])
+assert.equal(
+  moveFocus('right'),
+  true,
+  'A fixed-position focus scope must recover controller focus from outside the dialog'
+)
+assert.equal(activeElement, dialogCancel)
+assert.equal(
+  moveFocus('left'),
+  false,
+  'Controller navigation must stop at the active dialog boundary'
+)
+assert.equal(activeElement, dialogCancel)
 
 setScene([top, secondary, contentCurrent], top)
 assert.equal(findNextFocus(top as unknown as HTMLElement, 'down'), secondary)
@@ -321,4 +415,6 @@ assert.equal(
   'Rolling shelf Up must return to the active discovery tab'
 )
 
-console.log('Spatial navigation hierarchy, Rolling track, and discovery shelf checks passed.')
+console.log(
+  'Spatial navigation hierarchy, Home banners, Rolling track, and discovery shelf checks passed.'
+)

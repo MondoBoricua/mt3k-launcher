@@ -8,6 +8,8 @@ import {
 import { useLaunchGame } from './useLaunchGame'
 import { playUiSound } from '@renderer/lib/uiAudio'
 import { openOrbitPlusSettings, useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
+import { useLibraryStore } from '@renderer/state/libraryStore'
+import { canRequestGameInstall } from '@shared/gameInstallation'
 
 export function useActivateGameCard(): (
   gameId: string,
@@ -21,6 +23,14 @@ export function useActivateGameCard(): (
     (gameId, target = 'default') => {
       if (target === 'geforce-now' && !useOrbitPlusStore.getState().hasFeature('cloud-gaming')) {
         openOrbitPlusSettings()
+        return
+      }
+      const library = useLibraryStore.getState().snapshot
+      const game =
+        library.games.find((candidate) => candidate.id === gameId) ??
+        library.providerGames.find((candidate) => candidate.id === gameId)
+      if (target === 'default' && game && canRequestGameInstall(game)) {
+        openGame(gameId)
         return
       }
       const activation = resolveGameCardActivation(primaryAction, target)

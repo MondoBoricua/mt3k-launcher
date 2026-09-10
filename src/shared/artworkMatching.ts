@@ -319,7 +319,7 @@ function preferredRegionBonus(
   const rawRegions = artworkRegions(rawRomName)
   const matchesRom = [...candidateRegions].some((region) => rawRegions.has(region))
   let score = matchesRom ? 60 : 0
-  if ((language === 'de' || language === 'es') && candidateRegions.has('europe')) score += 35
+  if ((language === 'de' || language === 'es' || language === 'ru') && candidateRegions.has('europe')) score += 35
   else if (candidateRegions.has('usa')) score += 30
   else if (candidateRegions.has('world')) score += 25
   else if (candidateRegions.has('japan')) score += 5

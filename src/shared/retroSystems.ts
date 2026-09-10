@@ -222,12 +222,26 @@ export const RETRO_SYSTEMS: readonly RetroSystemDefinition[] = [
     retroArchCores: ['pcsx2', 'play']
   },
   {
+    id: 'ps3',
+    name: 'PlayStation 3',
+    extensions: [],
+    folderAliases: ['playstation 3', 'playstation3', 'ps3'],
+    retroArchCores: []
+  },
+  {
     id: 'psp',
     name: 'PlayStation Portable',
     extensions: ['cso'],
     folderAliases: ['playstation portable', 'psp'],
     retroAchievementsConsoleId: 41,
     retroArchCores: ['ppsspp']
+  },
+  {
+    id: 'xbox360',
+    name: 'Xbox 360',
+    extensions: [],
+    folderAliases: ['xbox 360', 'xbox360', 'x360'],
+    retroArchCores: []
   },
   {
     id: 'atari2600',
@@ -361,6 +375,21 @@ function systemFromFolderHints(filePath: string): RetroSystemId | undefined {
 export function detectRetroSystemId(filePath: string): RetroSystemId | undefined {
   const normalized = filePath.replace(/\\/g, '/')
   const filename = normalized.slice(normalized.lastIndexOf('/') + 1)
+  const normalizedFilename = filename.toLocaleLowerCase('en-US')
+  const hinted = systemFromFolderHints(normalized)
+
+  // Seventh-generation disc extracts have generic executable names. Requiring
+  // both the canonical boot file and an explicit system folder prevents random
+  // PC binaries from being imported as console games.
+  if (
+    hinted === 'ps3' &&
+    normalizedFilename === 'eboot.bin' &&
+    /\/ps3_game\/usrdir\/eboot\.bin$/iu.test(normalized)
+  ) {
+    return 'ps3'
+  }
+  if (hinted === 'xbox360' && normalizedFilename === 'default.xex') return 'xbox360'
+
   const dot = filename.lastIndexOf('.')
   if (dot <= 0) return undefined
   const extension = filename.slice(dot + 1).toLocaleLowerCase('en-US')
@@ -371,7 +400,11 @@ export function detectRetroSystemId(filePath: string): RetroSystemId | undefined
   if (extension === 'cso') return 'psp'
   if (extension === 'gdi' || extension === 'cdi') return 'dreamcast'
 
-  const hinted = systemFromFolderHints(normalized)
+  // RPCS3 and Xenia can boot decrypted disc images, but not the archive and
+  // playlist containers accepted by many older-system emulators.
+  if (hinted === 'ps3' || hinted === 'xbox360') {
+    return extension === 'iso' ? hinted : undefined
+  }
   if (['7z', 'cue', 'chd', 'iso', 'm3u', 'pbp', 'zip'].includes(extension)) return hinted
   return undefined
 }
@@ -379,6 +412,19 @@ export function detectRetroSystemId(filePath: string): RetroSystemId | undefined
 export function cleanRetroGameName(filePath: string): string {
   const normalized = filePath.replace(/\\/g, '/')
   const filename = normalized.slice(normalized.lastIndexOf('/') + 1)
+  const normalizedFilename = filename.toLocaleLowerCase('en-US')
+  const segments = normalized.split('/').filter(Boolean)
+  if (
+    normalizedFilename === 'eboot.bin' &&
+    segments.length >= 4 &&
+    segments.at(-2)?.toLocaleLowerCase('en-US') === 'usrdir' &&
+    segments.at(-3)?.toLocaleLowerCase('en-US') === 'ps3_game'
+  ) {
+    return cleanRetroGameName(segments.at(-4) as string)
+  }
+  if (normalizedFilename === 'default.xex' && segments.length >= 2) {
+    return cleanRetroGameName(segments.at(-2) as string)
+  }
   const dot = filename.lastIndexOf('.')
   const base = dot > 0 ? filename.slice(0, dot) : filename
   const cleaned = base
@@ -440,6 +486,13 @@ export const RETRO_EMULATOR_DOWNLOADS: readonly RetroEmulatorDownloadDefinition[
     downloadUrl: 'https://pcsx2.net/downloads/'
   },
   {
+    id: 'rpcs3',
+    name: 'RPCS3',
+    systems: ['ps3'],
+    firmwareSystems: ['ps3'],
+    downloadUrl: 'https://rpcs3.net/download'
+  },
+  {
     id: 'dolphin',
     name: 'Dolphin',
     systems: ['gamecube', 'wii'],
@@ -459,6 +512,13 @@ export const RETRO_EMULATOR_DOWNLOADS: readonly RetroEmulatorDownloadDefinition[
     systems: ['wiiu'],
     firmwareSystems: [],
     downloadUrl: 'https://cemu.info/'
+  },
+  {
+    id: 'xenia',
+    name: 'Xenia Canary',
+    systems: ['xbox360'],
+    firmwareSystems: [],
+    downloadUrl: 'https://xenia.jp/download/'
   },
   {
     id: 'mgba',
@@ -517,7 +577,9 @@ const RECOMMENDED_MANAGED_EMULATOR: Partial<Record<RetroSystemId, string>> = {
   dreamcast: 'flycast',
   ps1: 'duckstation',
   ps2: 'pcsx2',
+  ps3: 'rpcs3',
   psp: 'ppsspp',
+  xbox360: 'xenia',
   arcade: 'mame'
 }
 
@@ -545,9 +607,11 @@ export const RETRO_LAUNCH_PROFILE_IDS = [
   'retroarch',
   'duckstation',
   'pcsx2',
+  'rpcs3',
   'dolphin',
   'ppsspp',
   'cemu',
+  'xenia',
   'mgba',
   'melonds',
   'snes9x',
@@ -581,6 +645,10 @@ export function retroDefaultLaunchArguments(game: RetroGameConfig): string[] {
   if (game.emulatorId === 'pcsx2' || game.emulatorId === 'duckstation') {
     return ['-batch', '-fullscreen', '--', game.romPath]
   }
+  if (game.emulatorId === 'rpcs3') {
+    return ['--no-gui', '--fullscreen', game.romPath]
+  }
+  if (game.emulatorId === 'xenia') return [game.romPath, '--fullscreen=true']
   if (game.emulatorId === 'ppsspp') return ['--fullscreen', game.romPath]
   if (game.emulatorId === 'mgba' || game.emulatorId === 'melonds') {
     return ['-f', game.romPath]
@@ -638,6 +706,11 @@ export function enforceRetroFullscreenArguments(
     case 'duckstation':
     case 'pcsx2':
       return ['-fullscreen', ...withoutExactArguments(safe, new Set(['-fullscreen']))]
+    case 'rpcs3':
+      return ['--fullscreen', ...withoutExactArguments(safe, new Set(['--fullscreen']))]
+    case 'xenia':
+      safe = safe.filter((argument) => !/^--fullscreen(?:=(?:true|false|0|1))?$/iu.test(argument))
+      return [...safe, '--fullscreen=true']
     case 'ppsspp':
       return ['--fullscreen', ...withoutExactArguments(safe, new Set(['--fullscreen']))]
     case 'dolphin':

@@ -6,6 +6,7 @@ interface LibraryState {
   isRefreshing: boolean
   init: () => Promise<void>
   scheduleRefresh: (delayMs?: number) => void
+  refreshStartup: () => Promise<void>
   refresh: () => Promise<void>
   applySnapshot: (snapshot: LibrarySnapshot) => void
 }
@@ -15,7 +16,20 @@ const FIRST_INTERACTIVE_REFRESH_DELAY_MS = 2_500
 let listening = false
 let initialized = false
 let refreshTimer: number | undefined
+let startupRefreshCompleted = false
+let startupRefreshPromise: Promise<void> | undefined
 let refreshPromise: Promise<void> | undefined
+let activeRefreshCount = 0
+
+function beginRefresh(set: (state: Partial<LibraryState>) => void): void {
+  activeRefreshCount += 1
+  if (activeRefreshCount === 1) set({ isRefreshing: true })
+}
+
+function endRefresh(set: (state: Partial<LibraryState>) => void): void {
+  activeRefreshCount = Math.max(0, activeRefreshCount - 1)
+  if (activeRefreshCount === 0) set({ isRefreshing: false })
+}
 
 export const useLibraryStore = create<LibraryState>((set, get) => ({
   snapshot: {
@@ -48,11 +62,35 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   },
 
   scheduleRefresh: (delayMs = FIRST_INTERACTIVE_REFRESH_DELAY_MS) => {
+    if (startupRefreshCompleted || startupRefreshPromise) return
     if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
     refreshTimer = window.setTimeout(() => {
       refreshTimer = undefined
-      void get().refresh()
+      void get().refreshStartup()
     }, Math.max(0, delayMs))
+  },
+
+  refreshStartup: async () => {
+    if (startupRefreshCompleted) return
+    if (startupRefreshPromise) return startupRefreshPromise
+    beginRefresh(set)
+    const request = (async (): Promise<void> => {
+      try {
+        const snapshot = await window.api.library.refreshStartup()
+        set({ snapshot })
+        startupRefreshCompleted = true
+      } catch (err) {
+        console.error('Startup library reconciliation failed, keeping cached snapshot', err)
+      } finally {
+        endRefresh(set)
+      }
+    })()
+    startupRefreshPromise = request
+    try {
+      await request
+    } finally {
+      if (startupRefreshPromise === request) startupRefreshPromise = undefined
+    }
   },
 
   refresh: async () => {
@@ -61,7 +99,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       refreshTimer = undefined
     }
     if (refreshPromise) return refreshPromise
-    set({ isRefreshing: true })
+    beginRefresh(set)
     const request = (async (): Promise<void> => {
       try {
         const snapshot = await window.api.library.refresh()
@@ -69,7 +107,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       } catch (err) {
         console.error('Library refresh failed, keeping cached snapshot', err)
       } finally {
-        set({ isRefreshing: false })
+        endRefresh(set)
       }
     })()
     refreshPromise = request

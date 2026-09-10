@@ -22,6 +22,7 @@ import neoGeoPocketColor from './retro-system-icons/ngpc.png'
 import pcEngine from './retro-system-icons/pce.png'
 import playStation from './retro-system-icons/ps1.png'
 import playStation2 from './retro-system-icons/ps2.png'
+import playStation3 from './retro-system-icons/ps3.svg'
 import psp from './retro-system-icons/psp.png'
 import saturn from './retro-system-icons/saturn.png'
 import sega32x from './retro-system-icons/sega32x.png'
@@ -32,6 +33,7 @@ import wii from './retro-system-icons/wii.png'
 import wiiU from './retro-system-icons/wiiu.png'
 import wonderSwan from './retro-system-icons/wonderswan.png'
 import wonderSwanColor from './retro-system-icons/wonderswancolor.png'
+import xbox360 from './retro-system-icons/xbox360.svg'
 
 export const RETRO_SYSTEM_ARTWORK: Readonly<Record<RetroSystemId, string>> = {
   arcade,
@@ -56,7 +58,9 @@ export const RETRO_SYSTEM_ARTWORK: Readonly<Record<RetroSystemId, string>> = {
   pce: pcEngine,
   ps1: playStation,
   ps2: playStation2,
+  ps3: playStation3,
   psp,
+  xbox360,
   saturn,
   sega32x,
   segacd: segaCd,

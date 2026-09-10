@@ -17,8 +17,10 @@ import {
 const expectedAssets: Readonly<Record<string, string>> = {
   duckstation: 'duckstation-windows-x64-release.zip',
   pcsx2: 'PCSX2-v2.8.0-windows-x64-Qt.7z',
+  rpcs3: 'rpcs3-v0.0.42-19924-db543e09_win64_msvc.7z',
   ppsspp: 'PPSSPP-v1.20.4-Windows-x64.zip',
   cemu: 'cemu-2.6-windows-x64.zip',
+  xenia: 'xenia_canary_windows.7z',
   mgba: 'mGBA-0.10.5-win64.7z',
   melonds: 'melonDS-1.1-windows-x86_64.zip',
   snes9x: 'snes9x-1.63-win32-x64.zip',
@@ -117,6 +119,8 @@ assert.throws(() => validateArchiveEntryPath('/absolute/outside.exe'), /Unsafe/)
 
 assert.equal(recommendedRetroEmulatorDownload('psp').id, 'ppsspp')
 assert.equal(recommendedRetroEmulatorDownload('ps2').id, 'pcsx2')
+assert.equal(recommendedRetroEmulatorDownload('ps3').id, 'rpcs3')
+assert.equal(recommendedRetroEmulatorDownload('xbox360').id, 'xenia')
 assert.equal(recommendedRetroEmulatorDownload('nes').id, 'retroarch')
 
 console.log('Retro emulator provisioning verification passed.')

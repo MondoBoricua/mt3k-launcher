@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
   ArrowDownToLine,
@@ -9,23 +9,16 @@ import {
 } from 'lucide-react'
 import type {
   LauncherDownloadActivity,
-  LauncherDownloadPhase,
-  LauncherDownloadSnapshot
+  LauncherDownloadPhase
 } from '@shared/ipc'
 import {
   clampLauncherProgress,
-  orderedLauncherDownloads,
-  shouldApplyLauncherDownloadSnapshot
+  orderedLauncherDownloads
 } from '@shared/launcherDownloads'
 import { useT } from '@renderer/i18n/useT'
 import type { TranslationKey } from '@renderer/i18n/translations'
+import { useDownloadStore } from '@renderer/state/downloadStore'
 import { GameImage } from './GameImage'
-
-const EMPTY_SNAPSHOT: LauncherDownloadSnapshot = {
-  revision: -1,
-  updatedAt: 0,
-  activities: []
-}
 
 const PHASE_KEYS: Record<LauncherDownloadPhase, TranslationKey> = {
   downloading: 'downloads.phase.downloading',
@@ -54,28 +47,11 @@ function PhaseIcon({
 }
 
 export function DownloadActivityIsland(): JSX.Element {
-  const [snapshot, setSnapshot] = useState<LauncherDownloadSnapshot>(EMPTY_SNAPSHOT)
-  const latestRevision = useRef(EMPTY_SNAPSHOT.revision)
+  const snapshot = useDownloadStore((state) => state.snapshot)
+  const centerOpen = useDownloadStore((state) => state.centerOpen)
+  const openCenter = useDownloadStore((state) => state.openCenter)
   const reduceMotion = Boolean(useReducedMotion())
   const t = useT()
-
-  useEffect(() => {
-    let mounted = true
-    const applySnapshot = (incoming: LauncherDownloadSnapshot): void => {
-      if (!mounted || incoming.revision < latestRevision.current) return
-      setSnapshot((current) => {
-        if (!shouldApplyLauncherDownloadSnapshot(current, incoming)) return current
-        latestRevision.current = incoming.revision
-        return incoming
-      })
-    }
-    const unsubscribe = window.api.downloads.onUpdated(applySnapshot)
-    void window.api.downloads.get().then(applySnapshot).catch(() => undefined)
-    return () => {
-      mounted = false
-      unsubscribe()
-    }
-  }, [])
 
   const activities = useMemo(
     () => orderedLauncherDownloads(snapshot.activities),
@@ -117,8 +93,14 @@ export function DownloadActivityIsland(): JSX.Element {
       </span>
       <AnimatePresence initial={false}>
         {primary && (
-          <motion.section
+          <motion.button
             key="launcher-download-island"
+            data-focusable
+            type="button"
+            onClick={() => openCenter(primary.id)}
+            aria-label={liveStatus}
+            aria-expanded={centerOpen}
+            aria-controls="orbit-download-center"
             initial={reduceMotion ? false : { maxWidth: 0, opacity: 0, scale: 0.78 }}
             animate={{ maxWidth: 352, opacity: 1, scale: 1 }}
             exit={
@@ -135,8 +117,7 @@ export function DownloadActivityIsland(): JSX.Element {
                     scale: { type: 'spring', stiffness: 420, damping: 27, mass: 0.72 }
                   }
             }
-            aria-hidden="true"
-            className="pointer-events-none relative flex h-9 w-[min(22rem,36vw)] shrink-0 origin-center items-center overflow-hidden rounded-full"
+            className="relative flex h-9 w-[min(22rem,36vw)] shrink-0 origin-center items-center overflow-hidden rounded-full text-left transition-shadow data-[focused=true]:shadow-[0_0_0_2px_rgb(var(--color-accent)/0.5)]"
           >
             <div className="relative h-8 w-full min-w-[11rem] overflow-hidden rounded-full bg-white/[0.065] text-[11px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]">
               {primary.gameId && (
@@ -227,7 +208,7 @@ export function DownloadActivityIsland(): JSX.Element {
                 )}
               </div>
             </div>
-          </motion.section>
+          </motion.button>
         )}
       </AnimatePresence>
     </>

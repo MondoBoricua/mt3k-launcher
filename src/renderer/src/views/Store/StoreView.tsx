@@ -41,7 +41,8 @@ import type {
 import { latestLibraryActivity } from '@shared/libraryTime'
 import {
   hasStoreArtwork,
-  isStoreDiscoverProductVisible
+  isStoreDiscoverProductVisible,
+  isStoreWishlistProductVisible
 } from '@shared/storeVisibility'
 
 const STORE_PAGES: Array<{ id: StorePage; key: TranslationKey; icon: typeof Sparkles }> = [
@@ -204,7 +205,6 @@ export function StoreView(): JSX.Element {
     const sourceProducts = normalizedQuery ? searchResults : snapshot.products
     const matches = sourceProducts.filter(
       (product) =>
-        product.artworkStatus !== 'missing' &&
         (!normalizedQuery ||
           product.name.toLocaleLowerCase().includes(normalizedQuery) ||
           product.genres?.some((genre) => genre.toLocaleLowerCase().includes(normalizedQuery)))
@@ -213,6 +213,7 @@ export function StoreView(): JSX.Element {
       return matches
         .filter(
           (product) =>
+            product.artworkStatus !== 'missing' &&
             product.artworkStatus === 'available' &&
             hasStoreArtwork(product)
         )
@@ -220,12 +221,7 @@ export function StoreView(): JSX.Element {
     }
     if (page === 'wishlist') {
       return matches
-        .filter(
-          (product) =>
-            (product.steamWishlisted || product.orbitWishlisted) &&
-            product.artworkStatus === 'available' &&
-            hasStoreArtwork(product)
-        )
+        .filter(isStoreWishlistProductVisible)
         .sort(
           (left, right) =>
             Number(right.orbitWishlisted) - Number(left.orbitWishlisted) ||
@@ -236,6 +232,7 @@ export function StoreView(): JSX.Element {
       return matches
         .filter(
           (product) =>
+            product.artworkStatus !== 'missing' &&
             !ownedSteamAppIds.has(product.steamAppId ?? -1) &&
             product.artworkStatus === 'available' &&
             (product.steamWishlisted || product.orbitWishlisted || product.discoverEligible !== false) &&

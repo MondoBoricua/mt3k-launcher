@@ -1,4 +1,4 @@
-import { languageCountry } from '@shared/language'
+import { languageCountry, languageLocale } from '@shared/language'
 import { EventEmitter } from 'node:events'
 import type {
   LibraryDetectionMethod,
@@ -22,8 +22,6 @@ import {
   type EpicMetadataResult,
   type EpicMetadataSyncTarget
 } from './epicMetadata'
-
-const EPIC_LOCALE: Record<string, string> = { en: 'en-US', de: 'de-DE', es: 'es-ES' }
 
 interface MetadataUpdate {
   metadata: EpicMetadataResult
@@ -232,7 +230,7 @@ export class EpicLibraryService
 
     if (!account) {
       const client = new EpicApiClient(auth)
-      epicMetadataService.syncLibrary([], EPIC_LOCALE[settingsStore.get('language')] ?? 'en-US', 'US', client)
+      epicMetadataService.syncLibrary([], languageLocale(settingsStore.get('language')), 'US', client)
       syncCoordinator.complete('library', 'epic-local', 'epic')
       this.setProviderStatus({
         state: 'local-only',
@@ -290,7 +288,7 @@ export class EpicLibraryService
       this.unresolvedMetadataIds = new Set(
         [...assets.keys()].filter((id) => !targetIds.has(id))
       )
-      const locale = EPIC_LOCALE[settingsStore.get('language')] ?? 'en-US'
+      const locale = languageLocale(settingsStore.get('language'))
       const country = languageCountry(settingsStore.get('language'))
       epicMetadataService.syncLibrary(targets, locale, country, client)
       syncCoordinator.progress('library', 3, 3, 'epic', 'epic')
@@ -315,7 +313,7 @@ export class EpicLibraryService
     } catch {
       // Keep both the installed delta and the last good online snapshot. An API
       // outage must never turn a populated library into an empty one.
-      epicMetadataService.syncLibrary([], EPIC_LOCALE[settingsStore.get('language')] ?? 'en-US', 'US', client)
+      epicMetadataService.syncLibrary([], languageLocale(settingsStore.get('language')), 'US', client)
       syncCoordinator.fail('library', 'epic-cache', 'epic')
       this.pendingMetadataIds.clear()
       this.unresolvedMetadataIds.clear()

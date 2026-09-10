@@ -294,6 +294,7 @@ export class GeForceNowCatalogService extends EventEmitter {
       geforceNowTitle: indexed.game.title,
       cmsId: indexed.game.cmsId,
       variantId: indexed.variant.id,
+      shortName: indexed.variant.shortName,
       appStore: indexed.variant.appStore,
       storeId: indexed.variant.storeId,
       boxArtUrl: indexed.game.boxArtUrl,

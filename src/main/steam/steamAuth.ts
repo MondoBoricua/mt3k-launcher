@@ -4,6 +4,8 @@ import Store from 'electron-store'
 import type { SteamAccount, SteamLoginStatus } from '@shared/ipc'
 import { t } from '../i18n'
 import { fetchDynamicStoreData, getSteamUserToken } from './steamWebService'
+import type { SteamUserToken } from './steamWebService'
+import { parseSteamUserTokenFromConfigAttributes } from './steamWebParsers'
 
 const SESSION_PARTITION = 'persist:orbit-steam-login'
 const CHROME_USER_AGENT =
@@ -11,6 +13,7 @@ const CHROME_USER_AGENT =
 
 const PROFILE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const PROFILE_FAILURE_CACHE_AGE_MS = 5 * 60 * 1000
+const TOKEN_PAGE_TIMEOUT_MS = 20_000
 
 const accountCache = new Store<{ account?: SteamAccount; profileUpdatedAt?: number }>({
   name: 'orbit-steam-account'
@@ -18,6 +21,21 @@ const accountCache = new Store<{ account?: SteamAccount; profileUpdatedAt?: numb
 
 function getLoginSession(): Electron.Session {
   return session.fromPartition(SESSION_PARTITION)
+}
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+        timer.unref()
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 async function readAllCookies(): Promise<Cookie[]> {
@@ -192,6 +210,65 @@ export class SteamAuthManager extends EventEmitter {
   /** Executes a request inside the same persistent Chromium session as Steam's login page. */
   async fetchAuthenticated(url: string | URL, init?: RequestInit): Promise<Response> {
     return getLoginSession().fetch(url.toString(), { ...init, credentials: 'include' })
+  }
+
+  /**
+   * Resolves Steam's short-lived library token. The fast HTTP path handles the
+   * legacy/server-rendered page; the hidden renderer mirrors Playnite's
+   * offscreen WebView when Steam only exposes application_config after load.
+   */
+  async getLibraryToken(expectedSteamId: string): Promise<SteamUserToken> {
+    try {
+      return await getSteamUserToken(expectedSteamId, (url, init) =>
+        this.fetchAuthenticated(url, init)
+      )
+    } catch {
+      // Continue with the rendered Store page below.
+    }
+
+    const win = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        partition: SESSION_PARTITION,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        backgroundThrottling: false
+      }
+    })
+    win.webContents.setUserAgent(CHROME_USER_AGENT)
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    try {
+      await withTimeout(
+        win.loadURL('https://store.steampowered.com/explore/'),
+        TOKEN_PAGE_TIMEOUT_MS,
+        'Steam store token page timed out'
+      )
+      if (win.webContents.getURL().includes('/login')) {
+        throw new Error('Steam store session unavailable')
+      }
+      const attributes = (await withTimeout(
+        win.webContents.executeJavaScript(`(() => {
+          const config = document.getElementById('application_config')
+          return config ? {
+            userInfo: config.getAttribute('data-userinfo'),
+            storeConfig: config.getAttribute('data-store_user_config')
+          } : null
+        })()`),
+        5_000,
+        'Steam store token extraction timed out'
+      )) as { userInfo?: string; storeConfig?: string } | null
+      const token = attributes
+        ? parseSteamUserTokenFromConfigAttributes(attributes.userInfo, attributes.storeConfig)
+        : null
+      if (!token) throw new Error('Steam web access token was not present')
+      if (token.steamId !== expectedSteamId) {
+        throw new Error('Steam web session belongs to another account')
+      }
+      return token
+    } finally {
+      if (!win.isDestroyed()) win.destroy()
+    }
   }
 
   async startLogin(onStatus: (status: SteamLoginStatus) => void, parent?: BrowserWindow): Promise<void> {

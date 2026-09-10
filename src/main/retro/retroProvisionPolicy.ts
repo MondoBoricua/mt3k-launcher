@@ -57,6 +57,11 @@ export const RETRO_EMULATOR_PROVISIONERS: Readonly<Record<string, RetroEmulatorP
     repository: 'PCSX2/pcsx2',
     assetPattern: /^pcsx2-v[\w.-]+-windows-x64-Qt\.7z$/iu
   },
+  rpcs3: {
+    kind: 'github-release',
+    repository: 'RPCS3/rpcs3-binaries-win',
+    assetPattern: /^rpcs3-v[\w.-]+_win64(?:_msvc)?\.7z$/iu
+  },
   dolphin: {
     kind: 'dolphin-stable',
     repository: 'dolphin-emu/dolphin',
@@ -72,6 +77,11 @@ export const RETRO_EMULATOR_PROVISIONERS: Readonly<Record<string, RetroEmulatorP
     kind: 'github-release',
     repository: 'cemu-project/Cemu',
     assetPattern: /^cemu-[\w.-]+-windows-x64\.zip$/iu
+  },
+  xenia: {
+    kind: 'github-release',
+    repository: 'xenia-canary/xenia-canary',
+    assetPattern: /^xenia_canary_windows\.7z$/iu
   },
   mgba: {
     kind: 'github-release',
@@ -114,9 +124,11 @@ export const RETRO_EMULATOR_EXECUTABLES: Readonly<Record<string, readonly string
     'duckstation-qt.exe'
   ],
   pcsx2: ['pcsx2-qt.exe', 'pcsx2.exe'],
+  rpcs3: ['rpcs3.exe'],
   dolphin: ['Dolphin.exe'],
   ppsspp: ['PPSSPPWindows64.exe', 'PPSSPPWindows.exe'],
   cemu: ['Cemu.exe'],
+  xenia: ['xenia_canary.exe', 'xenia-canary.exe', 'xenia.exe'],
   mgba: ['mGBA.exe'],
   melonds: ['melonDS.exe'],
   snes9x: ['snes9x-x64.exe', 'snes9x.exe'],

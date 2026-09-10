@@ -12,10 +12,16 @@ import type {
   CustomApplicationCommitInput,
   CustomApplicationDraft,
   CustomApplicationUpdateInput,
+  GeForceNowLibraryMatch,
   OrbitApplication,
   OrbitApplicationSnapshot
 } from '@shared/ipc'
-import { GEFORCE_NOW_APPLICATION_ID } from '@shared/geforceNow'
+import {
+  GEFORCE_NOW_APPLICATION_ID,
+  createGeForceNowDeepLink,
+  createGeForceNowNativeLaunchArgument,
+  normalizeGeForceNowLaunchMode
+} from '@shared/geforceNow'
 import { orbitPlusService } from './orbitPlus/orbitPlusService'
 import {
   normalizeCustomLaunchArguments,
@@ -895,6 +901,48 @@ class ApplicationService {
     )
     this.snapshot = null
     return this.getSnapshot(true)
+  }
+
+  async isGeForceNowNativeAvailable(): Promise<boolean> {
+    return Boolean(await this.geForceNowStreamerPath(true))
+  }
+
+  private async geForceNowStreamerPath(force = false): Promise<string | undefined> {
+    if (process.platform !== 'win32') return undefined
+    const snapshot = await this.getSnapshot(force)
+    const installed = snapshot.applications.some(
+      (application) => application.id === GEFORCE_NOW_APPLICATION_ID &&
+        application.target === 'native' && application.available
+    )
+    const target = this.nativeTargets.get(GEFORCE_NOW_APPLICATION_ID)
+    if (!installed || !target || !isExecutablePath(target.executablePath) ||
+        basename(target.executablePath).toLowerCase() !== 'geforcenow.exe' ||
+        !existsSync(target.executablePath)) return undefined
+    return firstExistingPath([
+      join(dirname(target.executablePath), 'GeForceNOWStreamer.exe'),
+      join(dirname(target.executablePath), 'CEF', 'GeForceNOWStreamer.exe')
+    ])
+  }
+
+  async launchGeForceNowGame(
+    match: GeForceNowLibraryMatch,
+    mainWindow: BrowserWindow,
+    onNativeLaunch?: () => void
+  ): Promise<void> {
+    orbitPlusService.requireFeature('cloud-gaming')
+    if (normalizeGeForceNowLaunchMode(settingsStore.get('geForceNowLaunchMode')) === 'native') {
+      const executable = await this.geForceNowStreamerPath()
+      orbitPlusService.requireFeature('cloud-gaming')
+      if (executable) {
+        const argument = createGeForceNowNativeLaunchArgument(match)
+        onNativeLaunch?.()
+        await launchDetached(executable, [argument])
+        if (!mainWindow.isDestroyed()) mainWindow.minimize()
+        return
+      }
+    }
+    // Recheck installation at launch; a removed app must not strand the library.
+    await geForceNowWebService.launch(mainWindow, createGeForceNowDeepLink(match.geforceNowGameId))
   }
 
   async launch(applicationIdValue: unknown, mainWindow: BrowserWindow): Promise<ApplicationLaunchResult> {

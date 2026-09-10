@@ -23,6 +23,7 @@ import {
 } from './orbitBackgroundServiceSuspension'
 import { scheduleBackgroundAgentRecovery } from './orbitBackgroundServiceRecovery'
 import { safeExternalHttpsUrl } from '@shared/externalUrl'
+import { YOUTUBE_TRAILER_APP_REFERRER } from '@shared/gameTrailer'
 import {
   getOrbitBackgroundServiceLoginItemInstallation
 } from './orbitBackgroundServiceLoginItem'
@@ -212,6 +213,21 @@ function createWindow(registerIpcHandlers: (window: BrowserWindow) => void): Bro
     return { action: 'deny' }
   })
 
+  // Local desktop documents do not emit an HTTPS Referer by themselves. YouTube
+  // requires an app identity for embedded playback; scope it to the one trusted
+  // iframe route and use ORBIT's registered Windows/application identifier.
+  mainWindow.webContents.session.webRequest.onBeforeSendHeaders(
+    { urls: ['https://www.youtube-nocookie.com/embed/*'] },
+    ({ requestHeaders }, callback) => {
+      callback({
+        requestHeaders: {
+          ...requestHeaders,
+          Referer: YOUTUBE_TRAILER_APP_REFERRER
+        }
+      })
+    }
+  )
+
   // F11 toggles fullscreen for dev convenience — Escape stays reserved for in-app "back" navigation.
   mainWindow.webContents.on('before-input-event', (_event, input) => {
     if (input.type === 'keyDown' && input.key === 'F11') {
@@ -240,7 +256,8 @@ async function startOrbitUi(): Promise<void> {
     { homeWallpaperService },
     { launcherMusicService },
     { customUiAudioService },
-    { handleTitleMusicMediaRequest }
+    { handleTitleMusicMediaRequest },
+    { SteamControllerInputService }
   ] =
     await Promise.all([
       import('./ipcHandlers'),
@@ -251,7 +268,8 @@ async function startOrbitUi(): Promise<void> {
       import('./homeWallpaperService'),
       import('./launcherMusicService'),
       import('./customUiAudioService'),
-      import('./titleMusic/titleMusicProtocol')
+      import('./titleMusic/titleMusicProtocol'),
+      import('./steamControllerInput')
     ])
 
   // The AppX package already supplies the shell identity used by Xbox Mode.
@@ -285,6 +303,9 @@ async function startOrbitUi(): Promise<void> {
   })
 
   const mainWindow = createWindow(registerIpcHandlers)
+  const steamControllerInput = new SteamControllerInputService(mainWindow)
+  steamControllerInput.start()
+  mainWindow.once('closed', () => steamControllerInput.dispose())
   const closeCommandServer = await startOrbitAppCommandServer(mainWindow)
   app.once('before-quit', () => void closeCommandServer())
 

@@ -1,8 +1,18 @@
 import { isLanguage } from '@shared/language'
-import { app, ipcMain, shell, type BrowserWindow } from 'electron'
+import { app, clipboard, ipcMain, shell, type BrowserWindow } from 'electron'
 import { spawn } from 'node:child_process'
 import { isTextScale } from '@shared/textScale'
 import { safeExternalHttpsUrl } from '@shared/externalUrl'
+import {
+  isGameMediaLinkKind,
+  normalizeMediaSearchQuery,
+  normalizePastedMediaLink
+} from '@shared/mediaLinkSearch'
+import {
+  achievementGuideSearchQuery,
+  achievementGuideTrailer,
+  type AchievementGuideResult
+} from '@shared/achievementGuide'
 import {
   isGameTitleMusicDelay,
   isGameTitleMusicFade,
@@ -27,9 +37,11 @@ import {
   HARDWARE_CONTROL_HOLD_SECONDS,
   HOME_BACKDROP_MODES,
   HOME_BACKDROP_MOTIONS,
+  isHomeLayoutId,
   FRIENDS_PROVIDERS,
   IPC,
   isCornerStyleId,
+  isOrbitPlusHomeLayoutId,
   isOrbitPlusThemeId,
   isThemeId,
   LIBRARY_GRID_COLUMN_OPTIONS,
@@ -52,6 +64,7 @@ import {
   type ImageOrientation,
   type ImageUpdate,
   type LauncherDownloadActivity,
+  type LauncherDownloadControlAction,
   type LibraryGame,
   type LibrarySnapshot,
   type OrbitBackgroundServiceAction,
@@ -80,7 +93,11 @@ import { playStationAuthManager } from './playstation/playstationAuth'
 import { playStationRemotePlayService } from './playstation/remotePlay'
 import { libraryService } from './library/libraryService'
 import { GameSessionManager } from './gameSessionManager'
-import { launchGame } from './gameLauncher'
+import {
+  launchGame,
+  requestGameInstall,
+  requestGameUninstall
+} from './gameLauncher'
 import { artworkService, resolveImage } from './imageCache'
 import { t } from './i18n'
 import { syncCoordinator } from './sync/syncCoordinator'
@@ -99,6 +116,7 @@ import { customUiAudioService } from './customUiAudioService'
 import { systemUpdateService } from './systemUpdateService'
 import { SystemStatusService } from './systemStatusService'
 import { launcherDownloadMonitor } from './downloads/launcherDownloadMonitor'
+import { controlLauncherDownload } from './downloads/launcherDownloadControl'
 import { AppUpdateService, launcherHasActiveDownload } from './appUpdateService'
 import { friendsService } from './friendsService'
 import {
@@ -106,7 +124,7 @@ import {
   parseCustomLaunchArguments
 } from './customLaunchArguments'
 import { RETRO_SYSTEMS } from '@shared/retroSystems'
-import { createGeForceNowDeepLink } from '@shared/geforceNow'
+import { isGeForceNowLaunchMode } from '@shared/geforceNow'
 import { applicationService } from './applicationService'
 import { netflixMediaService } from './netflixMediaService'
 import { retroAchievementsCredentials } from './retro/retroAchievementsCredentials'
@@ -119,6 +137,8 @@ import { geForceNowWebService } from './geforceNow/geforceNowWebService'
 import { LibraryRefreshScheduler } from './library/libraryRefreshScheduler'
 import { orbitPlusService } from './orbitPlus/orbitPlusService'
 import { validateGameMetadataUpdate } from './library/gameMetadataInput'
+import { runSystemPowerAction } from './systemPower'
+import { canRequestGameInstall } from '@shared/gameInstallation'
 
 const SYSTEM_POWER_ACTIONS: readonly SystemPowerAction[] = ['sleep', 'restart', 'shutdown']
 const SYSTEM_SETTINGS_TARGETS: Record<SystemSettingsTarget, string> = {
@@ -128,6 +148,12 @@ const SYSTEM_SETTINGS_TARGETS: Record<SystemSettingsTarget, string> = {
   bluetooth: 'ms-settings:bluetooth'
 }
 const APP_CONTROL_ACTIONS: readonly AppControlAction[] = ['relaunch', 'quit']
+const LAUNCHER_DOWNLOAD_CONTROL_ACTIONS: readonly LauncherDownloadControlAction[] = [
+  'pause',
+  'resume',
+  'cancel',
+  'open-provider'
+]
 const BACKGROUND_SERVICE_ACTIONS: readonly OrbitBackgroundServiceAction[] = [
   'install',
   'repair',
@@ -271,11 +297,17 @@ function validateSettingsPartial(value: unknown): asserts value is Partial<Orbit
   if ('textScale' in partial && !isTextScale(partial.textScale)) {
     throw new Error('Invalid text scale')
   }
+  if ('geForceNowLaunchMode' in partial && !isGeForceNowLaunchMode(partial.geForceNowLaunchMode)) {
+    throw new Error('Invalid GeForce NOW launch mode')
+  }
   if ('theme' in partial && !isThemeId(partial.theme)) {
     throw new Error('Invalid theme')
   }
   if ('cornerStyle' in partial && !isCornerStyleId(partial.cornerStyle)) {
     throw new Error('Invalid corner style')
+  }
+  if ('homeLayout' in partial && !isHomeLayoutId(partial.homeLayout)) {
+    throw new Error('Invalid home layout')
   }
   if ('steamGridDbApiKey' in partial) {
     throw new Error('SteamGridDB credentials require the secure credential API')
@@ -658,38 +690,6 @@ function findArtworkGame(gameId: string): LibraryGame | null {
   }
 }
 
-function runSystemPowerAction(action: SystemPowerAction): Promise<void> {
-  if (process.platform !== 'win32') {
-    throw new Error('System power controls are currently available on Windows only')
-  }
-
-  const command = action === 'sleep' ? 'powershell.exe' : 'shutdown.exe'
-  const args =
-    action === 'sleep'
-      ? [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          'Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState([System.Windows.Forms.PowerState]::Suspend, $false, $false)'
-        ]
-      : action === 'restart'
-        ? ['/r', '/t', '0']
-        : ['/s', '/t', '0']
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true
-    })
-    child.once('error', reject)
-    child.once('spawn', () => {
-      child.unref()
-      resolve()
-    })
-  })
-}
-
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   const mainWindowDisposers = new Set<() => void>()
   const disposeWithMainWindow = (dispose: () => void): void => {
@@ -707,7 +707,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
   app.once('before-quit', () => applicationService.dispose())
   app.once('before-quit', () => geForceNowCatalogService.dispose())
-  disposeWithMainWindow(() => orbitPlusService.cancelPatreonConnection())
+  app.once('before-quit', () => libraryService.dispose())
+  disposeWithMainWindow(() => orbitPlusService.dispose())
   const sendSteamAccountUpdate = (account: SteamAccount): void => {
     if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
     mainWindow.webContents.send(IPC.steamAccountUpdated, account)
@@ -738,7 +739,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   disposeWithMainWindow(() => libraryRefreshScheduler.dispose())
   const gameSessionManager = new GameSessionManager(mainWindow, {
     getLibraryGames: () => libraryService.getSnapshot().games,
-    onGameConfirmed: (game, detectedAt) => libraryService.markGameStarted(game.id, detectedAt),
+    getGeForceNowMatches: () => currentGeForceNowSnapshot().matches,
+    onGameConfirmed: (game, detectedAt, source) => libraryService.markGameStarted(game.id, detectedAt, source),
     onSessionCompleted: (game, session) => {
       const result = libraryService.recordGameSession(
         game.id,
@@ -925,6 +927,37 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
 
   ipcMain.handle(IPC.launcherDownloadsGet, () => launcherDownloadMonitor.getSnapshot())
+  ipcMain.handle(
+    IPC.launcherDownloadsControl,
+    async (_event, activityIdValue: unknown, actionValue: unknown) => {
+      const activityId = validatedShortString(
+        activityIdValue,
+        'launcher download activity ID',
+        768
+      )
+      if (
+        !LAUNCHER_DOWNLOAD_CONTROL_ACTIONS.includes(
+          actionValue as LauncherDownloadControlAction
+        )
+      ) {
+        throw new Error('Invalid launcher download action')
+      }
+      const action = actionValue as LauncherDownloadControlAction
+      const activity = launcherDownloadMonitor.getActivity(activityId)
+      if (!activity) throw new Error('Launcher download is no longer active')
+      const result = await controlLauncherDownload(activity, action)
+      if (result.state === 'provider-opened') {
+        libraryRefreshScheduler.expectLauncherReturn(`launcher:${activity.provider}`)
+      }
+      if (action === 'cancel') {
+        libraryRefreshScheduler.request({
+          provider: activity.provider,
+          providerGameId: activity.providerGameId
+        })
+      }
+      return result
+    }
+  )
   ipcMain.handle(IPC.settingsGet, (): OrbitSettings => publicSettingsSnapshot())
 
   ipcMain.handle(IPC.profileAvatarGetCustom, () => profileAvatarService.resolve())
@@ -975,6 +1008,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
     if (
       ((partial.theme !== undefined && isOrbitPlusThemeId(partial.theme)) ||
+        (partial.homeLayout !== undefined && isOrbitPlusHomeLayoutId(partial.homeLayout)) ||
         (partial.cornerStyle !== undefined && partial.cornerStyle !== 'theme')) &&
       !orbitPlusService.hasFeature('premium-appearance')
     ) {
@@ -1010,7 +1044,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
 
   ipcMain.handle(IPC.orbitPlusGet, () => orbitPlusService.restore())
-  ipcMain.handle(IPC.orbitPlusRefresh, () => orbitPlusService.refresh())
+  ipcMain.handle(IPC.orbitPlusRefresh, (_event, force: unknown) =>
+    orbitPlusService.refresh(force)
+  )
   ipcMain.handle(IPC.orbitPlusPatreonConnect, () => {
     const sendStatus = (status: OrbitPlusConnectionStatus): void => {
       if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
@@ -1020,6 +1056,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
   ipcMain.handle(IPC.orbitPlusPatreonCancel, () =>
     orbitPlusService.cancelPatreonConnection()
+  )
+  ipcMain.handle(IPC.orbitPlusCheckoutOpen, (_event, plan: unknown) =>
+    orbitPlusService.openCheckout(plan)
+  )
+  ipcMain.handle(IPC.orbitPlusLicenseActivate, (_event, key: unknown) =>
+    orbitPlusService.activateLicense(key)
+  )
+  ipcMain.handle(IPC.orbitPlusLicenseDeactivate, () =>
+    orbitPlusService.deactivateLicense()
   )
   ipcMain.handle(IPC.orbitPlusOwnerTestSet, (_event, enabled: unknown) =>
     orbitPlusService.setOwnerTestAccess(enabled)
@@ -1091,11 +1136,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     await geForceNowCatalogService.refresh()
     const match = geForceNowCatalogService.matchGame(game)
     if (!match) throw new Error('Game is not available on GeForce NOW')
-    await geForceNowWebService.launch(
-      mainWindow,
-      createGeForceNowDeepLink(match.geforceNowGameId)
-    )
+    await gameSessionManager.startGeForceNow(game, async () => {
+      let cancelTracking: (() => void) | undefined
+      try {
+        await applicationService.launchGeForceNowGame(match, mainWindow, () => {
+          cancelTracking = gameSessionManager.expectGeForceNowGame(game, match)
+        })
+      } catch (error) {
+        cancelTracking?.()
+        throw error
+      }
+    })
   })
+  ipcMain.handle(IPC.geforceNowNativeAvailable, () => applicationService.isGeForceNowNativeAvailable())
   ipcMain.handle(IPC.geforceNowOpenBrowser, () => geForceNowWebService.launchInBrowser())
   ipcMain.on(IPC.mediaKeyboardUpdate, (event, value: unknown) =>
     netflixMediaService.handleKeyboardUpdate(event.sender, value)
@@ -1271,6 +1324,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(IPC.libraryStatsGet, () => libraryService.getStats())
 
+  ipcMain.handle(IPC.libraryStartupRefresh, () => libraryService.refreshStartup())
+
   ipcMain.handle(IPC.libraryRefresh, async () => {
     return libraryService.refresh()
   })
@@ -1320,6 +1375,30 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       validatedShortString(gameIdValue, 'metadata sync game ID')
     )
   )
+
+  ipcMain.handle(IPC.libraryGameMetadataMediaSearch, async (
+    _e,
+    gameIdValue: unknown,
+    kindValue: unknown,
+    queryValue: unknown
+  ) => {
+    const gameId = validatedShortString(gameIdValue, 'metadata media search game ID')
+    if (!libraryService.getGame(gameId)) throw new Error('Game is not available')
+    if (!isGameMediaLinkKind(kindValue)) throw new Error('Invalid metadata media kind')
+    const query = normalizeMediaSearchQuery(queryValue)
+    if (!query) throw new Error('Invalid metadata media search query')
+    try {
+      const { searchYouTubeMedia } = await import('./titleMusic/gameTitleMusicService')
+      return await searchYouTubeMedia(query, settingsStore.get('language'))
+    } catch {
+      return { state: 'unavailable', query, options: [] }
+    }
+  })
+
+  ipcMain.handle(IPC.libraryGameMetadataMediaPaste, (_e, kindValue: unknown) => {
+    if (!isGameMediaLinkKind(kindValue)) throw new Error('Invalid metadata media kind')
+    return normalizePastedMediaLink(clipboard.readText(), kindValue)
+  })
 
   ipcMain.handle(IPC.xboxGetConnection, () => xboxAuthManager.restoreSession())
 
@@ -1450,10 +1529,43 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     )
   })
 
-  ipcMain.handle(IPC.gameLaunch, async (_e, gameId: string) => {
+  ipcMain.handle(IPC.gameInstall, async (_event, gameIdValue: unknown) => {
+    const gameId = validatedShortString(gameIdValue, 'game install ID')
+    const game = libraryService.getGame(gameId)
+    if (!game) throw new Error('Game is not available')
+    const state = await requestGameInstall(game)
+    if (state === 'provider-opened') {
+      libraryRefreshScheduler.expectLauncherReturn(`launcher:${game.provider}`)
+    }
+  })
+
+  ipcMain.handle(IPC.gameUninstall, async (_event, gameIdValue: unknown) => {
+    const gameId = validatedShortString(gameIdValue, 'game uninstall ID')
+    const game = libraryService.getGame(gameId)
+    if (!game) throw new Error('Game is not available')
+    const launchStatus = gameSessionManager.getStatus()
+    if (launchStatus.gameId === gameId && launchStatus.phase !== 'idle') {
+      throw new Error('A running game cannot be uninstalled')
+    }
+    const state = await requestGameUninstall(game)
+    if (state === 'provider-opened') {
+      libraryRefreshScheduler.expectLauncherReturn(`launcher:${game.provider}`)
+      return libraryService.getSnapshot()
+    }
+    if (game.provider !== 'xbox') throw new Error('Invalid completed uninstall provider')
+    return libraryService.refreshInstalledProviders([
+      { provider: game.provider, providerGameId: game.providerGameId }
+    ])
+  })
+
+  ipcMain.handle(IPC.gameLaunch, async (_e, gameIdValue: unknown) => {
+    const gameId = validatedShortString(gameIdValue, 'game launch ID')
     const game = libraryService.getGame(gameId)
     if (!game) throw new Error('Game is not available')
     if (!game.installed) {
+      if (canRequestGameInstall(game)) {
+        throw new Error('Game installation requires confirmation')
+      }
       await launchGame(game)
       return
     }
@@ -1486,6 +1598,43 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.gameAchievementsResolve, async (_e, gameId: string, force?: unknown) => {
     return libraryService.resolveAchievements(gameId, force === true)
   })
+  ipcMain.handle(
+    IPC.gameAchievementGuideResolve,
+    async (_e, gameIdValue: unknown, achievementIdValue: unknown): Promise<AchievementGuideResult> => {
+      const gameId = validatedShortString(gameIdValue, 'achievement guide game ID')
+      const achievementId = validatedShortString(
+        achievementIdValue,
+        'achievement guide achievement ID'
+      )
+      if (!orbitPlusService.hasFeature('achievement-guides')) {
+        return { state: 'locked', achievementId }
+      }
+
+      const game = libraryService.getGame(gameId)
+      if (!game) throw new Error('Game is not available')
+      const snapshot = achievementService.get(gameId)
+      const achievement = snapshot?.state === 'available'
+        ? snapshot.achievements.find((candidate) => candidate.id === achievementId)
+        : undefined
+      if (!achievement) throw new Error('Achievement is not available')
+
+      const query = achievementGuideSearchQuery(game.name, achievement.name)
+      if (!query) return { state: 'unavailable', achievementId }
+      try {
+        const { searchYouTubeMedia } = await import('./titleMusic/gameTitleMusicService')
+        const result = await searchYouTubeMedia(query, settingsStore.get('language'))
+        if (!orbitPlusService.hasFeature('achievement-guides')) {
+          return { state: 'locked', achievementId }
+        }
+        const trailer = result.options[0] ? achievementGuideTrailer(result.options[0]) : undefined
+        return trailer
+          ? { state: 'ready', achievementId, trailer }
+          : { state: 'missing', achievementId }
+      } catch {
+        return { state: 'unavailable', achievementId }
+      }
+    }
+  )
   ipcMain.handle(IPC.gameAchievementsSync, () => libraryService.syncAchievements(true))
 
   ipcMain.handle(

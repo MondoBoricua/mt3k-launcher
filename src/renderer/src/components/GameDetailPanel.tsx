@@ -1,9 +1,10 @@
 import { type Language, languageLocale } from '@shared/language'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
   CalendarDays,
   Archive,
+  ChevronUp,
   CircleAlert,
   CloudLightning,
   Database,
@@ -14,6 +15,7 @@ import {
   HardDriveDownload,
   LibraryBig,
   Loader2,
+  Pause,
   Play,
   RefreshCw,
   ShieldCheck,
@@ -26,8 +28,10 @@ import {
   X
 } from 'lucide-react'
 import type {
+  GameAchievement,
   GameAchievementsSnapshot,
   GameCompletionTimes,
+  LauncherDownloadPhase,
   LibraryGame
 } from '@shared/ipc'
 import { retroLaunchArguments } from '@shared/retroSystems'
@@ -37,9 +41,14 @@ import { GameTrailerBackground, GameTrailerDialog } from './GameTrailerPlayer'
 import { GameMetadataEditor } from './GameMetadataEditor'
 import { formatWindowsArguments, LaunchOptionsDialog } from './LaunchOptionsDialog'
 import { LibraryCollectionDialog } from './LibraryCollectionDialog'
+import {
+  GameDetailActionMenu,
+  type GameDetailActionMenuItem
+} from './GameDetailActionMenu'
 import { useBackHandler } from '@renderer/hooks/useBackHandler'
 import { useLaunchGame } from '@renderer/hooks/useLaunchGame'
 import { useT } from '@renderer/i18n/useT'
+import type { TranslationKey } from '@renderer/i18n/translations'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import { useGameDetailStore } from '@renderer/state/gameDetailStore'
 import { focusElement } from '@renderer/lib/spatialNavigation'
@@ -49,9 +58,32 @@ import { useLibraryCollectionsStore } from '@renderer/state/libraryCollectionsSt
 import { notify } from '@renderer/state/notificationStore'
 import { useGeForceNowStore } from '@renderer/state/geForceNowStore'
 import { useTitleMusicStore } from '@renderer/state/titleMusicStore'
+import { useDownloadStore } from '@renderer/state/downloadStore'
+import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
+import { canRequestGameInstall, canRequestGameUninstall } from '@shared/gameInstallation'
+import { clampLauncherProgress } from '@shared/launcherDownloads'
+import {
+  AchievementOverviewSheet,
+  type AchievementGuideUiState
+} from './AchievementDetailSheet'
 
 interface Props {
   game: LibraryGame
+}
+
+const DOWNLOAD_PHASE_KEYS: Record<LauncherDownloadPhase, TranslationKey> = {
+  downloading: 'downloads.phase.downloading',
+  updating: 'downloads.phase.updating',
+  installing: 'downloads.phase.installing',
+  verifying: 'downloads.phase.verifying',
+  paused: 'downloads.phase.paused',
+  completed: 'downloads.phase.completed',
+  error: 'downloads.phase.error'
+}
+
+type AchievementGuidePlayer = {
+  achievementId: string
+  trailer: GameTrailer
 }
 
 function formatHours(minutes: number | undefined, language: Language): string {
@@ -61,6 +93,14 @@ function formatHours(minutes: number | undefined, language: Language): string {
     maximumFractionDigits: hours < 10 ? 1 : 0
   }).format(hours)
   return `${value} h`
+}
+
+function sortAchievements(achievements: readonly GameAchievement[]): GameAchievement[] {
+  return [...achievements].sort(
+    (a, b) =>
+      Number(b.unlocked) - Number(a.unlocked) ||
+      (b.unlockedAt ?? 0) - (a.unlockedAt ?? 0)
+  )
 }
 
 export function GameDetailPanel({ game }: Props): JSX.Element {
@@ -74,7 +114,18 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   )
   const [trailer, setTrailer] = useState<GameTrailer | null>(null)
   const [trailerOpen, setTrailerOpen] = useState(false)
-  const trailerRef = useRef<HTMLButtonElement>(null)
+  const achievementGuidesUnlocked = useOrbitPlusStore((state) =>
+    state.hasFeature('achievement-guides')
+  )
+  const [achievementSheetOpen, setAchievementSheetOpen] = useState(false)
+  const [selectedAchievementId, setSelectedAchievementId] = useState<string | null>(null)
+  const [achievementGuideState, setAchievementGuideState] =
+    useState<AchievementGuideUiState | null>(null)
+  const [achievementGuidePlayer, setAchievementGuidePlayer] =
+    useState<AchievementGuidePlayer | null>(null)
+  const achievementGuideGenerationRef = useRef(0)
+  const achievementReturnFocusRef = useRef<HTMLElement | null>(null)
+  const discoverActionsRef = useRef<HTMLButtonElement>(null)
   const achievementsSupported =
     game.provider === 'steam' || game.provider === 'retro' || game.provider === 'xbox'
   const closeGame = useGameDetailStore((state) => state.closeGame)
@@ -84,9 +135,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const launchRef = useRef<HTMLButtonElement>(null)
   const cloudLaunchRef = useRef<HTMLButtonElement>(null)
-  const metadataRef = useRef<HTMLButtonElement>(null)
-  const launchOptionsRef = useRef<HTMLButtonElement>(null)
-  const collectionsRef = useRef<HTMLButtonElement>(null)
+  const manageActionsRef = useRef<HTMLButtonElement>(null)
   const [completionTimes, setCompletionTimes] = useState<GameCompletionTimes | null>(
     game.metadata.completionTimes ?? null
   )
@@ -98,9 +147,18 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   const [backupBusy, setBackupBusy] = useState(false)
   const [backupFeedback, setBackupFeedback] = useState<'success' | 'failed' | null>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const [confirmInstall, setConfirmInstall] = useState(false)
+  const [confirmUninstall, setConfirmUninstall] = useState(false)
+  const [installRequestState, setInstallRequestState] = useState<
+    'idle' | 'requesting' | 'requested' | 'error'
+  >('idle')
+  const [uninstallState, setUninstallState] = useState<
+    'idle' | 'removing' | 'provider-opened' | 'error'
+  >('idle')
   const [metadataEditorOpen, setMetadataEditorOpen] = useState(false)
   const [launchOptionsOpen, setLaunchOptionsOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
+  const [openActionMenu, setOpenActionMenu] = useState<'discover' | 'manage' | null>(null)
   const [favoriteBusy, setFavoriteBusy] = useState(false)
   const [cloudLaunchState, setCloudLaunchState] = useState<'idle' | 'launching' | 'error'>('idle')
   const [excludeState, setExcludeState] = useState<'idle' | 'saving' | 'error'>('idle')
@@ -108,13 +166,48 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   const toggleFavorite = useLibraryCollectionsStore((state) => state.toggleFavorite)
   const isFavorite = favoriteGameIds.includes(game.id)
   const geForceNowMatch = useGeForceNowStore((state) => state.matchesByGameId[game.id])
+  const downloadCenterOpen = useDownloadStore((state) => state.centerOpen)
+  const openDownloadCenter = useDownloadStore((state) => state.openCenter)
+  const downloadActivity = useDownloadStore((state) =>
+    state.snapshot.activities.find(
+      (activity) =>
+        activity.gameId === game.id ||
+        (activity.provider === game.provider &&
+          (activity.providerGameId === game.providerGameId ||
+            activity.providerGameId === String(game.appId ?? '')))
+    )
+  )
   const entitlement = game.metadata.entitlement
+  const installable = canRequestGameInstall(game)
+  const uninstallable = canRequestGameUninstall(game)
+  const downloadProgress = clampLauncherProgress(downloadActivity?.progress)
+  const downloadPercentage =
+    downloadProgress === undefined ? undefined : Math.round(downloadProgress * 100)
+  const installationActive =
+    downloadActivity !== undefined &&
+    downloadActivity.phase !== 'completed' &&
+    downloadActivity.phase !== 'error'
+  const primaryActionLabel = downloadActivity
+    ? `${t(DOWNLOAD_PHASE_KEYS[downloadActivity.phase])}${
+        downloadPercentage === undefined ? '' : ` · ${downloadPercentage}%`
+      }`
+    : installRequestState === 'requesting'
+      ? t('details.installRequesting')
+      : installRequestState === 'requested'
+        ? t('details.installRequested')
+        : installRequestState === 'error'
+          ? t('details.installRetry')
+          : confirmInstall
+            ? t('details.installConfirm')
+            : game.installed || !installable
+              ? t('details.play')
+              : t('details.install')
   const xboxCloudUrl =
     game.provider === 'xbox' && /^[A-Z0-9]{12}$/iu.test(game.metadata.providerStoreId ?? '')
       ? `https://www.xbox.com/${languageLocale(language)}/play/games/${game.metadata.providerStoreId}`
       : undefined
 
-  useBackHandler(closeGame)
+  useBackHandler(closeGame, !achievementSheetOpen)
 
   useEffect(() => {
     if (!geForceNowMatch && document.activeElement === document.body) {
@@ -123,9 +216,9 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   }, [geForceNowMatch])
 
   useEffect(() => {
-    setFullScreenTrailerOpen(game.id, trailerOpen)
+    setFullScreenTrailerOpen(game.id, trailerOpen || Boolean(achievementGuidePlayer))
     return () => setFullScreenTrailerOpen(game.id, false)
-  }, [game.id, setFullScreenTrailerOpen, trailerOpen])
+  }, [achievementGuidePlayer, game.id, setFullScreenTrailerOpen, trailerOpen])
 
   useEffect(() => {
     let active = true
@@ -184,6 +277,12 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
 
   useEffect(() => {
     let active = true
+    achievementGuideGenerationRef.current += 1
+    achievementReturnFocusRef.current = null
+    setAchievementSheetOpen(false)
+    setSelectedAchievementId(null)
+    setAchievementGuideState(null)
+    setAchievementGuidePlayer(null)
     setAchievements(null)
     setLoadingAchievements(showAchievements && achievementsSupported)
     if (showAchievements && achievementsSupported) {
@@ -200,6 +299,95 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
       active = false
     }
   }, [achievementsSupported, game.id, showAchievements, language])
+
+  useEffect(() => {
+    if (
+      selectedAchievementId &&
+      achievements?.state === 'available' &&
+      !achievements.achievements.some((achievement) => achievement.id === selectedAchievementId)
+    ) {
+      achievementGuideGenerationRef.current += 1
+      setSelectedAchievementId(null)
+      setAchievementGuideState(null)
+      setAchievementGuidePlayer(null)
+    }
+  }, [achievements, selectedAchievementId])
+
+  useEffect(() => {
+    if (achievementGuidesUnlocked || !achievementSheetOpen) return
+    achievementGuideGenerationRef.current += 1
+    setAchievementGuidePlayer(null)
+    if (selectedAchievementId) {
+      setAchievementGuideState({ achievementId: selectedAchievementId, state: 'locked' })
+    }
+  }, [achievementGuidesUnlocked, achievementSheetOpen, selectedAchievementId])
+
+  useEffect(() => {
+    if (!achievementSheetOpen || achievements?.state === 'available') return
+    achievementGuideGenerationRef.current += 1
+    setAchievementSheetOpen(false)
+    setSelectedAchievementId(null)
+    setAchievementGuideState(null)
+    setAchievementGuidePlayer(null)
+  }, [achievementSheetOpen, achievements])
+
+  const openAchievementOverview = (returnFocus: HTMLElement): void => {
+    achievementGuideGenerationRef.current += 1
+    achievementReturnFocusRef.current = returnFocus
+    setSelectedAchievementId(null)
+    setAchievementGuideState(null)
+    setAchievementGuidePlayer(null)
+    setAchievementSheetOpen(true)
+  }
+
+  const closeAchievementOverview = (): void => {
+    achievementGuideGenerationRef.current += 1
+    setAchievementSheetOpen(false)
+    setSelectedAchievementId(null)
+    setAchievementGuideState(null)
+    setAchievementGuidePlayer(null)
+  }
+
+  const handleAchievementGuide = async (achievement: GameAchievement): Promise<void> => {
+    if (
+      achievementGuideState?.achievementId === achievement.id &&
+      achievementGuideState.state === 'loading'
+    ) return
+    if (!achievementGuidesUnlocked) {
+      setAchievementGuideState({ achievementId: achievement.id, state: 'locked' })
+      setAchievementGuidePlayer(null)
+      return
+    }
+    const generation = ++achievementGuideGenerationRef.current
+    setAchievementGuideState({ achievementId: achievement.id, state: 'loading' })
+    setAchievementGuidePlayer(null)
+    try {
+      const result = await window.api.game.resolveAchievementGuide(game.id, achievement.id)
+      if (generation !== achievementGuideGenerationRef.current) return
+      if (result.state === 'ready') {
+        setAchievementGuideState(null)
+        setAchievementGuidePlayer({
+          achievementId: achievement.id,
+          trailer: result.trailer
+        })
+        return
+      }
+      setAchievementGuideState({ achievementId: achievement.id, state: result.state })
+    } catch {
+      if (generation === achievementGuideGenerationRef.current) {
+        setAchievementGuideState({ achievementId: achievement.id, state: 'unavailable' })
+      }
+    }
+  }
+
+  const handleAchievementSelection = (achievement: GameAchievement): void => {
+    achievementGuideGenerationRef.current += 1
+    setSelectedAchievementId(achievement.id)
+    setAchievementGuideState(null)
+    setAchievementGuidePlayer(null)
+    if (achievementGuidesUnlocked) void handleAchievementGuide(achievement)
+    else setAchievementGuideState({ achievementId: achievement.id, state: 'locked' })
+  }
 
   async function retryAchievements(): Promise<void> {
     if (loadingAchievements) return
@@ -220,13 +408,64 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   }, [confirmRemove])
 
   useEffect(() => {
+    if (!confirmInstall && !confirmUninstall) return
+    const timer = window.setTimeout(() => {
+      setConfirmInstall(false)
+      setConfirmUninstall(false)
+    }, 4_000)
+    return () => window.clearTimeout(timer)
+  }, [confirmInstall, confirmUninstall])
+
+  useEffect(() => {
+    if (downloadActivity) setInstallRequestState('idle')
+  }, [downloadActivity])
+
+  useEffect(() => {
+    if (game.installed) setInstallRequestState('idle')
+    else setUninstallState('idle')
+  }, [game.installed])
+
+  useEffect(() => {
+    if (installRequestState !== 'requested') return
+    const timer = window.setTimeout(() => setInstallRequestState('idle'), 45_000)
+    return () => window.clearTimeout(timer)
+  }, [installRequestState])
+
+  useEffect(() => {
+    if (uninstallState !== 'provider-opened') return
+    const timer = window.setTimeout(() => setUninstallState('idle'), 45_000)
+    return () => window.clearTimeout(timer)
+  }, [uninstallState])
+
+  useEffect(() => {
     const root = detailRootRef.current
     if (!root) return
-    if (metadataEditorOpen || launchOptionsOpen || collectionsOpen || trailerOpen) root.setAttribute('inert', '')
+    if (
+      metadataEditorOpen ||
+      launchOptionsOpen ||
+      collectionsOpen ||
+      trailerOpen ||
+      downloadCenterOpen ||
+      openActionMenu !== null
+    ) root.setAttribute('inert', '')
     else root.removeAttribute('inert')
     return () => root.removeAttribute('inert')
-  }, [metadataEditorOpen, collectionsOpen, launchOptionsOpen, trailerOpen])
+  }, [
+    metadataEditorOpen,
+    collectionsOpen,
+    downloadCenterOpen,
+    launchOptionsOpen,
+    openActionMenu,
+    trailerOpen
+  ])
 
+  const orderedAchievements = useMemo(
+    () =>
+      achievements?.state === 'available'
+        ? sortAchievements(achievements.achievements)
+        : [],
+    [achievements]
+  )
   const playtime = formatPlaytime(game, t) ?? t('details.notPlayed')
   const summary = game.metadata.summary ?? game.metadata.description
   const developer = game.metadata.developers?.[0]
@@ -264,10 +503,47 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
           })
         : t('details.backupNever')
 
-  const handleLaunch = (): void => {
+  const handleLaunch = async (): Promise<void> => {
     if (retroLaunchUnavailable) return
+    if (installationActive && downloadActivity) {
+      openDownloadCenter(downloadActivity.id)
+      return
+    }
+    if (installable) {
+      if (installRequestState === 'requesting' || installRequestState === 'requested') return
+      if (!confirmInstall) {
+        setConfirmInstall(true)
+        return
+      }
+      setConfirmInstall(false)
+      setInstallRequestState('requesting')
+      try {
+        await window.api.game.install(game.id)
+        setInstallRequestState('requested')
+      } catch {
+        setInstallRequestState('error')
+      }
+      return
+    }
     launch(game.id)
     closeGame()
+  }
+
+  const handleUninstall = async (): Promise<void> => {
+    if (!uninstallable || uninstallState === 'removing') return
+    if (!confirmUninstall) {
+      setConfirmUninstall(true)
+      return
+    }
+    setConfirmUninstall(false)
+    setUninstallState('removing')
+    try {
+      const snapshot = await window.api.game.uninstall(game.id)
+      useLibraryStore.getState().applySnapshot(snapshot)
+      setUninstallState(game.provider === 'steam' ? 'provider-opened' : 'idle')
+    } catch {
+      setUninstallState('error')
+    }
   }
 
   const handleCloudLaunch = async (): Promise<void> => {
@@ -369,15 +645,179 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
 
   const closeLaunchOptions = (): void => {
     setLaunchOptionsOpen(false)
-    requestAnimationFrame(() => focusElement(launchOptionsRef.current))
+    requestAnimationFrame(() => focusElement(manageActionsRef.current))
+  }
+
+  const discoverActions: GameDetailActionMenuItem[] = []
+  if (trailer) {
+    discoverActions.push({
+      id: 'trailer',
+      label: t('trailer.watch'),
+      icon: Play,
+      onSelect: () => {
+        if (trailer.format === 'external') void window.api.app.openExternal(trailer.url)
+        else setTrailerOpen(true)
+      }
+    })
+  }
+  if (game.metadata.storeUrl) {
+    discoverActions.push({
+      id: 'store',
+      label: t('details.storePage'),
+      icon: ExternalLink,
+      onSelect: () => void window.api.app.openExternal(game.metadata.storeUrl as string)
+    })
+  }
+  if (game.metadata.website && game.metadata.website !== game.metadata.storeUrl) {
+    discoverActions.push({
+      id: 'website',
+      label: t('metadata.website'),
+      icon: ExternalLink,
+      onSelect: () => void window.api.app.openExternal(game.metadata.website as string)
+    })
+  }
+  if (game.metadata.achievementsUrl) {
+    discoverActions.push({
+      id: 'achievements',
+      label: t('metadata.achievements'),
+      icon: Trophy,
+      onSelect: () => void window.api.app.openExternal(game.metadata.achievementsUrl as string)
+    })
+  }
+  if (completionTimes?.sourceUrl) {
+    discoverActions.push({
+      id: 'completion-times',
+      label: t('details.hltbPage'),
+      icon: Timer,
+      onSelect: () => void window.api.app.openExternal(completionTimes.sourceUrl as string)
+    })
+  }
+  if (xboxCloudUrl) {
+    discoverActions.push({
+      id: 'xbox-cloud',
+      label: t('details.xboxCloudCheck'),
+      icon: CloudLightning,
+      onSelect: () => void window.api.app.openExternal(xboxCloudUrl)
+    })
+  }
+
+  const manageActions: GameDetailActionMenuItem[] = [
+    {
+      id: 'favorite',
+      label: t(isFavorite ? 'details.favoriteRemove' : 'details.favoriteAdd'),
+      icon: Star,
+      checked: isFavorite,
+      busy: favoriteBusy,
+      disabled: favoriteBusy,
+      tone: isFavorite ? 'accent' : 'default',
+      onSelect: () => void handleToggleFavorite()
+    },
+    {
+      id: 'collections',
+      label: t('details.collections'),
+      icon: LibraryBig,
+      onSelect: () => setCollectionsOpen(true)
+    },
+    {
+      id: 'metadata',
+      label: t('details.metadata'),
+      icon: Database,
+      onSelect: () => setMetadataEditorOpen(true)
+    }
+  ]
+
+  if (local || retro) {
+    manageActions.push({
+      id: 'launch-options',
+      label: t('details.launchOptions'),
+      icon: SlidersHorizontal,
+      onSelect: () => setLaunchOptionsOpen(true)
+    })
+  }
+  if (local?.backupEnabled) {
+    manageActions.push(
+      {
+        id: 'backup-now',
+        label: t(backupBusy ? 'details.backupRunning' : 'details.backupNow'),
+        icon: Archive,
+        busy: backupBusy,
+        disabled: backupBusy,
+        separatorBefore: true,
+        onSelect: () => void handleBackup()
+      },
+      {
+        id: 'open-backups',
+        label: t('details.openBackups'),
+        icon: FolderOpen,
+        onSelect: () => void window.api.library.custom.openBackups(game.id)
+      }
+    )
+  }
+  if (downloadActivity) {
+    manageActions.push({
+      id: 'downloads',
+      label: t('details.openDownloads'),
+      icon: HardDriveDownload,
+      separatorBefore: !local?.backupEnabled,
+      onSelect: () => openDownloadCenter(downloadActivity.id)
+    })
+  }
+  if (uninstallable) {
+    manageActions.push({
+      id: 'uninstall',
+      label: t(
+        confirmUninstall
+          ? 'details.uninstallConfirm'
+          : uninstallState === 'removing'
+            ? 'details.uninstalling'
+            : uninstallState === 'provider-opened'
+              ? 'details.uninstallProviderOpened'
+              : uninstallState === 'error'
+                ? 'details.uninstallRetry'
+                : 'details.uninstall'
+      ),
+      icon: Trash2,
+      busy: uninstallState === 'removing',
+      disabled: uninstallState === 'removing',
+      keepOpen: true,
+      separatorBefore: true,
+      tone: confirmUninstall ? 'danger' : uninstallState === 'error' ? 'warning' : 'default',
+      onSelect: () => void handleUninstall()
+    })
+  }
+  manageActions.push({
+    id: 'exclude',
+    label: t(
+      excludeState === 'saving'
+        ? 'details.excludeSaving'
+        : excludeState === 'error'
+          ? 'details.excludeRetry'
+          : 'details.exclude'
+    ),
+    icon: EyeOff,
+    busy: excludeState === 'saving',
+    disabled: excludeState === 'saving',
+    separatorBefore: !uninstallable,
+    tone: excludeState === 'error' ? 'warning' : 'default',
+    onSelect: () => void handleExclude()
+  })
+  if (local) {
+    manageActions.push({
+      id: 'remove-custom',
+      label: t(confirmRemove ? 'details.confirmRemoveCustom' : 'details.removeCustom'),
+      icon: Trash2,
+      keepOpen: true,
+      tone: confirmRemove ? 'danger' : 'default',
+      onSelect: () => void handleRemove()
+    })
   }
 
   return (
     <>
     <motion.div
       ref={detailRootRef}
-      data-focus-scope={metadataEditorOpen || launchOptionsOpen || collectionsOpen || trailerOpen ? undefined : 'active'}
-      aria-hidden={metadataEditorOpen || launchOptionsOpen || collectionsOpen || trailerOpen || undefined}
+      data-focus-scope={metadataEditorOpen || launchOptionsOpen || collectionsOpen || trailerOpen || downloadCenterOpen || openActionMenu !== null || achievementSheetOpen ? undefined : 'active'}
+      aria-hidden={metadataEditorOpen || launchOptionsOpen || collectionsOpen || trailerOpen || downloadCenterOpen || openActionMenu !== null || undefined}
       role="dialog"
       aria-modal="true"
       aria-label={game.name}
@@ -426,14 +866,17 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
           orientation="horizontal"
           className="absolute inset-0 h-full w-full scale-[1.02] object-cover"
         />
-        {trailer && trailer.format !== 'external' && backgroundTrailers && !reduceMotion && !trailerOpen && !metadataEditorOpen && !launchOptionsOpen && !collectionsOpen && (
+        {trailer && trailer.format !== 'external' && backgroundTrailers && !reduceMotion && !trailerOpen && !achievementGuidePlayer && !metadataEditorOpen && !launchOptionsOpen && !collectionsOpen && !achievementSheetOpen && (
           <GameTrailerBackground key={`${game.id}:${trailer.url}`} trailer={trailer} />
         )}
         <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/65 to-black/20" />
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-black/10" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_82%_18%,transparent_0%,rgba(0,0,0,0.28)_48%,rgba(0,0,0,0.72)_100%)]" />
 
-        <div className="absolute right-[clamp(0.85rem,1.7vw,1.6rem)] top-[clamp(0.85rem,1.7vw,1.6rem)] z-30">
+        <div
+          aria-hidden={achievementSheetOpen || undefined}
+          className="absolute right-[clamp(0.85rem,1.7vw,1.6rem)] top-[clamp(0.85rem,1.7vw,1.6rem)] z-30"
+        >
           <button
             data-focusable
             type="button"
@@ -445,7 +888,10 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
           </button>
         </div>
 
-        <div className="absolute inset-0 z-20 overflow-hidden">
+        <div
+          aria-hidden={achievementSheetOpen || undefined}
+          className="absolute inset-0 z-20 overflow-hidden"
+        >
           <div className="game-detail-layout grid h-full">
             <div className="game-detail-overview scrollbar-none grid min-h-0 items-start overflow-y-auto overscroll-contain">
               <div className="min-w-0">
@@ -516,46 +962,6 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
                   </span>
                 )}
                 {genreText && <span className="truncate">{genreText}</span>}
-                {game.metadata.storeUrl && (
-                  <button
-                    data-focusable
-                    onClick={() => void window.api.app.openExternal(game.metadata.storeUrl as string)}
-                    className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1.5 text-[11px] font-semibold text-white/60 transition-colors hover:bg-white/[0.12] hover:text-white"
-                  >
-                    <ExternalLink size={13} />
-                    {t('details.storePage')}
-                  </button>
-                )}
-                {game.metadata.website && game.metadata.website !== game.metadata.storeUrl && (
-                  <button
-                    data-focusable
-                    onClick={() => void window.api.app.openExternal(game.metadata.website as string)}
-                    className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1.5 text-[11px] font-semibold text-white/60 transition-colors hover:bg-white/[0.12] hover:text-white"
-                  >
-                    <ExternalLink size={13} />
-                    {t('metadata.website')}
-                  </button>
-                )}
-                {game.metadata.achievementsUrl && (
-                  <button
-                    data-focusable
-                    onClick={() => void window.api.app.openExternal(game.metadata.achievementsUrl as string)}
-                    className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1.5 text-[11px] font-semibold text-white/60 transition-colors hover:bg-white/[0.12] hover:text-white"
-                  >
-                    <Trophy size={13} />
-                    {t('metadata.achievements')}
-                  </button>
-                )}
-                {xboxCloudUrl && (
-                  <button
-                    data-focusable
-                    onClick={() => void window.api.app.openExternal(xboxCloudUrl)}
-                    className="flex items-center gap-1.5 rounded-full border border-[#52c75a]/20 bg-[#107c10]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[#8bea91] transition-colors hover:bg-[#107c10]/20 hover:text-white"
-                  >
-                    <CloudLightning size={13} />
-                    {t('details.xboxCloudCheck')}
-                  </button>
-                )}
               </div>
 
               {summary && (
@@ -583,16 +989,6 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
                         </p>
                       )}
                     </div>
-                    {local.backupEnabled && (
-                      <button
-                      data-focusable
-                      onClick={() => void window.api.library.custom.openBackups(game.id)}
-                      className="flex shrink-0 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.06] px-3 py-2 text-[11px] font-semibold text-white/60 transition-colors hover:bg-white/[0.12] hover:text-white"
-                      >
-                        <FolderOpen size={14} />
-                        {t('details.openBackups')}
-                      </button>
-                    )}
                   </div>
                 </div>
               )}
@@ -640,21 +1036,11 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
 
             <div className="min-w-0">
               <section className="game-detail-completion rounded-xl2 border border-white/10 bg-black/30 p-3.5 backdrop-blur-md">
-                <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="mb-3 flex items-center gap-3">
                   <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/60">
                     <Sparkles size={14} className="text-accent" />
                     HLTB
                   </p>
-                  {completionTimes?.sourceUrl && (
-                    <button
-                      data-focusable
-                      onClick={() => void window.api.app.openExternal(completionTimes.sourceUrl as string)}
-                      aria-label="HowLongToBeat"
-                      className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] text-white/60 transition-colors hover:bg-white/[0.12] hover:text-white"
-                    >
-                      <ExternalLink size={13} />
-                    </button>
-                  )}
                 </div>
 
                 <div className="game-detail-stats grid grid-cols-4 gap-2">
@@ -697,9 +1083,10 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
               </section>
 
               {showAchievements && achievementsSupported && (
-                <AchievementGallery
+                <AchievementSummary
                   snapshot={achievements}
                   loading={loadingAchievements}
+                  onOpen={openAchievementOverview}
                   onRetry={() => void retryAchievements()}
                   t={t}
                 />
@@ -707,21 +1094,77 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
             </div>
             </div>
 
+            {(downloadActivity || installRequestState !== 'idle') && (
+              <section
+                data-game-installation-status="true"
+                className="rounded-xl2 border border-accent/20 bg-accent/[0.07] p-3.5 backdrop-blur-md"
+                aria-live="polite"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-2 text-sm font-bold text-white">
+                      {downloadActivity?.phase === 'paused' ? (
+                        <Pause size={15} fill="currentColor" className="text-accent" />
+                      ) : (
+                        <Loader2
+                          size={15}
+                          className={downloadActivity?.phase === 'error' ? 'text-amber-200' : 'animate-spin text-accent'}
+                        />
+                      )}
+                      <span className="truncate">{primaryActionLabel}</span>
+                    </p>
+                    <p className="mt-1 text-xs text-white/45">
+                      {t('details.installStatusBody')}
+                    </p>
+                  </div>
+                </div>
+                {downloadActivity && (
+                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
+                    {downloadProgress === undefined ? (
+                      <motion.span
+                        className="block h-full w-1/3 rounded-full bg-accent"
+                        animate={
+                          reduceMotion || downloadActivity.phase === 'paused'
+                            ? undefined
+                            : { x: ['-120%', '320%'] }
+                        }
+                        transition={{ duration: 1.35, repeat: Infinity, ease: 'easeInOut' }}
+                      />
+                    ) : (
+                      <motion.span
+                        className="block h-full origin-left rounded-full bg-accent"
+                        initial={false}
+                        animate={{ scaleX: downloadProgress }}
+                        transition={{ duration: reduceMotion ? 0 : 0.3 }}
+                      />
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+
             <div className="game-detail-actions grid gap-2.5">
               <button
                 ref={launchRef}
                 data-focusable
-                aria-disabled={retroLaunchUnavailable}
-                data-disabled={retroLaunchUnavailable ? 'true' : undefined}
-                onClick={handleLaunch}
+                aria-disabled={retroLaunchUnavailable || installRequestState === 'requesting'}
+                data-disabled={retroLaunchUnavailable || installRequestState === 'requesting' ? 'true' : undefined}
+                disabled={installRequestState === 'requesting'}
+                onClick={() => void handleLaunch()}
                 className={`game-detail-action game-detail-action--primary border-transparent bg-accent font-bold text-black shadow-[0_12px_40px_rgb(var(--color-accent)/0.25)] ${
                   retroLaunchUnavailable
                     ? 'cursor-not-allowed opacity-55'
                     : 'hover:scale-[1.015]'
                 }`}
               >
-                {retroLaunchUnavailable ? (
+                {installRequestState === 'requesting' ? (
+                  <Loader2 size={17} className="animate-spin" />
+                ) : retroLaunchUnavailable ? (
                   <CircleAlert size={17} />
+                ) : installationActive && downloadActivity?.phase === 'paused' ? (
+                  <Pause size={17} fill="currentColor" />
+                ) : installationActive || installRequestState === 'requested' ? (
+                  <Loader2 size={17} className="animate-spin" />
                 ) : game.installed ? (
                   <Play size={17} fill="currentColor" />
                 ) : (
@@ -731,21 +1174,9 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
                   ? t('details.romMissing')
                   : retro && !retro.emulatorPath
                     ? t('details.retroMissingEmulator')
-                    : game.installed
-                      ? t('details.play')
-                      : t('details.install')}
+                    : primaryActionLabel}
               </button>
 
-              {trailer && (
-                <button ref={trailerRef} data-focusable
-                  onClick={() => {
-                    if (trailer.format === 'external') void window.api.app.openExternal(trailer.url)
-                    else setTrailerOpen(true)
-                  }}
-                  className="game-detail-action border-white/15 bg-white/[0.07] text-white hover:bg-white/15">
-                  <Play size={17} />{t('trailer.watch')}
-                </button>
-              )}
               {geForceNowMatch && (
                 <button
                   ref={cloudLaunchRef}
@@ -774,128 +1205,54 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
                 </button>
               )}
 
-              <button
-                data-focusable
-                type="button"
-                aria-pressed={isFavorite}
-                disabled={favoriteBusy}
-                onClick={() => void handleToggleFavorite()}
-                className={`game-detail-action ${
-                  isFavorite
-                    ? 'border-accent/45 bg-accent/15 text-accent'
-                    : 'border-white/15 bg-white/[0.07] text-white hover:bg-white/15'
-                }`}
-              >
-                {favoriteBusy ? (
-                  <Loader2 size={16} className="shrink-0 animate-spin" />
-                ) : (
-                  <Star size={16} className="shrink-0" fill={isFavorite ? 'currentColor' : 'none'} />
-                )}
-                {t(isFavorite ? 'details.favoriteRemove' : 'details.favoriteAdd')}
-              </button>
-
-              <button
-                ref={collectionsRef}
-                data-focusable
-                type="button"
-                onClick={() => setCollectionsOpen(true)}
-                className="game-detail-action border-white/15 bg-white/[0.07] text-white hover:bg-white/15"
-              >
-                <LibraryBig size={16} className="shrink-0" />
-                {t('details.collections')}
-              </button>
-
-              <button
-                ref={metadataRef}
-                data-focusable
-                onClick={() => setMetadataEditorOpen(true)}
-                className="game-detail-action border-white/15 bg-white/[0.07] text-white hover:bg-white/15"
-              >
-                <Database size={16} className="shrink-0" />
-                {t('details.metadata')}
-              </button>
-
-              {local?.backupEnabled && (
-                <button
-                  data-focusable
-                  data-disabled={backupBusy ? 'true' : undefined}
-                  aria-busy={backupBusy}
-                  disabled={backupBusy}
-                  onClick={() => void handleBackup()}
-                  className="game-detail-action border-white/15 bg-white/[0.07] text-white hover:bg-white/15"
-                >
-                  {backupBusy ? (
-                    <Loader2 size={16} className="shrink-0 animate-spin" />
-                  ) : (
-                    <Archive size={16} className="shrink-0" />
-                  )}
-                  {backupBusy ? t('details.backupRunning') : t('details.backupNow')}
-                </button>
+              {discoverActions.length > 0 && (
+                <GameDetailActionMenu
+                  ref={discoverActionsRef}
+                  label={t('details.discoverActions')}
+                  icon={Sparkles}
+                  items={discoverActions}
+                  open={openActionMenu === 'discover'}
+                  onOpenChange={(open) => setOpenActionMenu(open ? 'discover' : null)}
+                />
               )}
 
-              {(local || retro) && (
-                <button
-                  ref={launchOptionsRef}
-                  data-focusable
-                  onClick={() => setLaunchOptionsOpen(true)}
-                  className="game-detail-action border-white/15 bg-white/[0.07] text-white hover:bg-white/15"
-                >
-                  <SlidersHorizontal size={16} className="shrink-0" />
-                  {t('details.launchOptions')}
-                </button>
-              )}
-
-              <button
-                data-focusable
-                type="button"
-                aria-disabled={excludeState === 'saving'}
-                data-disabled={excludeState === 'saving' ? 'true' : undefined}
-                onClick={() => void handleExclude()}
-                className={`game-detail-action ${
-                  excludeState === 'error'
-                    ? 'border-amber-200/25 bg-amber-300/[0.12] text-amber-100 hover:bg-amber-300/20'
-                    : 'border-white/10 bg-white/[0.045] text-white/55 hover:bg-white/[0.12] hover:text-white'
-                }`}
-              >
-                {excludeState === 'saving' ? (
-                  <Loader2 size={16} className="shrink-0 animate-spin" />
-                ) : (
-                  <EyeOff size={16} className="shrink-0" />
-                )}
-                <span aria-live="polite">
-                  {t(
-                    excludeState === 'saving'
-                      ? 'details.excludeSaving'
-                      : excludeState === 'error'
-                        ? 'details.excludeRetry'
-                        : 'details.exclude'
-                  )}
-                </span>
-              </button>
-
-              {local && (
-                <button
-                  data-focusable
-                  onClick={() => void handleRemove()}
-                  className={`game-detail-action ${
-                    confirmRemove
-                      ? 'border-rose-200/25 bg-rose-300/[0.12] text-rose-200'
-                      : 'border-white/10 bg-white/[0.045] text-white/55 hover:border-rose-200/20 hover:text-rose-200'
-                  }`}
-                >
-                  <Trash2 size={15} className="shrink-0" />
-                  {confirmRemove ? t('details.confirmRemoveCustom') : t('details.removeCustom')}
-                </button>
-              )}
+              <GameDetailActionMenu
+                ref={manageActionsRef}
+                label={t('details.manageActions')}
+                icon={SlidersHorizontal}
+                items={manageActions}
+                open={openActionMenu === 'manage'}
+                onOpenChange={(open) => setOpenActionMenu(open ? 'manage' : null)}
+              />
             </div>
           </div>
         </div>
+        <AnimatePresence initial={false}>
+          {achievementSheetOpen && achievements?.state === 'available' && (
+            <AchievementOverviewSheet
+              key={game.id}
+              achievements={orderedAchievements}
+              unlocked={achievements.unlocked}
+              total={achievements.total}
+              selectedAchievementId={selectedAchievementId}
+              gameName={game.name}
+              language={language}
+              guideUnlocked={achievementGuidesUnlocked}
+              guideState={achievementGuideState}
+              guideTrailer={achievementGuidePlayer}
+              returnFocus={achievementReturnFocusRef.current}
+              onSelect={(achievement) => handleAchievementSelection(achievement)}
+              onGuideRetry={(achievement) => void handleAchievementGuide(achievement)}
+              onClose={closeAchievementOverview}
+            />
+          )}
+        </AnimatePresence>
       </motion.section>
     </motion.div>
     {trailerOpen && trailer && (
       <GameTrailerDialog trailer={trailer} gameName={game.name} onClose={() => {
         setTrailerOpen(false)
-        requestAnimationFrame(() => focusElement(trailerRef.current))
+        requestAnimationFrame(() => focusElement(discoverActionsRef.current))
       }} />
     )}
     {metadataEditorOpen && (
@@ -903,7 +1260,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
         game={game}
         onClose={() => {
           setMetadataEditorOpen(false)
-          requestAnimationFrame(() => focusElement(metadataRef.current))
+          requestAnimationFrame(() => focusElement(manageActionsRef.current))
         }}
       />
     )}
@@ -930,7 +1287,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
         gameId={game.id}
         onClose={() => {
           setCollectionsOpen(false)
-          requestAnimationFrame(() => focusElement(collectionsRef.current))
+          requestAnimationFrame(() => focusElement(manageActionsRef.current))
         }}
       />
     )}
@@ -938,20 +1295,22 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   )
 }
 
-function AchievementGallery({
+function AchievementSummary({
   snapshot,
   loading,
+  onOpen,
   onRetry,
   t
 }: {
   snapshot: GameAchievementsSnapshot | null
   loading: boolean
+  onOpen: (trigger: HTMLElement) => void
   onRetry: () => void
   t: ReturnType<typeof useT>
 }): JSX.Element {
   if (loading) {
     return (
-      <div className="game-detail-achievements h-32 animate-pulse rounded-xl2 border border-white/5 bg-white/[0.05]" />
+      <div className="game-detail-achievements h-32 min-w-0 max-w-full animate-pulse overflow-hidden rounded-xl2 border border-white/5 bg-white/[0.05]" />
     )
   }
 
@@ -964,7 +1323,7 @@ function AchievementGallery({
       'not-connected': 'achievements.notConnected'
     } as const
     return (
-      <section className="game-detail-achievements rounded-xl2 border border-white/10 bg-black/30 p-3.5 backdrop-blur-md">
+      <section className="game-detail-achievements min-w-0 max-w-full overflow-hidden rounded-xl2 border border-white/10 bg-black/30 p-3.5 backdrop-blur-md">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/60">
@@ -992,70 +1351,57 @@ function AchievementGallery({
     )
   }
 
-  const ordered = [...snapshot.achievements].sort(
-    (a, b) => Number(b.unlocked) - Number(a.unlocked) || (b.unlockedAt ?? 0) - (a.unlockedAt ?? 0)
-  )
   const percent = snapshot.total ? Math.round((snapshot.unlocked / snapshot.total) * 100) : 0
 
   return (
-    <section className="game-detail-achievements rounded-xl2 border border-white/10 bg-black/30 p-3.5 backdrop-blur-md">
-      <div className="mb-2 flex items-center justify-between gap-4">
-        <div>
-          <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/60">
-            <Trophy size={14} className="text-accent" />
-            {t('achievements.title')}
-          </p>
-          <p className="mt-0.5 text-xs font-semibold text-white">
-            {t('achievements.progress', {
-              unlocked: snapshot.unlocked,
-              total: snapshot.total
-            })}
-          </p>
-        </div>
-        <span className="text-lg font-black text-white">{percent}%</span>
-      </div>
-      <div className="mb-3 h-1 overflow-hidden rounded-full bg-white/10">
-        <motion.div
-          initial={{ width: 0 }}
-          animate={{ width: `${percent}%` }}
-          transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-          className="h-full rounded-full bg-gradient-to-r from-accent to-accent-2"
-        />
-      </div>
-      <div className="scrollbar-none flex gap-2 overflow-x-auto pb-0.5">
-        {ordered.slice(0, 8).map((achievement) => (
-          <div
-            key={achievement.id}
-            className={`flex w-[11.5rem] shrink-0 items-center gap-2.5 rounded-xl border px-2.5 py-2 ${
-              achievement.unlocked
-                ? 'border-accent/20 bg-accent/[0.08]'
-                : 'border-white/[0.06] bg-white/[0.035] opacity-55'
-            }`}
-          >
-            <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-black/40">
-              {(achievement.unlocked ? achievement.iconUrl : achievement.lockedIconUrl) ? (
-                <img
-                  src={achievement.unlocked ? achievement.iconUrl : achievement.lockedIconUrl}
-                  alt=""
-                  loading="lazy"
-                  className={`h-full w-full object-cover ${achievement.unlocked ? '' : 'grayscale'}`}
-                />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-white/30">
-                  <Trophy size={18} />
-                </div>
-              )}
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-xs font-semibold text-white/85">{achievement.name}</p>
-              <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-white/40">
-                {achievement.description ??
-                  (achievement.unlocked ? t('achievements.unlocked') : t('achievements.locked'))}
+    <section
+      data-achievement-browser="true"
+      className="game-detail-achievements min-w-0 max-w-full overflow-hidden rounded-xl2 border border-white/10 bg-black/30 p-1.5 backdrop-blur-md"
+    >
+      {snapshot.achievements.length === 0 ? (
+        <p className="rounded-xl border border-white/[0.06] bg-white/[0.035] px-3 py-4 text-xs text-white/50">
+          {t('achievements.empty')}
+        </p>
+      ) : (
+        <button
+          type="button"
+          data-focusable
+          data-achievement-overview-open="true"
+          onClick={(event) => onOpen(event.currentTarget)}
+          aria-label={t('achievements.openOverview')}
+          className="block w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.055]"
+        >
+          <div className="flex items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-accent/20 bg-accent/10 text-accent">
+              <Trophy size={17} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-white/60">
+                {t('achievements.title')}
+              </p>
+              <p className="mt-0.5 truncate text-xs font-semibold text-white">
+                {t('achievements.progress', {
+                  unlocked: snapshot.unlocked,
+                  total: snapshot.total
+                })}
               </p>
             </div>
+            <span className="text-lg font-black tabular-nums text-white">{percent}%</span>
+            <ChevronUp size={16} className="shrink-0 text-accent" />
           </div>
-        ))}
-      </div>
+          <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-white/10">
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: `${percent}%` }}
+              transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+              className="h-full rounded-full bg-gradient-to-r from-accent to-accent-2"
+            />
+          </div>
+          <p className="mt-2 truncate text-[10px] text-white/38">
+            {t('achievements.openOverview')}
+          </p>
+        </button>
+      )}
     </section>
   )
 }

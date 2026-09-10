@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   CircleAlert,
   Cloud,
+  Dices,
   Download,
   Folder,
   FolderOpen,
@@ -41,7 +42,8 @@ import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import { GameCard } from '@renderer/components/GameCard'
 import { GeForceNowPanel } from '@renderer/components/GeForceNowPanel'
 import { CloudGamingPlusPanel } from '@renderer/components/CloudGamingPlusPanel'
-import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
+import { NextGamePickerDialog } from '@renderer/components/NextGamePickerDialog'
+import { openOrbitPlusSettings, useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 import { LibraryProviderBadge } from '@renderer/components/LibraryProviderBadge'
 import { LibrarySelect, type LibrarySelectOption } from '@renderer/components/LibrarySelect'
 import { RetroSystemHub } from '@renderer/components/RetroSystemHub'
@@ -65,6 +67,7 @@ import {
 } from '@renderer/lib/retroSystemMotion'
 import { useLibraryCollectionsStore } from '@renderer/state/libraryCollectionsStore'
 import { useGeForceNowStore } from '@renderer/state/geForceNowStore'
+import { useGameDetailStore } from '@renderer/state/gameDetailStore'
 
 import { shouldShowSteamSyncNotice } from '@shared/steamSyncPolicy'
 import {
@@ -244,7 +247,9 @@ export function LibraryView(): JSX.Element {
   const setShowSteamSharedGames = usePreferencesStore((s) => s.setShowSteamSharedGames)
   const geForceNowSnapshot = useGeForceNowStore((s) => s.snapshot)
   const cloudGamingUnlocked = useOrbitPlusStore((s) => s.hasFeature('cloud-gaming'))
+  const nextGamePickerUnlocked = useOrbitPlusStore((s) => s.hasFeature('next-game-picker'))
   const geForceNowMatchesByGameId = useGeForceNowStore((s) => s.matchesByGameId)
+  const openGame = useGameDetailStore((s) => s.openGame)
   const retroSystemColumns = Math.min(5, Math.max(3, gridColumns))
   const favoriteGameIds = useLibraryCollectionsStore((s) => s.favoriteGameIds)
   const collections = useLibraryCollectionsStore((s) => s.collections)
@@ -253,6 +258,7 @@ export function LibraryView(): JSX.Element {
   const [xboxEntitlementFilter, setXboxEntitlementFilter] =
     useState<XboxEntitlementFilter>('all')
   const [showCustomWizard, setShowCustomWizard] = useState(false)
+  const [showNextGamePicker, setShowNextGamePicker] = useState(false)
   const [showRetroLibrary, setShowRetroLibrary] = useState(false)
   const [activeRetroSystem, setActiveRetroSystem] = useState<RetroSystemId | null>(null)
   const [showRetroEmulator, setShowRetroEmulator] = useState(false)
@@ -271,6 +277,7 @@ export function LibraryView(): JSX.Element {
   const [renderLimit, setRenderLimit] = useState(INITIAL_RENDER_LIMIT)
   const sourceStripRef = useRef<HTMLDivElement>(null)
   const collectionButtonRef = useRef<HTMLButtonElement>(null)
+  const nextGamePickerButtonRef = useRef<HTMLButtonElement>(null)
   const deleteCollectionButtonRef = useRef<HTMLButtonElement>(null)
   const retroEmulatorButtonRef = useRef<HTMLButtonElement>(null)
   const retroSetupCancelRequestedRef = useRef(false)
@@ -619,9 +626,12 @@ export function LibraryView(): JSX.Element {
   useEffect(() => {
     const root = containerRef.current
     if (!root) return
-    root.toggleAttribute('inert', showCollectionDialog || Boolean(collectionPendingDeletion))
+    root.toggleAttribute(
+      'inert',
+      showCollectionDialog || Boolean(collectionPendingDeletion) || showNextGamePicker
+    )
     return () => root.removeAttribute('inert')
-  }, [collectionPendingDeletion, containerRef, showCollectionDialog])
+  }, [collectionPendingDeletion, containerRef, showCollectionDialog, showNextGamePicker])
 
   useEffect(() => {
     if (source !== 'retro' && activeRetroSystem !== null) setActiveRetroSystem(null)
@@ -947,6 +957,41 @@ export function LibraryView(): JSX.Element {
               </button>
             )}
           </motion.div>
+          <button
+            ref={nextGamePickerButtonRef}
+            data-focusable
+            data-next-game-picker-trigger="true"
+            type="button"
+            disabled={nextGamePickerUnlocked && visibleAvailableGames.length === 0}
+            data-disabled={
+              nextGamePickerUnlocked && visibleAvailableGames.length === 0 ? 'true' : undefined
+            }
+            aria-label={
+              nextGamePickerUnlocked
+                ? t('library.nextGame.action')
+                : t('library.nextGame.unlock')
+            }
+            onClick={() => {
+              if (!nextGamePickerUnlocked) {
+                openOrbitPlusSettings()
+                return
+              }
+              setShowNextGamePicker(true)
+            }}
+            className={`group flex h-10 shrink-0 items-center gap-2 rounded-full border px-3.5 text-sm font-bold transition-colors disabled:opacity-40 ${
+              nextGamePickerUnlocked
+                ? 'border-accent/30 bg-accent/10 text-accent hover:bg-accent/15'
+                : 'border-amber-200/20 bg-amber-200/[0.07] text-amber-100/80 hover:bg-amber-200/12'
+            }`}
+          >
+            <Dices size={17} className="transition-transform group-hover:rotate-12" />
+            <span className="hidden lg:inline">{t('library.nextGame.action')}</span>
+            {!nextGamePickerUnlocked && (
+              <span className="rounded-full border border-amber-100/20 bg-amber-100/10 px-1.5 py-0.5 text-[7px] font-black uppercase tracking-[0.14em]">
+                Plus
+              </span>
+            )}
+          </button>
           {activeCollection && (
             <button
               ref={deleteCollectionButtonRef}
@@ -1412,6 +1457,22 @@ export function LibraryView(): JSX.Element {
         )}
       </AnimatePresence>
     </div>
+    {showNextGamePicker && (
+      <NextGamePickerDialog
+        games={visibleAvailableGames}
+        returnFocus={nextGamePickerButtonRef.current}
+        onClose={() => setShowNextGamePicker(false)}
+        onOpenGame={(game) => {
+          setShowNextGamePicker(false)
+          openGame(
+            game.id,
+            source === 'geforce-now' && geForceNowMatchesByGameId[game.id]
+              ? 'geforce-now'
+              : 'default'
+          )
+        }}
+      />
+    )}
     <AnimatePresence>
       {showCollectionDialog && (
         <LibraryCollectionDialog

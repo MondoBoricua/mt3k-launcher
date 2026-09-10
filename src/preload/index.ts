@@ -23,13 +23,18 @@ import {
   type EpicLoginStatus,
   type FriendsProvider,
   type FriendsSnapshot,
+  type AchievementGuideResult,
   type GameCompletionTimes,
   type GameAchievementsSnapshot,
   type GameLaunchStatus,
   type GameMetadataSyncResult,
   type GameMetadataUpdateInput,
+  type GameMediaLinkKind,
+  type MediaLinkPasteResult,
+  type MediaLinkSearchResult,
   type GeForceNowCatalogSnapshot,
   type HardwareControlStatus,
+  type NativeControllerInputSnapshot,
   type HomeWallpaperAsset,
   type ImageOrientation,
   type ImageUpdate,
@@ -40,6 +45,8 @@ import {
   type MediaKeyboardUpdatePayload,
   type MediaOverlayHintPayload,
   type LauncherDownloadSnapshot,
+  type LauncherDownloadControlAction,
+  type LauncherDownloadControlResult,
   type CustomLauncherMusic,
   type AudioCueId,
   type CustomUiAudioCue,
@@ -48,6 +55,7 @@ import {
   type OrbitBackgroundServiceAction,
   type OrbitBackgroundServiceStatus,
   type OrbitApplicationSnapshot,
+  type OrbitPlusCommercePlan,
   type OrbitPlusConnectionStatus,
   type OrbitPlusSnapshot,
   type OrbitSettings,
@@ -91,11 +99,18 @@ const orbitApi = {
   },
   orbitPlus: {
     get: (): Promise<OrbitPlusSnapshot> => ipcRenderer.invoke(IPC.orbitPlusGet),
-    refresh: (): Promise<OrbitPlusSnapshot> => ipcRenderer.invoke(IPC.orbitPlusRefresh),
+    refresh: (force = false): Promise<OrbitPlusSnapshot> =>
+      ipcRenderer.invoke(IPC.orbitPlusRefresh, force),
     connectPatreon: (): Promise<OrbitPlusSnapshot> =>
       ipcRenderer.invoke(IPC.orbitPlusPatreonConnect),
     cancelPatreon: (): Promise<OrbitPlusSnapshot> =>
       ipcRenderer.invoke(IPC.orbitPlusPatreonCancel),
+    openCheckout: (plan: OrbitPlusCommercePlan): Promise<void> =>
+      ipcRenderer.invoke(IPC.orbitPlusCheckoutOpen, plan),
+    activateLicense: (key: string): Promise<OrbitPlusSnapshot> =>
+      ipcRenderer.invoke(IPC.orbitPlusLicenseActivate, key),
+    deactivateLicense: (): Promise<OrbitPlusSnapshot> =>
+      ipcRenderer.invoke(IPC.orbitPlusLicenseDeactivate),
     setOwnerTestAccess: (enabled: boolean): Promise<OrbitPlusSnapshot> =>
       ipcRenderer.invoke(IPC.orbitPlusOwnerTestSet, enabled),
     disconnect: (): Promise<OrbitPlusSnapshot> => ipcRenderer.invoke(IPC.orbitPlusDisconnect),
@@ -224,6 +239,16 @@ const orbitApi = {
       return () => ipcRenderer.removeListener(IPC.hardwareControlStatus, listener)
     }
   },
+  controllerInput: {
+    onState: (callback: (snapshot: NativeControllerInputSnapshot) => void): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        snapshot: NativeControllerInputSnapshot
+      ): void => callback(snapshot)
+      ipcRenderer.on(IPC.controllerInputState, listener)
+      return () => ipcRenderer.removeListener(IPC.controllerInputState, listener)
+    }
+  },
   steam: {
     getAccount: () => ipcRenderer.invoke(IPC.steamGetAccount),
     startLogin: (): Promise<void> => ipcRenderer.invoke(IPC.steamLoginStart),
@@ -331,6 +356,8 @@ const orbitApi = {
   library: {
     get: (): Promise<LibrarySnapshot> => ipcRenderer.invoke(IPC.libraryGet),
     stats: (): Promise<LibraryStats> => ipcRenderer.invoke(IPC.libraryStatsGet),
+    refreshStartup: (): Promise<LibrarySnapshot> =>
+      ipcRenderer.invoke(IPC.libraryStartupRefresh),
     refresh: (): Promise<LibrarySnapshot> => ipcRenderer.invoke(IPC.libraryRefresh),
     exclude: (gameId: string): Promise<LibrarySnapshot> =>
       ipcRenderer.invoke(IPC.libraryGameExclude, gameId),
@@ -340,7 +367,15 @@ const orbitApi = {
       update: (input: GameMetadataUpdateInput): Promise<LibrarySnapshot> =>
         ipcRenderer.invoke(IPC.libraryGameMetadataUpdate, input),
       sync: (gameId: string): Promise<GameMetadataSyncResult> =>
-        ipcRenderer.invoke(IPC.libraryGameMetadataSync, gameId)
+        ipcRenderer.invoke(IPC.libraryGameMetadataSync, gameId),
+      searchMedia: (
+        gameId: string,
+        kind: GameMediaLinkKind,
+        query: string
+      ): Promise<MediaLinkSearchResult> =>
+        ipcRenderer.invoke(IPC.libraryGameMetadataMediaSearch, gameId, kind, query),
+      pasteMediaLink: (kind: GameMediaLinkKind): Promise<MediaLinkPasteResult> =>
+        ipcRenderer.invoke(IPC.libraryGameMetadataMediaPaste, kind)
     },
     custom: {
       beginImport: (source: CustomGameImportSource): Promise<CustomGameDraft | null> =>
@@ -409,6 +444,7 @@ const orbitApi = {
     }
   },
   geforceNow: {
+    isNativeAvailable: (): Promise<boolean> => ipcRenderer.invoke(IPC.geforceNowNativeAvailable),
     getCatalog: (): Promise<GeForceNowCatalogSnapshot> =>
       ipcRenderer.invoke(IPC.geforceNowCatalogGet),
     refreshCatalog: (): Promise<GeForceNowCatalogSnapshot> =>
@@ -429,6 +465,11 @@ const orbitApi = {
   },
   downloads: {
     get: (): Promise<LauncherDownloadSnapshot> => ipcRenderer.invoke(IPC.launcherDownloadsGet),
+    control: (
+      activityId: string,
+      action: LauncherDownloadControlAction
+    ): Promise<LauncherDownloadControlResult> =>
+      ipcRenderer.invoke(IPC.launcherDownloadsControl, activityId, action),
     onUpdated: (callback: (snapshot: LauncherDownloadSnapshot) => void): (() => void) => {
       const listener = (
         _e: Electron.IpcRendererEvent,
@@ -440,6 +481,9 @@ const orbitApi = {
   },
   game: {
     launch: (gameId: string): Promise<void> => ipcRenderer.invoke(IPC.gameLaunch, gameId),
+    install: (gameId: string): Promise<void> => ipcRenderer.invoke(IPC.gameInstall, gameId),
+    uninstall: (gameId: string): Promise<LibrarySnapshot> =>
+      ipcRenderer.invoke(IPC.gameUninstall, gameId),
     cancelLaunch: (): Promise<boolean> => ipcRenderer.invoke(IPC.gameLaunchCancel),
     stopTracking: (): Promise<boolean> => ipcRenderer.invoke(IPC.gameTrackingStop),
     getLaunchStatus: (): Promise<GameLaunchStatus> => ipcRenderer.invoke(IPC.gameLaunchGet),
@@ -461,6 +505,11 @@ const orbitApi = {
       force = false
     ): Promise<GameAchievementsSnapshot | null> =>
       ipcRenderer.invoke(IPC.gameAchievementsResolve, gameId, force),
+    resolveAchievementGuide: (
+      gameId: string,
+      achievementId: string
+    ): Promise<AchievementGuideResult> =>
+      ipcRenderer.invoke(IPC.gameAchievementGuideResolve, gameId, achievementId),
     syncAchievements: (): Promise<void> => ipcRenderer.invoke(IPC.gameAchievementsSync)
   },
   image: {

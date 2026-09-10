@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="PlayStation 3 console">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7f7f8"/>
+      <stop offset="1" stop-color="#a9abb0"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#body)" d="M53 57c0-13 10-23 23-23h104c13 0 23 10 23 23v142c0 13-10 23-23 23H76c-13 0-23-10-23-23V57Z"/>
+  <path fill="#292b30" d="M68 61c0-7 6-13 13-13h94c7 0 13 6 13 13v122c0 7-6 13-13 13H81c-7 0-13-6-13-13V61Z"/>
+  <path fill="#3e4148" d="M83 48h45v148H83c-8 0-15-7-15-15V63c0-8 7-15 15-15Z"/>
+  <path fill="#16181c" d="M136 57h43v130h-43z"/>
+  <path fill="#0a97d5" d="M72 190h112v8H72z"/>
+  <circle cx="174" cy="67" r="4" fill="#75d8ff"/>
+</svg>

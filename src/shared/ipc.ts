@@ -1,6 +1,14 @@
 import type { Language } from './language'
 export type { Language } from './language'
 export type { CustomLauncherMusic, LauncherMusicSource } from './launcherMusic'
+export type { NativeControllerInputSnapshot } from './steamController'
+export type {
+  GameMediaLinkKind,
+  MediaLinkPasteResult,
+  MediaLinkSearchOption,
+  MediaLinkSearchResult
+} from './mediaLinkSearch'
+export type { AchievementGuideResult } from './achievementGuide'
 
 export const FREE_THEME_IDS = [
   'midnight',
@@ -51,7 +59,21 @@ export type DockMotion = (typeof DOCK_MOTIONS)[number]
 export const STARTUP_ANIMATION_MODES = ['orbit', 'custom', 'off'] as const
 export type StartupAnimationMode = (typeof STARTUP_ANIMATION_MODES)[number]
 export const CUSTOM_STARTUP_VIDEO_URL = 'orbit-media://startup.mp4'
-export type HomeLayoutId = 'orbit' | 'rolling' | 'float' | 'coresense' | 'xmode'
+export const FREE_HOME_LAYOUT_IDS = ['orbit', 'rolling', 'float', 'coresense', 'xmode'] as const
+export const ORBIT_PLUS_HOME_LAYOUT_IDS = ['cuadro'] as const
+export const HOME_LAYOUT_IDS = [...FREE_HOME_LAYOUT_IDS, ...ORBIT_PLUS_HOME_LAYOUT_IDS] as const
+export type HomeLayoutId = (typeof HOME_LAYOUT_IDS)[number]
+
+export function isHomeLayoutId(value: unknown): value is HomeLayoutId {
+  return HOME_LAYOUT_IDS.includes(value as HomeLayoutId)
+}
+
+export function isOrbitPlusHomeLayoutId(value: HomeLayoutId): boolean {
+  return ORBIT_PLUS_HOME_LAYOUT_IDS.includes(
+    value as (typeof ORBIT_PLUS_HOME_LAYOUT_IDS)[number]
+  )
+}
+
 export type GameCardSize = 'compact' | 'standard' | 'large'
 export const GAME_CARD_PRIMARY_ACTIONS = ['launch', 'details'] as const
 export type GameCardPrimaryAction = (typeof GAME_CARD_PRIMARY_ACTIONS)[number]
@@ -59,6 +81,8 @@ export const LIBRARY_GRID_COLUMN_OPTIONS = [4, 5, 6, 7, 8] as const
 export type LibraryGridColumns = (typeof LIBRARY_GRID_COLUMN_OPTIONS)[number]
 export const UNINSTALLED_GAME_COLORS = [
   'gray',
+  'soft-gray',
+  'none',
   'blue',
   'violet',
   'green',
@@ -492,6 +516,8 @@ export interface OrbitSettings {
   /** Title-music fade duration in seconds. */
   gameTitleMusicFadeSeconds?: number
   gameCardPrimaryAction: GameCardPrimaryAction
+  /** Cloud launch destination. Legacy settings retain web launches. */
+  geForceNowLaunchMode?: GeForceNowLaunchMode
   closeLaunchersAfterGame: boolean
   notificationsEnabled: boolean
   notificationPosition: NotificationPosition
@@ -570,12 +596,24 @@ export const ORBIT_PLUS_FEATURES = [
   'manual-audio',
   'cloud-gaming',
   'background-motion',
-  'premium-appearance'
+  'premium-appearance',
+  'next-game-picker',
+  'achievement-guides'
 ] as const
 export type OrbitPlusFeature = (typeof ORBIT_PLUS_FEATURES)[number]
 export type OrbitPlusAccessSource = 'patreon' | 'annual-pass' | 'lifetime-key'
 export type OrbitPlusPlan = 'monthly' | 'annual' | 'lifetime'
 export type OrbitPlusAccessState = 'locked' | 'active' | 'grace'
+export type OrbitPlusMembershipState = 'active' | 'grace' | 'inactive'
+export type OrbitPlusCommercePlan = Extract<OrbitPlusPlan, 'annual' | 'lifetime'>
+export type OrbitPlusLicenseState =
+  | 'none'
+  | 'active'
+  | 'grace'
+  | 'expired'
+  | 'disabled'
+  | 'verification-required'
+  | 'device-removed'
 export type OrbitPlusIssue =
   | 'service-not-configured'
   | 'secure-storage-unavailable'
@@ -584,7 +622,36 @@ export type OrbitPlusIssue =
   | 'owner-test-disabled'
   | 'session-expired'
   | 'verification-failed'
+  | 'license-invalid'
+  | 'license-test-purchase'
+  | 'license-product-mismatch'
+  | 'license-expired'
+  | 'license-disabled'
+  | 'license-activation-limit'
+  | 'license-device-removed'
   | 'cancelled'
+
+/** Public, non-secret checkout metadata. The checkout URL itself remains in
+ * the main process and can only be opened through a plan-scoped IPC action. */
+export interface OrbitPlusCommerceOffer {
+  plan: OrbitPlusCommercePlan
+  priceCents: number
+  currency: 'EUR'
+  billing: 'yearly' | 'one-time'
+  testMode: boolean
+  available: boolean
+}
+
+/** Sanitized local license state. The license key and customer metadata never
+ * cross the main-process credential boundary. */
+export interface OrbitPlusLicenseSnapshot {
+  state: OrbitPlusLicenseState
+  configured: boolean
+  plan?: OrbitPlusCommercePlan
+  checkedAt?: number
+  expiresAt?: number
+  offlineAccessUntil?: number
+}
 
 /** Provider-neutral premium access. Patreon is the first issuer; annual and
  * lifetime licenses can grant the same feature IDs without changing callers. */
@@ -595,6 +662,79 @@ export interface OrbitPlusEntitlement {
   verifiedAt: number
   expiresAt?: number
   offlineUntil?: number
+}
+
+/** Authoritative, provider-neutral membership decision from the ORBIT Plus
+ * service. Revisions prevent an older asynchronous response from replacing a
+ * newer billing decision. */
+export interface OrbitPlusMembershipDecision {
+  state: OrbitPlusMembershipState
+  verifiedAt: number
+  revision: number
+  /** End of the already paid access period. Omitted for lifetime access. */
+  paidThrough?: number
+  /** Last instant at which a payment or verification grace remains usable. */
+  graceUntil?: number
+}
+
+/** A successful positive membership check always remains usable offline for
+ * at least seven days. This is a verification window, not a cancellation
+ * signal: failed retries may extend it, while only `inactive` revokes access. */
+export const ORBIT_PLUS_OFFLINE_ACCESS_MINIMUM_MS = 7 * 24 * 60 * 60_000
+export const ORBIT_PLUS_PATREON_REFRESH_INTERVAL_MS = 15 * 60_000
+export const ORBIT_PLUS_LICENSE_REFRESH_INTERVAL_MS = 24 * 60 * 60_000
+
+/** Focus and visibility changes may wake the scheduler, but must not by
+ * themselves create billing traffic or a visible verification cycle. */
+export function orbitPlusBackgroundRefreshIsDue(
+  snapshot: OrbitPlusSnapshot,
+  now = Date.now()
+): boolean {
+  const patreonDue =
+    snapshot.connected &&
+    (snapshot.checkedAt === undefined ||
+      snapshot.checkedAt + ORBIT_PLUS_PATREON_REFRESH_INTERVAL_MS <= now)
+  const licenseDue =
+    snapshot.license?.configured === true &&
+    (snapshot.license.checkedAt === undefined ||
+      snapshot.license.checkedAt + ORBIT_PLUS_LICENSE_REFRESH_INTERVAL_MS <= now)
+  return patreonDue || licenseDue
+}
+
+export function orbitPlusConfirmedOfflineAccessUntil(
+  entitlement: OrbitPlusEntitlement | undefined,
+  decision: OrbitPlusMembershipDecision | undefined,
+  confirmedAt: number
+): number | undefined {
+  if (!entitlement || decision?.state === 'inactive') return undefined
+  return Math.max(
+    confirmedAt + ORBIT_PLUS_OFFLINE_ACCESS_MINIMUM_MS,
+    entitlement.offlineUntil ?? 0,
+    decision?.graceUntil ?? 0
+  )
+}
+
+export function orbitPlusMembershipDecisionAccess(
+  decision: OrbitPlusMembershipDecision,
+  entitlement: OrbitPlusEntitlement | undefined,
+  now = Date.now(),
+  offlineAccessUntil?: number
+): { access: OrbitPlusAccessState; accessUntil?: number } {
+  if (decision.state === 'inactive' || !entitlement) return { access: 'locked' }
+  const permanent = entitlement.plan === 'lifetime' && decision.paidThrough === undefined
+  const paidThrough = permanent ? Infinity : decision.paidThrough ?? 0
+  const graceUntil = permanent
+    ? Infinity
+    : Math.max(decision.graceUntil ?? paidThrough, offlineAccessUntil ?? 0)
+  if (decision.state === 'grace' || paidThrough < now) {
+    return graceUntil >= now
+      ? { access: 'grace', accessUntil: Number.isFinite(graceUntil) ? graceUntil : undefined }
+      : { access: 'locked' }
+  }
+  return {
+    access: 'active',
+    accessUntil: Number.isFinite(paidThrough) ? paidThrough : undefined
+  }
 }
 
 export interface OrbitPlusOwnerTestAccess {
@@ -608,12 +748,19 @@ export interface OrbitPlusSnapshot {
   access: OrbitPlusAccessState
   /** Main-process deadline covering verification freshness and offline grace. */
   accessUntil?: number
+  /** Local minimum window retained after the last confirmed positive decision. */
+  offlineAccessUntil?: number
   connected: boolean
   serviceAvailable: boolean
   secureStorageAvailable: boolean
   purchaseUrl: string
+  offers?: OrbitPlusCommerceOffer[]
+  license?: OrbitPlusLicenseSnapshot
+  /** Every independently verified grant currently keeping Plus available. */
+  activeSources?: OrbitPlusAccessSource[]
   accountName?: string
   entitlement?: OrbitPlusEntitlement
+  membership?: OrbitPlusMembershipDecision
   ownerTestAccess?: OrbitPlusOwnerTestAccess
   checkedAt?: number
   issue?: OrbitPlusIssue
@@ -632,10 +779,18 @@ export function orbitPlusHasFeature(
   feature: OrbitPlusFeature,
   now = Date.now()
 ): boolean {
+  const resolvedAccess = snapshot.membership
+    ? orbitPlusMembershipDecisionAccess(
+        snapshot.membership,
+        snapshot.entitlement,
+        now,
+        snapshot.offlineAccessUntil
+      )
+    : { access: snapshot.access, accessUntil: snapshot.accessUntil }
   return (
-    (snapshot.access === 'active' || snapshot.access === 'grace') &&
+    (resolvedAccess.access === 'active' || resolvedAccess.access === 'grace') &&
     snapshot.ownerTestAccess?.enabled !== false &&
-    (snapshot.accessUntil === undefined || snapshot.accessUntil >= now) &&
+    (resolvedAccess.accessUntil === undefined || resolvedAccess.accessUntil >= now) &&
     Boolean(snapshot.entitlement?.features.includes(feature))
   )
 }
@@ -793,6 +948,12 @@ export type LauncherDownloadPhase =
   | 'completed'
   | 'error'
 export type LauncherDownloadConfidence = 'exact' | 'approximate' | 'heuristic'
+export type LauncherDownloadControlAction = 'pause' | 'resume' | 'cancel' | 'open-provider'
+export type LauncherDownloadControlState = 'accepted' | 'provider-opened' | 'unsupported'
+
+export interface LauncherDownloadControlResult {
+  state: LauncherDownloadControlState
+}
 
 /** Ephemeral, path-free activity reported by a locally installed launcher. */
 export interface LauncherDownloadActivity {
@@ -814,6 +975,9 @@ export interface LauncherDownloadActivity {
 
 export interface LauncherDownloadSnapshot {
   revision: number
+  /** Most recent completed provider-monitor pass or provider event. */
+  checkedAt: number
+  /** Most recent user-visible activity change. */
   updatedAt: number
   activities: LauncherDownloadActivity[]
 }
@@ -1028,7 +1192,9 @@ export type RetroSystemId =
   | 'dreamcast'
   | 'ps1'
   | 'ps2'
+  | 'ps3'
   | 'psp'
+  | 'xbox360'
   | 'atari2600'
   | 'atari7800'
   | 'atarilynx'
@@ -1210,6 +1376,9 @@ export interface LibraryGame {
   playtimeMinutes?: number
   lastPlayedTimestamp?: number
   lastStartedAt?: number
+  /** Separate Home continuation history; canonical game identity and playtime stay shared. */
+  lastLocalStartedAt?: number
+  lastGeForceNowStartedAt?: number
   installed: boolean
   installDir?: string
   /** `shared` covers Steam Family and other licenses exposed only by the active Steam session. */
@@ -1223,6 +1392,7 @@ export interface LibraryGame {
 }
 
 export type GeForceNowCatalogState = 'locked' | 'loading' | 'ready' | 'stale' | 'error'
+export type GeForceNowLaunchMode = 'web' | 'native'
 
 /** Exact store-identity match between one ORBIT title and NVIDIA's regional catalog. */
 export interface GeForceNowLibraryMatch {
@@ -1231,6 +1401,7 @@ export interface GeForceNowLibraryMatch {
   geforceNowTitle: string
   cmsId: number
   variantId: string
+  shortName?: string
   appStore: string
   storeId: string
   boxArtUrl?: string
@@ -1613,6 +1784,9 @@ export const IPC = {
   orbitPlusRefresh: 'orbit-plus:refresh',
   orbitPlusPatreonConnect: 'orbit-plus:patreon:connect',
   orbitPlusPatreonCancel: 'orbit-plus:patreon:cancel',
+  orbitPlusCheckoutOpen: 'orbit-plus:checkout:open',
+  orbitPlusLicenseActivate: 'orbit-plus:license:activate',
+  orbitPlusLicenseDeactivate: 'orbit-plus:license:deactivate',
   orbitPlusOwnerTestSet: 'orbit-plus:owner-test:set',
   orbitPlusDisconnect: 'orbit-plus:disconnect',
   orbitPlusStatus: 'orbit-plus:status',
@@ -1631,18 +1805,23 @@ export const IPC = {
   discordServerOpen: 'friends:discord-server:open',
   libraryGet: 'library:get',
   libraryStatsGet: 'library:stats:get',
+  libraryStartupRefresh: 'library:refresh:startup',
   libraryRefresh: 'library:refresh',
   libraryUpdated: 'library:updated',
   libraryGameExclude: 'library:game:exclude',
   libraryGameRestore: 'library:game:restore',
   libraryGameMetadataUpdate: 'library:game:metadata:update',
   libraryGameMetadataSync: 'library:game:metadata:sync',
+  libraryGameMetadataMediaSearch: 'library:game:metadata:media-search',
+  libraryGameMetadataMediaPaste: 'library:game:metadata:media-paste',
   geforceNowCatalogGet: 'geforce-now:catalog:get',
   geforceNowCatalogRefresh: 'geforce-now:catalog:refresh',
   geforceNowCatalogUpdated: 'geforce-now:catalog:updated',
   geforceNowGameLaunch: 'geforce-now:game:launch',
+  geforceNowNativeAvailable: 'geforce-now:native:available',
   geforceNowOpenBrowser: 'geforce-now:browser:open',
   launcherDownloadsGet: 'launcher-downloads:get',
+  launcherDownloadsControl: 'launcher-downloads:control',
   launcherDownloadsUpdated: 'launcher-downloads:updated',
   customGameBeginImport: 'library:custom:import:begin',
   customGameSelectArtwork: 'library:custom:artwork:select',
@@ -1666,6 +1845,8 @@ export const IPC = {
   retroEmulatorInstallProgress: 'library:retro:emulator:install-progress',
   retroGameSetLaunchArguments: 'library:retro:launch-arguments:set',
   gameLaunch: 'game:launch',
+  gameInstall: 'game:install',
+  gameUninstall: 'game:uninstall',
   gameLaunchCancel: 'game:launch:cancel',
   gameTrackingStop: 'game:tracking:stop',
   gameLaunchGet: 'game:launch:get',
@@ -1675,6 +1856,7 @@ export const IPC = {
   gameTrailerResolve: 'game:trailer:resolve',
   gameTitleMusicResolve: 'game:title-music:resolve',
   gameAchievementsResolve: 'game:achievements:resolve',
+  gameAchievementGuideResolve: 'game:achievement-guide:resolve',
   gameAchievementsSync: 'game:achievements:sync',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
@@ -1724,6 +1906,7 @@ export const IPC = {
   backgroundServiceStatus: 'background-service:status',
   hardwareControlGetStatus: 'hardware-control:status:get',
   hardwareControlStatus: 'hardware-control:status',
+  controllerInputState: 'controller-input:state',
   imageResolve: 'image:resolve',
   imageArtworkSearchList: 'image:artwork-search:list',
   imageArtworkSearchApply: 'image:artwork-search:apply',

@@ -3,6 +3,7 @@ import { moveFocus, type NavDirection } from '@renderer/lib/spatialNavigation'
 import { dispatchBackInput, triggerBack } from '@renderer/lib/backHandlerStack'
 import { getVisibleMainViews, useNavigationStore } from '@renderer/state/navigationStore'
 import { useLibraryFilterStore } from '@renderer/state/libraryFilterStore'
+import { useLibraryStore } from '@renderer/state/libraryStore'
 import { useSettingsNavigationStore } from '@renderer/state/settingsNavigationStore'
 import { useStoreNavigationStore } from '@renderer/state/storeNavigationStore'
 import { useFriendsStore } from '@renderer/state/friendsStore'
@@ -17,7 +18,9 @@ import {
 import { useControllerStore } from '@renderer/state/controllerStore'
 import { useGameDetailStore } from '@renderer/state/gameDetailStore'
 import { ORBIT_PERFORMANCE_MODE_EVENT } from '@renderer/lib/performanceMode'
+import { cycleActiveArtworkPicker } from '@renderer/lib/artworkPickerNavigation'
 import { resolveGameCardSecondaryActivation } from '@renderer/lib/gameCardActivation'
+import { canRequestGameInstall } from '@shared/gameInstallation'
 import {
   installPointerCursorRestoration,
   setControllerCursorMode
@@ -29,6 +32,11 @@ import {
   shouldUseSystemKeyboard,
   showGamepadKeyboardFor
 } from '@renderer/lib/gamepadKeyboard'
+import {
+  nativeControllerButtonPressed,
+  STANDARD_GAMEPAD_BUTTON,
+  type NativeControllerInputSnapshot
+} from '@shared/steamController'
 
 const STICK_DEADZONE = 0.5
 const REPEAT_DELAY_MS = 420
@@ -37,21 +45,40 @@ const CATEGORY_REPEAT_DELAY_MS = 220
 const CATEGORY_REPEAT_RATE_MS = 170
 const IDLE_GAMEPAD_POLL_MS = 250
 const BACKGROUND_GAMEPAD_POLL_MS = 1_000
+const CONTROLLER_EMULATED_KEYBOARD_INPUTS = new Set([
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'Enter',
+  ' ',
+  'Escape',
+  'Backspace',
+  'ContextMenu',
+  'q',
+  'Q',
+  'e',
+  'E',
+  'y',
+  'Y',
+  '[',
+  ']'
+])
 
-// Standard gamepad mapping (Xbox/PlayStation layout under the W3C Gamepad API)
-const BTN_A = 0
-const BTN_B = 1
-const BTN_X = 2
-const BTN_Y = 3
-const BTN_LB = 4
-const BTN_RB = 5
-const BTN_LT = 6
-const BTN_RT = 7
-const BTN_START = 9
-const DPAD_UP = 12
-const DPAD_DOWN = 13
-const DPAD_LEFT = 14
-const DPAD_RIGHT = 15
+// Standard gamepad mapping shared by Chromium and the native Steam fallback.
+const BTN_A = STANDARD_GAMEPAD_BUTTON.south
+const BTN_B = STANDARD_GAMEPAD_BUTTON.east
+const BTN_X = STANDARD_GAMEPAD_BUTTON.west
+const BTN_Y = STANDARD_GAMEPAD_BUTTON.north
+const BTN_LB = STANDARD_GAMEPAD_BUTTON.leftBumper
+const BTN_RB = STANDARD_GAMEPAD_BUTTON.rightBumper
+const BTN_LT = STANDARD_GAMEPAD_BUTTON.leftTrigger
+const BTN_RT = STANDARD_GAMEPAD_BUTTON.rightTrigger
+const BTN_START = STANDARD_GAMEPAD_BUTTON.menu
+const DPAD_UP = STANDARD_GAMEPAD_BUTTON.dpadUp
+const DPAD_DOWN = STANDARD_GAMEPAD_BUTTON.dpadDown
+const DPAD_LEFT = STANDARD_GAMEPAD_BUTTON.dpadLeft
+const DPAD_RIGHT = STANDARD_GAMEPAD_BUTTON.dpadRight
 
 type DirectionRepeatState = Partial<Record<NavDirection, number>>
 type ConfirmSource = 'gamepad' | 'keyboard'
@@ -92,6 +119,15 @@ function activateGameCardSecondary(card: HTMLElement | null): boolean {
     usePreferencesStore.getState().gameCardPrimaryAction,
     target
   )
+  const library = useLibraryStore.getState().snapshot
+  const game =
+    library.games.find((candidate) => candidate.id === gameId) ??
+    library.providerGames.find((candidate) => candidate.id === gameId)
+  if (target === 'default' && game && canRequestGameInstall(game)) {
+    playUiSound('open')
+    useGameDetailStore.getState().openGame(gameId)
+    return true
+  }
   if (activation.kind === 'details') {
     playUiSound('open')
     useGameDetailStore.getState().openGame(gameId, activation.preferredAction)
@@ -163,6 +199,10 @@ function cycleMainView(step: 1 | -1): void {
 
 /** Cycles the current view's secondary tabs — bound to LT/RT. */
 function cycleSecondaryView(step: 1 | -1): void {
+  if (cycleActiveArtworkPicker(step)) {
+    playUiSound('switch')
+    return
+  }
   if (document.querySelector('[data-focus-scope="active"]')) return
   const { mainView } = useNavigationStore.getState()
   if (mainView === 'library') useLibraryFilterStore.getState().cycleSource(step)
@@ -187,8 +227,11 @@ export function useGamepadNavigation(): void {
     const nextDirectionRepeatAt: DirectionRepeatState = {}
     const previousInputSignatures = new Map<string, string>()
     let activeGamepadKey: string | null = null
+    let nativeController: NativeControllerInputSnapshot | null = null
     let rafId = 0
     let pollTimer = 0
+
+    const nativeControllerKey = 'native:steam-controller-2'
 
     function cancelScheduledPoll(): void {
       cancelAnimationFrame(rafId)
@@ -243,10 +286,14 @@ export function useGamepadNavigation(): void {
         if (!connectedKeys.has(key)) previousInputSignatures.delete(key)
       }
 
+      const activeNativeController =
+        activeGamepadKey === nativeControllerKey && nativeController?.connected
       const activePadStillConnected = pads.find((pad) => gamepadKey(pad) === activeGamepadKey)
-      const nextActivePad = padWithNewActivity ?? activePadStillConnected ?? pads[0]
+      const nextActivePad =
+        padWithNewActivity ??
+        (activeNativeController ? undefined : activePadStillConnected ?? pads[0])
       if (!nextActivePad) {
-        activeGamepadKey = null
+        if (!activeNativeController) activeGamepadKey = null
         return hasControllerActivity
       }
 
@@ -314,23 +361,41 @@ export function useGamepadNavigation(): void {
       const pads = Array.from(navigator.getGamepads?.() ?? []).filter(
         (pad): pad is Gamepad => pad !== null
       )
-      const hasControllerActivity = updateActiveController(pads)
+      const currentNativeController = nativeController
+      const hasNativeController = currentNativeController?.connected === true
+      const hasNativeControllerActivity =
+        currentNativeController !== null &&
+        hasNativeController &&
+        (currentNativeController.buttons !== 0 ||
+          currentNativeController.axisX !== 0 ||
+          currentNativeController.axisY !== 0)
+      const hasGamepadActivity = updateActiveController(pads)
+      if (hasNativeControllerActivity && currentNativeController) {
+        // Prefer the exact Valve identity when Steam Input exposes the same
+        // physical controller a second time as a generic Xbox-compatible pad.
+        activeGamepadKey = nativeControllerKey
+        useControllerStore
+          .getState()
+          .setActiveController('steam', currentNativeController.id)
+      }
+      const hasControllerActivity = hasGamepadActivity || hasNativeControllerActivity
       const anyButtonPressed = (buttonIndex: number): boolean =>
-        pads.some((pad) => isPressed(pad.buttons[buttonIndex]))
+        pads.some((pad) => isPressed(pad.buttons[buttonIndex])) ||
+        nativeControllerButtonPressed(currentNativeController, buttonIndex)
 
       const directionPressed: Record<NavDirection, boolean> = {
         up: pads.some(
           (pad) => isPressed(pad.buttons[DPAD_UP]) || (pad.axes[1] ?? 0) < -STICK_DEADZONE
-        ),
+        ) || anyButtonPressed(DPAD_UP) || currentNativeController?.axisY === -1,
         down: pads.some(
           (pad) => isPressed(pad.buttons[DPAD_DOWN]) || (pad.axes[1] ?? 0) > STICK_DEADZONE
-        ),
+        ) || anyButtonPressed(DPAD_DOWN) || currentNativeController?.axisY === 1,
         left: pads.some(
           (pad) => isPressed(pad.buttons[DPAD_LEFT]) || (pad.axes[0] ?? 0) < -STICK_DEADZONE
-        ),
+        ) || anyButtonPressed(DPAD_LEFT) || currentNativeController?.axisX === -1,
         right: pads.some(
           (pad) => isPressed(pad.buttons[DPAD_RIGHT]) || (pad.axes[0] ?? 0) > STICK_DEADZONE
-        )
+        ) || anyButtonPressed(DPAD_RIGHT) || currentNativeController?.axisX === 1
       }
 
       // Hardware Control owns global/background controller input in the main
@@ -355,7 +420,7 @@ export function useGamepadNavigation(): void {
         releaseDirection('down')
         releaseDirection('left')
         releaseDirection('right')
-        scheduleNextPoll(pads.length > 0)
+        scheduleNextPoll(pads.length > 0 || hasNativeController)
         return
       }
 
@@ -411,7 +476,7 @@ export function useGamepadNavigation(): void {
         if (startPressed && !prevButtons[BTN_START]) dispatchGamepadKeyboardShortcut('done')
         prevButtons[BTN_START] = startPressed
 
-        scheduleNextPoll(pads.length > 0)
+        scheduleNextPoll(pads.length > 0 || hasNativeController)
         return
       }
 
@@ -437,13 +502,24 @@ export function useGamepadNavigation(): void {
       }
       prevButtons[BTN_START] = startPressed
 
-      scheduleNextPoll(pads.length > 0)
+      scheduleNextPoll(pads.length > 0 || hasNativeController)
     }
 
     const removePointerCursorRestoration = installPointerCursorRestoration(
       document.documentElement,
       window
     )
+    const removeNativeControllerListener = window.api.controllerInput.onState((snapshot) => {
+      nativeController = snapshot
+      if (
+        snapshot.connected &&
+        (snapshot.buttons !== 0 || snapshot.axisX !== 0 || snapshot.axisY !== 0)
+      ) {
+        activeGamepadKey = nativeControllerKey
+        useControllerStore.getState().setActiveController('steam', snapshot.id)
+      }
+      wakePolling()
+    })
     wakePolling()
 
     function isEditingText(): boolean {
@@ -457,6 +533,19 @@ export function useGamepadNavigation(): void {
         e.target instanceof HTMLElement &&
         e.target.dataset.gamepadKeyboardActive === 'true'
       ) return
+      // The Steam desktop profile can emit keyboard events alongside the raw
+      // Triton report. While a native control is held, the raw state is the
+      // single owner so one press never advances or activates twice.
+      if (
+        nativeController?.connected &&
+        (nativeController.buttons !== 0 ||
+          nativeController.axisX !== 0 ||
+          nativeController.axisY !== 0) &&
+        CONTROLLER_EMULATED_KEYBOARD_INPUTS.has(e.key)
+      ) {
+        e.preventDefault()
+        return
+      }
       const editing = isEditingText()
 
       if (editing) {
@@ -577,6 +666,7 @@ export function useGamepadNavigation(): void {
     return () => {
       cancelScheduledPoll()
       removePointerCursorRestoration()
+      removeNativeControllerListener()
       setControllerCursorMode(document.documentElement, false)
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)

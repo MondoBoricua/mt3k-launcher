@@ -1,6 +1,7 @@
 import { type Language, languageLocale } from '@shared/language'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useShallow } from 'zustand/react/shallow'
 import {
   Check,
   ChevronLeft,
@@ -35,7 +36,11 @@ import type {
   ThemeId,
   UiDensity
 } from '@shared/ipc'
-import { isOrbitPlusThemeId, orbitPlusHasFeature } from '@shared/ipc'
+import {
+  isOrbitPlusHomeLayoutId,
+  isOrbitPlusThemeId,
+  orbitPlusHasFeature
+} from '@shared/ipc'
 import { latestLibraryActivity } from '@shared/libraryTime'
 import { FocusableButton } from '@renderer/components/FocusableButton'
 import { DiscordMark } from '@renderer/components/DiscordMark'
@@ -60,12 +65,14 @@ import {
   GAME_CARD_SIZE_OPTIONS,
   HOME_LAYOUT_OPTIONS,
   THEME_OPTIONS,
+  flushThemeSettingsSave,
   usePreferencesStore
 } from '@renderer/state/preferencesStore'
 import { useSyncStore } from '@renderer/state/syncStore'
 import { useControllerButtonLabels } from '@renderer/state/controllerStore'
 import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 import { OnboardingBackdrop, OrbitMark } from './OnboardingChrome'
+import { ONBOARDING_SYNC_GATE_TIMEOUT_MS } from './onboardingLibrarySync'
 
 type SetupPage = 'libraries' | 'personalize' | 'plus' | 'hardware' | 'ready'
 
@@ -104,6 +111,7 @@ const HOME_LAYOUT_SHORT_KEYS: Record<HomeLayoutId, TranslationKey> = {
   orbit: 'settings.homeLayout.orbitShort',
   rolling: 'settings.homeLayout.rollingShort',
   float: 'settings.homeLayout.floatShort',
+  cuadro: 'settings.homeLayout.cuadroShort',
   coresense: 'settings.homeLayout.coresenseShort',
   xmode: 'settings.homeLayout.xmodeShort'
 }
@@ -191,7 +199,10 @@ export function OnboardingSuccess({
   const [stats, setStats] = useState<LibraryStats>(EMPTY_STATS)
   const [entryUnlocked, setEntryUnlocked] = useState(false)
   const [entryUnlockedWithError, setEntryUnlockedWithError] = useState(false)
+  const [entryUnlockedInBackground, setEntryUnlockedInBackground] = useState(false)
   const hasFocusedInitialPage = useRef(false)
+
+  useEffect(() => () => void flushThemeSettingsSave(), [])
 
   const account = useAuthStore((state) => state.account)
   const steamStatus = useAuthStore((state) => state.status)
@@ -206,7 +217,6 @@ export function OnboardingSuccess({
   const refreshLibrary = useLibraryStore((state) => state.refresh)
   const syncStatus = useSyncStore((state) => state.status)
   const {
-    theme,
     profileAvatar,
     customAvatarUrl,
     homeLayout,
@@ -215,7 +225,6 @@ export function OnboardingSuccess({
     uiDensity,
     language,
     audioPreset,
-    setTheme,
     setProfileAvatar,
     selectCustomAvatar,
     setHomeLayout,
@@ -224,7 +233,9 @@ export function OnboardingSuccess({
     setDensity,
     setLanguage,
     setAudioPreset
-  } = usePreferencesStore()
+  } = usePreferencesStore(
+    useShallow(({ theme: _theme, ...preferences }) => preferences)
+  )
 
   const accountSignature = `${account?.steamId ?? ''}:${epicAccount?.accountId ?? ''}:${playStationAccount?.accountId ?? ''}`
   const previousAccountSignature = useRef(accountSignature)
@@ -306,8 +317,21 @@ export function OnboardingSuccess({
     // games. Once this onboarding run has legitimately passed the gate, later
     // deltas must never revoke the user's Continue button.
     setEntryUnlocked(true)
+    setEntryUnlockedInBackground(false)
     if (requiredCurrentlyFailed) setEntryUnlockedWithError(true)
   }, [requiredCurrentlyFailed, requiredCurrentlyFinished])
+
+  useEffect(() => {
+    if (entryUnlocked) return
+    // Provider and artwork requests are allowed to continue in MainShell, so
+    // a slow or unavailable source must never turn first-time setup into a
+    // permanent trap. The normal completed/error states still unlock sooner.
+    const timer = window.setTimeout(() => {
+      setEntryUnlocked(true)
+      setEntryUnlockedInBackground(true)
+    }, ONBOARDING_SYNC_GATE_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [entryUnlocked])
 
   useEffect(() => {
     if (previousAccountSignature.current === accountSignature) return
@@ -500,6 +524,7 @@ export function OnboardingSuccess({
                   xboxGameCount={xboxGames.length}
                   xboxInstalledCount={xboxInstalled}
                   syncStatus={syncStatus.pipelines}
+                  syncContinuesInBackground={entryUnlockedInBackground}
                   statMessage={statMessages[statIndex]}
                   gameCount={stats.gameCount}
                   installedCount={stats.installedCount}
@@ -513,7 +538,6 @@ export function OnboardingSuccess({
               {page === 'personalize' && (
                 <PersonalizePage
                   games={backgroundGames}
-                  theme={theme}
                   profileAvatar={profileAvatar}
                   steamAvatarUrl={account?.avatarUrl}
                   customAvatarUrl={customAvatarUrl}
@@ -524,7 +548,6 @@ export function OnboardingSuccess({
                   language={language}
                   region={region}
                   audioPreset={audioPreset}
-                  onTheme={(value) => void setTheme(value)}
                   onProfileAvatar={(value) => void setProfileAvatar(value)}
                   onSelectCustomAvatar={selectCustomAvatar}
                   onHomeLayout={(value) => void setHomeLayout(value)}
@@ -554,6 +577,7 @@ export function OnboardingSuccess({
                   playtime={hours(stats.totalPlaytimeMinutes, language)}
                   canFinish={entryUnlocked}
                   failed={entryUnlockedWithError}
+                  syncContinuesInBackground={entryUnlockedInBackground}
                 />
               )}
             </motion.div>
@@ -630,6 +654,7 @@ interface LibrariesPageProps {
   xboxGameCount: number
   xboxInstalledCount: number
   syncStatus: Record<string, SyncPipelineProgress>
+  syncContinuesInBackground: boolean
   statMessage: string
   gameCount: number
   installedCount: number
@@ -655,6 +680,7 @@ function LibrariesPage({
   xboxGameCount,
   xboxInstalledCount,
   syncStatus,
+  syncContinuesInBackground,
   statMessage,
   gameCount,
   installedCount,
@@ -756,8 +782,8 @@ function LibrariesPage({
             </span>
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <PipelineRow progress={syncStatus.library} required />
-            <PipelineRow progress={syncStatus.artwork} required />
+            <PipelineRow progress={syncStatus.library} required={!syncContinuesInBackground} />
+            <PipelineRow progress={syncStatus.artwork} required={!syncContinuesInBackground} />
             <PipelineRow progress={syncStatus.metadata} />
             <PipelineRow progress={syncStatus.achievements} />
             <div className="sm:col-span-2">
@@ -864,9 +890,79 @@ function ProviderCard({
   )
 }
 
+function OnboardingThemeName(): JSX.Element {
+  const theme = usePreferencesStore((state) => state.theme)
+  return <>{THEME_OPTIONS.find((item) => item.id === theme)?.label ?? theme}</>
+}
+
+function OnboardingThemeChoices({
+  appearanceUnlocked
+}: {
+  appearanceUnlocked: boolean
+}): JSX.Element {
+  const theme = usePreferencesStore((state) => state.theme)
+  const setTheme = usePreferencesStore((state) => state.setTheme)
+
+  return (
+    <div className="grid grid-cols-5 gap-2 sm:grid-cols-7">
+      {THEME_OPTIONS.map((option) => {
+        const premium = isOrbitPlusThemeId(option.id)
+        const locked = premium && !appearanceUnlocked
+        const active = theme === option.id && !locked
+        return (
+          <button
+            key={option.id}
+            data-focusable
+            data-theme-choice
+            data-theme-option={option.id}
+            data-disabled={locked ? 'true' : undefined}
+            type="button"
+            disabled={locked}
+            title={premium ? `${option.label} · ORBIT Plus` : option.label}
+            aria-label={premium ? `${option.label}, ORBIT Plus` : option.label}
+            aria-disabled={locked || undefined}
+            aria-pressed={active}
+            onClick={() => void setTheme(option.id)}
+            className={`group flex min-w-0 flex-col items-center gap-1.5 rounded-xl p-1.5 ${locked ? 'cursor-not-allowed opacity-65' : ''}`}
+          >
+            <span
+              className={`theme-swatch-orb relative h-10 w-10 rounded-full border bg-gradient-to-br ${THEME_SWATCH[option.id]} ${
+                active
+                  ? 'border-white/90 shadow-[0_0_0_3px_rgb(var(--color-accent)/0.28)]'
+                  : locked
+                    ? 'border-amber-200/35 grayscale-[0.2]'
+                    : 'border-white/15'
+              }`}
+            >
+              {(active || locked) && (
+                <span
+                  className={`absolute inset-0 flex items-center justify-center drop-shadow-lg ${locked ? 'text-amber-100' : 'text-white'}`}
+                >
+                  {locked ? (
+                    <LockKeyhole size={14} />
+                  ) : (
+                    <Check size={15} strokeWidth={3} />
+                  )}
+                </span>
+              )}
+            </span>
+            <span className="w-full truncate text-center text-[9px] text-white/48">
+              {option.label}
+            </span>
+            {premium && (
+              <span className="text-[7px] font-black uppercase tracking-wider text-amber-200/80">
+                PLUS
+              </span>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 interface PersonalizePageProps {
   games: LibraryGame[]
-  theme: ThemeId
   profileAvatar: ProfileAvatarId
   steamAvatarUrl?: string
   customAvatarUrl?: string
@@ -877,7 +973,6 @@ interface PersonalizePageProps {
   language: Language
   region: StoreRegionId
   audioPreset: AudioPreset
-  onTheme: (value: ThemeId) => void
   onProfileAvatar: (value: ProfileAvatarId) => void
   onSelectCustomAvatar: () => Promise<boolean>
   onHomeLayout: (value: HomeLayoutId) => void
@@ -891,7 +986,6 @@ interface PersonalizePageProps {
 
 function PersonalizePage({
   games,
-  theme,
   profileAvatar,
   steamAvatarUrl,
   customAvatarUrl,
@@ -902,7 +996,6 @@ function PersonalizePage({
   language,
   region,
   audioPreset,
-  onTheme,
   onProfileAvatar,
   onSelectCustomAvatar,
   onHomeLayout,
@@ -943,23 +1036,39 @@ function PersonalizePage({
           </SetupPanel>
 
           <SetupPanel icon={<LayoutTemplate size={16} />} title={t('settings.homeLayout.title')}>
-            <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+            <div className="grid grid-cols-2 gap-2 lg:grid-cols-3 2xl:grid-cols-6">
               {HOME_LAYOUT_OPTIONS.map((option) => {
-                const active = homeLayout === option.id
+                const premium = isOrbitPlusHomeLayoutId(option.id)
+                const locked = premium && !appearanceUnlocked
+                const active = homeLayout === option.id && !locked
                 return (
                   <button
                     key={option.id}
                     data-focusable
                     type="button"
+                    disabled={locked}
+                    data-disabled={locked ? 'true' : undefined}
+                    aria-disabled={locked || undefined}
+                    aria-label={premium ? `${option.label}, ORBIT Plus` : option.label}
                     aria-pressed={active}
                     onClick={() => onHomeLayout(option.id)}
                     className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
                       active
                         ? 'border-accent/70 bg-accent/14 text-white'
-                        : 'border-white/[0.07] bg-white/[0.035] text-white/48'
+                        : locked
+                          ? 'cursor-not-allowed border-amber-200/20 bg-amber-200/[0.035] text-white/38'
+                          : 'border-white/[0.07] bg-white/[0.035] text-white/48'
                     }`}
                   >
-                    <span className="block text-sm font-bold tracking-wide">{option.label}</span>
+                    <span className="flex items-center justify-between gap-2 text-sm font-bold tracking-wide">
+                      <span className="truncate">{option.label}</span>
+                      {premium && (
+                        <span className="flex shrink-0 items-center gap-1 text-[8px] font-black text-amber-200/85">
+                          {locked && <LockKeyhole size={9} />}
+                          PLUS
+                        </span>
+                      )}
+                    </span>
                     <span className="mt-1 block text-[9px] leading-snug text-white/38">
                       {t(HOME_LAYOUT_SHORT_KEYS[option.id])}
                     </span>
@@ -970,53 +1079,7 @@ function PersonalizePage({
           </SetupPanel>
 
           <SetupPanel icon={<Palette size={16} />} title={t('settings.theme.title')}>
-            <div className="grid grid-cols-5 gap-2 sm:grid-cols-7">
-              {THEME_OPTIONS.map((option) => {
-                const premium = isOrbitPlusThemeId(option.id)
-                const locked = premium && !appearanceUnlocked
-                const active = theme === option.id && !locked
-                return (
-                  <button
-                    key={option.id}
-                    data-focusable
-                    data-theme-choice
-                    data-disabled={locked ? 'true' : undefined}
-                    type="button"
-                    disabled={locked}
-                    title={premium ? `${option.label} · ORBIT Plus` : option.label}
-                    aria-label={premium ? `${option.label}, ORBIT Plus` : option.label}
-                    aria-disabled={locked || undefined}
-                    aria-pressed={active}
-                    onClick={() => onTheme(option.id)}
-                    className={`group flex min-w-0 flex-col items-center gap-1.5 rounded-xl p-1.5 ${locked ? 'cursor-not-allowed opacity-65' : ''}`}
-                  >
-                    <span
-                      className={`theme-swatch-orb relative h-10 w-10 rounded-full border bg-gradient-to-br ${THEME_SWATCH[option.id]} ${
-                        active
-                          ? 'border-white/90 shadow-[0_0_0_3px_rgb(var(--color-accent)/0.28)]'
-                          : locked
-                            ? 'border-amber-200/35 grayscale-[0.2]'
-                            : 'border-white/15'
-                      }`}
-                    >
-                      {(active || locked) && (
-                        <span className={`absolute inset-0 flex items-center justify-center drop-shadow-lg ${locked ? 'text-amber-100' : 'text-white'}`}>
-                          {locked ? <LockKeyhole size={14} /> : <Check size={15} strokeWidth={3} />}
-                        </span>
-                      )}
-                    </span>
-                    <span className="w-full truncate text-center text-[9px] text-white/48">
-                      {option.label}
-                    </span>
-                    {premium && (
-                      <span className="text-[7px] font-black uppercase tracking-wider text-amber-200/80">
-                        PLUS
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
+            <OnboardingThemeChoices appearanceUnlocked={appearanceUnlocked} />
           </SetupPanel>
 
           <SetupPanel icon={<Layers3 size={16} />} title={t('settings.presentation.title')}>
@@ -1110,7 +1173,6 @@ function PersonalizePage({
               gameCardSize={gameCardSize}
               backdropIntensity={backdropIntensity}
               uiDensity={uiDensity}
-              themeName={THEME_OPTIONS.find((item) => item.id === theme)?.label ?? theme}
             />
           </SetupPanel>
 
@@ -1160,15 +1222,13 @@ function HomePreview({
   homeLayout,
   gameCardSize,
   backdropIntensity,
-  uiDensity,
-  themeName
+  uiDensity
 }: {
   games: LibraryGame[]
   homeLayout: HomeLayoutId
   gameCardSize: GameCardSize
   backdropIntensity: BackdropIntensity
   uiDensity: UiDensity
-  themeName: string
 }): JSX.Element {
   const featured = games[0]
   const cardCount = gameCardSize === 'compact' ? 6 : gameCardSize === 'large' ? 4 : 5
@@ -1205,7 +1265,37 @@ function HomePreview({
           <span>Store</span>
           <span>Settings</span>
         </div>
-        {homeLayout === 'rolling' ? (
+        {homeLayout === 'cuadro' ? (
+          <div className="mx-[4%] mt-[5%] grid h-[70%] grid-cols-5 grid-rows-2 gap-[3%]">
+            {Array.from({ length: 10 }, (_, index) => {
+              const game = games[index]
+              return (
+                <div
+                  key={game?.id ?? index}
+                  className={`relative min-h-0 rounded-[calc(var(--radius-card)*0.38)] border bg-surface-2 ${
+                    index === 0
+                      ? 'z-10 -translate-y-1 scale-110 overflow-visible border-accent shadow-glow'
+                      : 'overflow-hidden border-white/10'
+                  }`}
+                >
+                  {game && (
+                    <GameImage
+                      gameId={game.id}
+                      name={game.name}
+                      orientation="vertical"
+                      previewUrl={game.metadata.artwork?.vertical?.[0]}
+                      fit="cover"
+                      className="h-full w-full rounded-[inherit] object-cover"
+                    />
+                  )}
+                  {index === 0 && (
+                    <span className="absolute left-[calc(100%+0.2rem)] top-1/2 h-8 w-12 -translate-y-1/2 rounded-md border border-white/15 bg-black/70" />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        ) : homeLayout === 'rolling' ? (
           <div className="mt-[8%] flex h-[68%] flex-col justify-center">
             <span className="mb-[2%] text-[7px] font-black uppercase tracking-[0.18em] text-white/50">
               Jump Back
@@ -1333,7 +1423,7 @@ function HomePreview({
                   {featured?.name ?? 'Your latest adventure'}
                 </span>
                 <span className="rounded-full bg-white/[0.07] px-2 py-1 text-[6px] text-white/50">
-                  {themeName}
+                  <OnboardingThemeName />
                 </span>
               </div>
             ) : (
@@ -1343,7 +1433,7 @@ function HomePreview({
                   <span className="truncate text-xs font-bold">{featured?.name ?? 'Your latest adventure'}</span>
                 </div>
                 <div className="flex h-[clamp(2.7rem,7vw,5.5rem)] items-end rounded-[calc(var(--radius-card)*0.62)] border border-white/10 bg-surface/70 p-3 text-[8px] font-semibold">
-                  {themeName}
+                  <OnboardingThemeName />
                 </div>
               </div>
             )}
@@ -1419,7 +1509,8 @@ function ReadyPage({
   installedCount,
   playtime,
   canFinish,
-  failed
+  failed,
+  syncContinuesInBackground
 }: {
   displayName?: string
   syncStatus: Record<string, SyncPipelineProgress>
@@ -1429,6 +1520,7 @@ function ReadyPage({
   playtime: string
   canFinish: boolean
   failed: boolean
+  syncContinuesInBackground: boolean
 }): JSX.Element {
   const t = useT()
   const [communityStatus, setCommunityStatus] = useState<'idle' | 'opening' | 'error'>('idle')
@@ -1458,7 +1550,9 @@ function ReadyPage({
         {canFinish
           ? failed
             ? t('onboarding.setup.readyWithIssues')
-            : t('onboarding.setup.ready')
+            : syncContinuesInBackground
+              ? t('onboarding.setup.readyInBackground')
+              : t('onboarding.setup.ready')
           : t('onboarding.setup.preparing')}
       </div>
       <h1 className="mt-2 text-[clamp(2.3rem,4.4vw,4.6rem)] font-bold leading-none tracking-tight">
@@ -1526,8 +1620,8 @@ function ReadyPage({
 
       <section className="onboarding-panel mt-5 w-full border border-white/[0.08] bg-black/55 p-5 text-left shadow-card">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <PipelineRow progress={syncStatus.library} required />
-          <PipelineRow progress={syncStatus.artwork} required />
+          <PipelineRow progress={syncStatus.library} required={!syncContinuesInBackground} />
+          <PipelineRow progress={syncStatus.artwork} required={!syncContinuesInBackground} />
           <PipelineRow progress={syncStatus.metadata} />
           <PipelineRow progress={syncStatus.achievements} />
           <div className="sm:col-span-2">

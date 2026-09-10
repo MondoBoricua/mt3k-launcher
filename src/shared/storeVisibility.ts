@@ -6,6 +6,11 @@ export function hasStoreArtwork(product: StoreProduct): boolean {
   return Boolean(product.heroUrl ?? product.headerUrl ?? product.portraitUrl)
 }
 
+/** A user's explicit wishlist choice remains visible while metadata and art hydrate. */
+export function isStoreWishlistProductVisible(product: StoreProduct): boolean {
+  return product.steamWishlisted || product.orbitWishlisted
+}
+
 /**
  * Featured Steam records already contain enough data for a useful preview.
  * Full details and cross-store prices arrive progressively and must not block

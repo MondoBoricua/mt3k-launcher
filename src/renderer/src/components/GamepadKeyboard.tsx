@@ -29,6 +29,7 @@ import {
 import { focusElement } from '@renderer/lib/spatialNavigation'
 import { useControllerButtonLabels } from '@renderer/state/controllerStore'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
+import type { Language } from '@shared/language'
 
 type KeyboardMode = 'letters' | 'symbols' | 'numbers'
 
@@ -49,6 +50,17 @@ const GERMAN_LETTER_ROWS = [
   [...'yxcvbnm']
 ]
 const SPANISH_LETTER_ROWS = [[...'qwertyuiop'], [...'asdfghjklñ'], [...'zxcvbnm']]
+const RUSSIAN_LETTER_ROWS = [
+  [...'ёйцукенгшщзхъ'],
+  [...'фывапролджэ'],
+  [...'ячсмитьбю']
+]
+const LETTER_ROWS = {
+  en: ENGLISH_LETTER_ROWS,
+  de: GERMAN_LETTER_ROWS,
+  es: SPANISH_LETTER_ROWS,
+  ru: RUSSIAN_LETTER_ROWS
+} satisfies Record<Language, string[][]>
 const PRIMARY_SYMBOL_ROWS = [
   [...'1234567890'],
   ['@', '#', '€', '_', '&', '-', '+', '(', ')', '/'],
@@ -440,7 +452,7 @@ export function GamepadKeyboard(): JSX.Element {
         ? [[...(secondarySymbols ? 'ÁÉÍÓÚÜ¿¡' : 'áéíóúü¿¡')], ...symbols]
         : symbols
     }
-    return language === 'es' ? SPANISH_LETTER_ROWS : language === 'de' ? GERMAN_LETTER_ROWS : ENGLISH_LETTER_ROWS
+    return LETTER_ROWS[language]
   }, [language, mode, secondarySymbols])
 
   const isSearch = session?.target.type === 'search' || session?.target.enterKeyHint === 'search'

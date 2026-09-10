@@ -38,6 +38,8 @@ import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import { useTitleMusicStore } from '@renderer/state/titleMusicStore'
 import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 import { orbitPlusHasFeature } from '@shared/ipc'
+import { useDownloadStore } from '@renderer/state/downloadStore'
+import { DownloadCenterPanel } from './DownloadCenterPanel'
 
 const SESSION_SUMMARY_VISIBLE_MS = 6_000
 const RENDERER_HIBERNATION_DELAY_MS = 1_500
@@ -67,6 +69,8 @@ export function MainShell(): JSX.Element {
   const initGeForceNow = useGeForceNowStore((s) => s.init)
   const initSync = useSyncStore((s) => s.init)
   const initStore = useStoreStore((s) => s.init)
+  const initDownloads = useDownloadStore((state) => state.init)
+  const downloadCenterOpen = useDownloadStore((state) => state.centerOpen)
   const refreshStoreIfStale = useStoreStore((s) => s.refreshIfStale)
   const detailGameId = useGameDetailStore((s) => s.gameId)
   const launcherMusicEnabled = usePreferencesStore((state) => state.launcherMusic)
@@ -140,7 +144,8 @@ export function MainShell(): JSX.Element {
   useEffect(() => {
     void initSync()
     void initStore()
-  }, [initStore, initSync])
+    void initDownloads()
+  }, [initDownloads, initStore, initSync])
 
   useEffect(() => {
     const handleFocus = (): void => setWindowFocused(true)
@@ -258,12 +263,12 @@ export function MainShell(): JSX.Element {
   useEffect(() => {
     const shell = shellRef.current
     if (!shell) return
-    if (detailGame || launchOverlayVisible || updateStage === 'installing') {
+    if (detailGame || downloadCenterOpen || launchOverlayVisible || updateStage === 'installing') {
       shell.setAttribute('inert', '')
     }
     else shell.removeAttribute('inert')
     return () => shell.removeAttribute('inert')
-  }, [detailGame, launchOverlayVisible, updateStage])
+  }, [detailGame, downloadCenterOpen, launchOverlayVisible, updateStage])
 
   useEffect(() => {
     let observer: MutationObserver | undefined
@@ -316,7 +321,7 @@ export function MainShell(): JSX.Element {
   }
 
   return (
-    <RunningGameProvider gameId={runningGameId}>
+    <RunningGameProvider gameId={runningGameId} source={launchStatus.trackingMethod === 'geforce-now-window' ? 'geforce-now' : 'local'}>
       <div className="relative h-full w-full overflow-hidden">
         <LauncherBackgroundMusic
           active={launcherMusicActive}
@@ -355,6 +360,9 @@ export function MainShell(): JSX.Element {
         </div>
 
         <AnimatePresence>{detailGame && <GameDetailPanel key={detailGame.id} game={detailGame} />}</AnimatePresence>
+        <AnimatePresence>
+          {downloadCenterOpen && <DownloadCenterPanel key="download-center" />}
+        </AnimatePresence>
         <AnimatePresence>
           {launchOverlayVisible && (
             <GameLaunchSplash

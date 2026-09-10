@@ -24,6 +24,8 @@ const FEATURED_SYSTEM_IDS: readonly RetroSystemId[] = [
   'dreamcast',
   'ps1',
   'ps2',
+  'ps3',
+  'xbox360',
   'arcade'
 ]
 
@@ -102,21 +104,7 @@ export function RetroSystemHub({
   }, [games, query])
 
   return (
-    <section aria-labelledby="retro-systems-title" className="flex flex-col gap-4">
-      <div className="px-1 text-center">
-        <div className="mx-auto max-w-2xl">
-          <h1 id="retro-systems-title" className="text-2xl font-black tracking-tight text-white">
-            {t('retro.systems.title')}
-          </h1>
-          <p className="mt-1 text-sm leading-relaxed text-muted">
-            {t('retro.systems.body')}
-          </p>
-        </div>
-        <span className="mt-3 inline-flex rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-bold text-white/55">
-          {t('retro.systems.count', { count: systems.length })}
-        </span>
-      </div>
-
+    <section aria-label={t('retro.systems.title')} className="flex flex-col gap-4">
       {systems.length === 0 ? (
         <div className="flex min-h-[12rem] items-center justify-center rounded-xl2 border border-dashed border-white/10 bg-white/[0.025] px-6 text-center text-sm font-semibold text-white/65">
           {t('retro.systems.noMatch')}

@@ -1,6 +1,7 @@
 import { type Language, languageLocale } from '@shared/language'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useShallow } from 'zustand/react/shallow'
 import {
   AppWindow,
   BellRing,
@@ -47,6 +48,7 @@ import { useAutoFocus } from '@renderer/hooks/useAutoFocus'
 import {
   usePreferencesStore,
   flushMusicSettingsSave,
+  flushThemeSettingsSave,
   THEME_OPTIONS,
   CORNER_STYLE_OPTIONS,
   HOME_LAYOUT_OPTIONS,
@@ -56,7 +58,7 @@ import {
   HOME_BACKDROP_MODE_OPTIONS,
   HOME_BACKDROP_MOTION_OPTIONS,
   UNINSTALLED_GAME_COLOR_OPTIONS,
-  UNINSTALLED_GAME_COLOR_RGB,
+  UNINSTALLED_GAME_VISUAL_STYLES,
   LANGUAGE_OPTIONS
 } from '@renderer/state/preferencesStore'
 import { useAuthStore } from '@renderer/state/authStore'
@@ -98,6 +100,7 @@ import { openOrbitPlusSettings, useOrbitPlusStore } from '@renderer/state/orbitP
 import type { TranslationKey } from '@renderer/i18n/translations'
 import {
   AUDIO_CUE_IDS,
+  isOrbitPlusHomeLayoutId,
   isOrbitPlusThemeId,
   orbitPlusHasFeature
 } from '@shared/ipc'
@@ -188,6 +191,7 @@ const HOME_LAYOUT_BODY_KEYS: Record<HomeLayoutId, TranslationKey> = {
   orbit: 'settings.homeLayout.orbitBody',
   rolling: 'settings.homeLayout.rollingBody',
   float: 'settings.homeLayout.floatBody',
+  cuadro: 'settings.homeLayout.cuadroBody',
   coresense: 'settings.homeLayout.coresenseBody',
   xmode: 'settings.homeLayout.xmodeBody'
 }
@@ -317,11 +321,14 @@ const GAME_TRACKING_METHOD_LABEL_KEYS: Record<GameTrackingMethod, TranslationKey
   'install-directory': 'settings.gameTracking.method.installDirectory',
   'package-identity': 'settings.gameTracking.method.packageIdentity',
   executable: 'settings.gameTracking.method.executable',
-  'provider-handoff': 'settings.gameTracking.method.providerHandoff'
+  'provider-handoff': 'settings.gameTracking.method.providerHandoff',
+  'geforce-now-window': 'settings.gameTracking.method.geforceNowWindow'
 }
 
 const UNINSTALLED_GAME_COLOR_LABELS: Record<UninstalledGameColor, TranslationKey> = {
   gray: 'settings.uninstalledColor.gray',
+  'soft-gray': 'settings.uninstalledColor.softGray',
+  none: 'settings.uninstalledColor.none',
   blue: 'settings.uninstalledColor.blue',
   violet: 'settings.uninstalledColor.violet',
   green: 'settings.uninstalledColor.green',
@@ -629,11 +636,16 @@ export function SettingsView(): JSX.Element {
   const containerRef = useAutoFocus<HTMLDivElement>()
   const controllerLabels = useControllerButtonLabels()
   const t = useT()
-  useEffect(() => () => { void flushMusicSettingsSave() }, [])
+  useEffect(
+    () => () => {
+      void flushMusicSettingsSave()
+      void flushThemeSettingsSave()
+    },
+    []
+  )
   const setPhase = useNavigationStore((s) => s.setPhase)
   const setOnboardingStep = useNavigationStore((s) => s.setOnboardingStep)
   const {
-    theme,
     cornerStyle,
     profileAvatar,
     customAvatarUrl,
@@ -678,7 +690,6 @@ export function SettingsView(): JSX.Element {
     hardwareControlEnabled,
     hardwareControlButton,
     hardwareControlHoldSeconds,
-    setTheme,
     setCornerStyle,
     setProfileAvatar,
     selectCustomAvatar,
@@ -723,7 +734,9 @@ export function SettingsView(): JSX.Element {
     setNotificationsEnabled,
     setNotificationPosition,
     setNotificationMotion
-  } = usePreferencesStore()
+  } = usePreferencesStore(
+    useShallow(({ theme: _theme, ...preferences }) => preferences)
+  )
   const customLibraryCount = useLibraryCollectionsStore((s) => s.collections.length)
   const orbitPlusSnapshot = useOrbitPlusStore((s) => s.snapshot)
   const manualAudioUnlocked = orbitPlusHasFeature(orbitPlusSnapshot, 'manual-audio')
@@ -928,7 +941,7 @@ export function SettingsView(): JSX.Element {
           },
           {
             label: t('settings.summary.theme'),
-            value: THEME_OPTIONS.find((item) => item.id === theme)?.label ?? theme
+            value: <CurrentThemeName />
           },
           {
             label: t('settings.dock.title'),
@@ -1474,64 +1487,9 @@ export function SettingsView(): JSX.Element {
                   icon={Palette}
                   title={t('settings.theme.title')}
                   description={t('settings.section.themeBody')}
-                  summary={`${THEME_OPTIONS.find((item) => item.id === theme)?.label ?? theme} · ${t(CORNER_STYLE_COPY[cornerStyle].labelKey)}`}
+                  summary={<ThemeSectionSummary cornerStyle={cornerStyle} />}
                 >
-                  <div className="grid grid-cols-4 gap-2 sm:grid-cols-7 lg:grid-cols-10 2xl:grid-cols-[repeat(19,minmax(0,1fr))]">
-                    {THEME_OPTIONS.map((option) => {
-                      const premium = isOrbitPlusThemeId(option.id)
-                      const locked = premium && !appearanceUnlocked
-                      const active = theme === option.id && !locked
-                      return (
-                        <motion.button
-                          key={option.id}
-                          data-focusable
-                          data-theme-choice
-                          data-theme-option={option.id}
-                          data-disabled={locked ? 'true' : undefined}
-                          type="button"
-                          disabled={locked}
-                          aria-disabled={locked || undefined}
-                          aria-label={premium ? `${option.label}, ORBIT Plus` : option.label}
-                          onClick={() => void setTheme(option.id)}
-                          whileHover={locked ? undefined : { y: -2, scale: 1.04 }}
-                          whileTap={locked ? undefined : { scale: 0.95 }}
-                          aria-pressed={active}
-                          className={`group flex min-w-0 flex-col items-center gap-1.5 rounded-2xl px-1 py-1.5 text-center ${locked ? 'cursor-not-allowed opacity-65' : ''}`}
-                        >
-                          <div
-                            className={`theme-swatch-orb relative h-12 w-12 shrink-0 overflow-hidden rounded-full border bg-gradient-to-br transition-[border-color,box-shadow] ${themeSwatch[option.id]} ${
-                              active
-                                ? 'border-white/80 shadow-[0_0_0_3px_rgb(var(--color-accent)/0.35),0_8px_24px_rgb(var(--color-accent)/0.25)]'
-                                : locked
-                                  ? 'border-amber-200/35 shadow-[0_6px_18px_rgba(0,0,0,0.32)] grayscale-[0.2]'
-                                  : 'border-white/15 shadow-[0_6px_18px_rgba(0,0,0,0.32)]'
-                            }`}
-                          >
-                            <div className="absolute inset-[5px] rounded-full border border-white/15 bg-black/25 backdrop-blur-md" />
-                            <div className="absolute bottom-2 left-2 h-2.5 w-5 rounded-full bg-white/20" />
-                            <div className="absolute right-2 top-2 h-3 w-3 rounded-full bg-white/35" />
-                            {(active || locked) && (
-                              <div className={`absolute inset-0 flex items-center justify-center drop-shadow-lg ${locked ? 'text-amber-100' : 'text-white'}`}>
-                                {locked ? <LockKeyhole size={16} /> : <Check size={18} strokeWidth={3} />}
-                              </div>
-                            )}
-                          </div>
-                          <span className={`w-full truncate text-[10px] font-semibold ${active ? 'text-white' : 'text-white/60'}`}>
-                            {option.label}
-                          </span>
-                          {option.id === 'midnight' ? (
-                            <span className="text-[8px] uppercase tracking-wider text-white/35">
-                              {t('settings.default')}
-                            </span>
-                          ) : premium ? (
-                            <span className="text-[8px] font-black uppercase tracking-wider text-amber-200/85">
-                              PLUS
-                            </span>
-                          ) : null}
-                        </motion.button>
-                      )
-                    })}
-                  </div>
+                  <ThemeChoiceGrid appearanceUnlocked={appearanceUnlocked} />
 
                   <div className="mt-4 border-t border-white/[0.07] pt-4">
                     <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
@@ -1876,11 +1834,12 @@ export function SettingsView(): JSX.Element {
                     </div>
                     <div
                       data-navigation-grid
-                      data-grid-columns={6}
-                      className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6"
+                      data-grid-columns={4}
+                      className="grid grid-cols-2 gap-2 sm:grid-cols-4"
                     >
                       {UNINSTALLED_GAME_COLOR_OPTIONS.map((option) => {
                         const active = uninstalledGameColor === option
+                        const visualStyle = UNINSTALLED_GAME_VISUAL_STYLES[option]
                         return (
                           <motion.button
                             key={option}
@@ -1899,14 +1858,23 @@ export function SettingsView(): JSX.Element {
                           >
                             <span
                               aria-hidden="true"
-                              className="relative h-10 w-8 shrink-0 overflow-hidden rounded-lg border border-white/15 bg-[linear-gradient(145deg,#171a20_0%,#e7e9ed_48%,#505764_100%)] shadow-[0_5px_12px_rgba(0,0,0,0.32)]"
+                              className="relative h-10 w-8 shrink-0 overflow-hidden rounded-lg border border-white/15 shadow-[0_5px_12px_rgba(0,0,0,0.32)]"
                             >
+                              <span
+                                className="absolute inset-0 bg-[linear-gradient(145deg,#12335f_0%,#22b8cf_34%,#f2a65a_66%,#7c3aed_100%)]"
+                                style={{ filter: visualStyle.artworkFilter }}
+                              />
                               <span
                                 className="absolute inset-0"
                                 style={{
-                                  backgroundColor: `rgb(${UNINSTALLED_GAME_COLOR_RGB[option]})`,
-                                  mixBlendMode: 'color'
+                                  backgroundColor: `rgb(${visualStyle.color})`,
+                                  mixBlendMode: 'color',
+                                  opacity: visualStyle.tintOpacity
                                 }}
+                              />
+                              <span
+                                className="absolute inset-0 bg-black/20"
+                                style={{ opacity: visualStyle.dimOpacity }}
                               />
                               <span className="absolute inset-x-1 bottom-1 h-1 rounded-full bg-black/35" />
                             </span>
@@ -2096,22 +2064,30 @@ export function SettingsView(): JSX.Element {
                   <p className="mb-4 text-xs leading-relaxed text-muted">
                     {t('settings.homeLayout.body')}
                   </p>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
                     {HOME_LAYOUT_OPTIONS.map((option) => {
-                      const active = homeLayout === option.id
+                      const premium = isOrbitPlusHomeLayoutId(option.id)
+                      const locked = premium && !appearanceUnlocked
+                      const active = homeLayout === option.id && !locked
                       return (
                         <motion.button
                           key={option.id}
                           data-focusable
                           type="button"
                           aria-pressed={active}
-                          onClick={() => void setHomeLayout(option.id)}
+                          aria-label={premium ? `${option.label}, ORBIT Plus` : option.label}
+                          aria-disabled={locked || undefined}
+                          onClick={() =>
+                            locked ? openOrbitPlusSettings() : void setHomeLayout(option.id)
+                          }
                           whileHover={{ y: -2 }}
                           whileTap={{ scale: 0.985 }}
                           data-home-style-option={option.id}
-                          className={`rounded-2xl border p-3 text-left transition-colors ${
+                          className={`relative rounded-2xl border p-3 text-left transition-colors ${
                             active
                               ? 'border-accent/70 bg-accent/12'
+                              : locked
+                                ? 'border-amber-200/20 bg-amber-200/[0.035]'
                               : 'border-white/[0.07] bg-black/20 hover:bg-white/[0.05]'
                           }`}
                         >
@@ -2128,6 +2104,12 @@ export function SettingsView(): JSX.Element {
                             {option.id === 'orbit' && (
                               <span className="rounded-full bg-white/[0.07] px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-white/40">
                                 {t('settings.default')}
+                              </span>
+                            )}
+                            {premium && (
+                              <span className="flex shrink-0 items-center gap-1 rounded-full border border-amber-200/20 bg-amber-200/10 px-2 py-1 text-[8px] font-black uppercase tracking-wider text-amber-100/90">
+                                {locked && <LockKeyhole size={9} />}
+                                PLUS
                               </span>
                             )}
                           </div>
@@ -4198,6 +4180,93 @@ function formatUpdateDate(
   }).format(date)
 }
 
+function CurrentThemeName(): JSX.Element {
+  const theme = usePreferencesStore((state) => state.theme)
+  return <>{THEME_OPTIONS.find((item) => item.id === theme)?.label ?? theme}</>
+}
+
+function ThemeSectionSummary({ cornerStyle }: { cornerStyle: CornerStyleId }): JSX.Element {
+  const t = useT()
+  return (
+    <>
+      <CurrentThemeName /> · {t(CORNER_STYLE_COPY[cornerStyle].labelKey)}
+    </>
+  )
+}
+
+function ThemeChoiceGrid({ appearanceUnlocked }: { appearanceUnlocked: boolean }): JSX.Element {
+  const t = useT()
+  const theme = usePreferencesStore((state) => state.theme)
+  const setTheme = usePreferencesStore((state) => state.setTheme)
+
+  return (
+    <div className="grid grid-cols-4 gap-2 sm:grid-cols-7 lg:grid-cols-10 2xl:grid-cols-[repeat(19,minmax(0,1fr))]">
+      {THEME_OPTIONS.map((option) => {
+        const premium = isOrbitPlusThemeId(option.id)
+        const locked = premium && !appearanceUnlocked
+        const active = theme === option.id && !locked
+        return (
+          <motion.button
+            key={option.id}
+            data-focusable
+            data-theme-choice
+            data-theme-option={option.id}
+            data-disabled={locked ? 'true' : undefined}
+            type="button"
+            disabled={locked}
+            aria-disabled={locked || undefined}
+            aria-label={premium ? `${option.label}, ORBIT Plus` : option.label}
+            onClick={() => void setTheme(option.id)}
+            whileHover={locked ? undefined : { y: -2, scale: 1.04 }}
+            whileTap={locked ? undefined : { scale: 0.95 }}
+            aria-pressed={active}
+            className={`group flex min-w-0 flex-col items-center gap-1.5 rounded-2xl px-1 py-1.5 text-center ${locked ? 'cursor-not-allowed opacity-65' : ''}`}
+          >
+            <div
+              className={`theme-swatch-orb relative h-12 w-12 shrink-0 overflow-hidden rounded-full border bg-gradient-to-br transition-[border-color,box-shadow] ${themeSwatch[option.id]} ${
+                active
+                  ? 'border-white/80 shadow-[0_0_0_3px_rgb(var(--color-accent)/0.35),0_8px_24px_rgb(var(--color-accent)/0.25)]'
+                  : locked
+                    ? 'border-amber-200/35 shadow-[0_6px_18px_rgba(0,0,0,0.32)] grayscale-[0.2]'
+                    : 'border-white/15 shadow-[0_6px_18px_rgba(0,0,0,0.32)]'
+              }`}
+            >
+              <div className="absolute inset-[5px] rounded-full border border-white/15 bg-black/35" />
+              <div className="absolute bottom-2 left-2 h-2.5 w-5 rounded-full bg-white/20" />
+              <div className="absolute right-2 top-2 h-3 w-3 rounded-full bg-white/35" />
+              {(active || locked) && (
+                <div
+                  className={`absolute inset-0 flex items-center justify-center drop-shadow-lg ${locked ? 'text-amber-100' : 'text-white'}`}
+                >
+                  {locked ? (
+                    <LockKeyhole size={16} />
+                  ) : (
+                    <Check size={18} strokeWidth={3} />
+                  )}
+                </div>
+              )}
+            </div>
+            <span
+              className={`w-full truncate text-[10px] font-semibold ${active ? 'text-white' : 'text-white/60'}`}
+            >
+              {option.label}
+            </span>
+            {option.id === 'midnight' ? (
+              <span className="text-[8px] uppercase tracking-wider text-white/35">
+                {t('settings.default')}
+              </span>
+            ) : premium ? (
+              <span className="text-[8px] font-black uppercase tracking-wider text-amber-200/85">
+                PLUS
+              </span>
+            ) : null}
+          </motion.button>
+        )
+      })}
+    </div>
+  )
+}
+
 function SettingsPageLead({
   icon: Icon,
   title,
@@ -4212,7 +4281,7 @@ function SettingsPageLead({
   description: string
   index: number
   total: number
-  highlights: Array<{ label: string; value: string }>
+  highlights: Array<{ label: string; value: React.ReactNode }>
   autoSaveLabel: string
 }): JSX.Element {
   return (
@@ -4294,9 +4363,11 @@ function ManualAudioCueEditor({
 
   const restoreCueFocus = (cueId: AudioCueId): void => {
     requestAnimationFrame(() => {
-      focusElement(
-        document.querySelector<HTMLElement>(`[data-ui-audio-select="${cueId}"]`)
-      )
+      requestAnimationFrame(() => {
+        focusElement(
+          document.querySelector<HTMLElement>(`[data-ui-audio-select="${cueId}"]`)
+        )
+      })
     })
   }
 
@@ -4654,6 +4725,27 @@ function HomeLayoutPreview({ layout }: { layout: HomeLayoutId }): JSX.Element {
             ))}
           </span>
         </span>
+      </span>
+    )
+  }
+
+  if (layout === 'cuadro') {
+    return (
+      <span className="relative grid flex-1 grid-cols-5 grid-rows-2 gap-1.5 px-1 py-0.5">
+        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((index) => (
+          <span
+            key={index}
+            className={`relative min-h-0 rounded-[3px] border bg-gradient-to-b ${
+              index === 0
+                ? 'z-10 -translate-y-0.5 scale-110 border-accent/90 from-accent/75 to-accent-2/45 shadow-glow'
+                : 'border-white/10 from-white/15 to-white/[0.035]'
+            }`}
+          >
+            {index === 0 ? (
+              <span className="absolute left-[calc(100%+0.2rem)] top-1/2 h-5 w-8 -translate-y-1/2 rounded-[3px] border border-white/15 bg-black/75" />
+            ) : null}
+          </span>
+        ))}
       </span>
     )
   }

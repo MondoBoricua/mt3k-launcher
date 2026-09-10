@@ -117,6 +117,18 @@ const STANDALONE_EMULATORS: readonly StandaloneEmulatorDefinition[] = [
     wingetPackageId: 'PCSX2Team.PCSX2'
   },
   {
+    id: 'rpcs3',
+    name: 'RPCS3',
+    executableNames: ['rpcs3.exe'],
+    systems: ['ps3'],
+    commonPaths: () => [
+      commonPath(environmentPath('ProgramFiles'), 'RPCS3', 'rpcs3.exe'),
+      commonPath(environmentPath('LOCALAPPDATA'), 'Programs', 'RPCS3', 'rpcs3.exe')
+    ].filter((path): path is string => Boolean(path)),
+    achievementsSupported: false,
+    priority: 4
+  },
+  {
     id: 'dolphin',
     name: 'Dolphin',
     executableNames: ['Dolphin.exe'],
@@ -154,6 +166,18 @@ const STANDALONE_EMULATORS: readonly StandaloneEmulatorDefinition[] = [
     achievementsSupported: false,
     priority: 4,
     wingetPackageId: 'Cemu.Cemu'
+  },
+  {
+    id: 'xenia',
+    name: 'Xenia Canary',
+    executableNames: ['xenia_canary.exe', 'xenia-canary.exe', 'xenia.exe'],
+    systems: ['xbox360'],
+    commonPaths: () => [
+      commonPath(environmentPath('ProgramFiles'), 'Xenia', 'xenia_canary.exe'),
+      commonPath(environmentPath('LOCALAPPDATA'), 'Programs', 'Xenia', 'xenia_canary.exe')
+    ].filter((path): path is string => Boolean(path)),
+    achievementsSupported: false,
+    priority: 4
   },
   {
     id: 'mgba',

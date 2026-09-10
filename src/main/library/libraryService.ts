@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { BrowserWindow } from 'electron'
+import Store from 'electron-store'
 import {
   IPC,
   type RetroEmulatorInstallInput,
@@ -49,8 +50,28 @@ import type {
   InstalledLibraryProvider,
   InstalledLibraryRefreshTarget
 } from './libraryRefreshScheduler'
+import {
+  STARTUP_FULL_LIBRARY_SYNC_DELAY_MS,
+  shouldScheduleFullLibrarySync
+} from '@shared/libraryStartupSync'
 
 const MAX_EXCLUDED_GAME_IDS = 10_000
+const STARTUP_INSTALLED_LIBRARY_TARGETS: readonly InstalledLibraryRefreshTarget[] = [
+  { provider: 'steam' },
+  { provider: 'epic' },
+  { provider: 'xbox' },
+  { provider: 'gog' },
+  { provider: 'ea' },
+  { provider: 'ubisoft' }
+]
+
+const librarySyncState = new Store<{ lastFullSyncAt?: number }>({
+  name: 'library-sync-state'
+})
+
+function yieldToMainLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
 
 function validExcludedGameIds(value: unknown): string[] {
   if (!Array.isArray(value)) return []
@@ -67,9 +88,11 @@ function validExcludedGameIds(value: unknown): string[] {
 /** Coordinates every store into one cache and one three-pipeline sync session. */
 export class UnifiedLibraryService extends EventEmitter {
   private refreshInFlight: Promise<LibrarySnapshot> | null = null
-  private refreshQueued = false
+  private startupRefreshInFlight: Promise<LibrarySnapshot> | null = null
+  private scheduledFullRefreshTimer: ReturnType<typeof setTimeout> | undefined
   private snapshotEmitTimer: ReturnType<typeof setTimeout> | undefined
   private playtimeSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private performanceResumeWaiters = new Set<() => void>()
   private backgroundEnrichmentPaused = false
   private backgroundEnrichmentPending = false
 
@@ -188,28 +211,47 @@ export class UnifiedLibraryService extends EventEmitter {
   }
 
   refresh(): Promise<LibrarySnapshot> {
-    if (this.refreshInFlight) {
-      this.refreshQueued = true
-      return this.refreshInFlight
-    }
+    return this.startFullRefresh(false)
+  }
 
-    const run = async (): Promise<LibrarySnapshot> => {
-      let snapshot = this.getSnapshot()
-      do {
-        this.refreshQueued = false
-        snapshot = await this.doRefresh()
-      } while (this.refreshQueued)
-      return snapshot
-    }
-    const refresh = run().finally(() => {
+  private startFullRefresh(deferForGamePerformance: boolean): Promise<LibrarySnapshot> {
+    this.cancelScheduledFullRefresh()
+    if (this.refreshInFlight) return this.refreshInFlight
+
+    const startupRefresh = this.startupRefreshInFlight
+    const refresh = (async (): Promise<LibrarySnapshot> => {
+      if (startupRefresh) await startupRefresh.catch(() => undefined)
+      return this.doRefresh(deferForGamePerformance)
+    })().finally(() => {
       if (this.refreshInFlight === refresh) this.refreshInFlight = null
     })
     this.refreshInFlight = refresh
     return refresh
   }
 
+  /** Reconciles cheap local install evidence after the first interactive
+   * frame. Remote libraries and broad enrichment stay on the stale/manual
+   * full-sync path so normal startup does not repeat onboarding work. */
+  refreshStartup(): Promise<LibrarySnapshot> {
+    if (this.refreshInFlight) return this.refreshInFlight
+    if (this.startupRefreshInFlight) return this.startupRefreshInFlight
+
+    syncCoordinator.beginSession()
+    const refresh = this.refreshInstalledProviders(STARTUP_INSTALLED_LIBRARY_TARGETS)
+      .then((snapshot) => {
+        this.emitSnapshot()
+        this.scheduleFullRefreshIfStale()
+        return snapshot
+      })
+      .finally(() => {
+        if (this.startupRefreshInFlight === refresh) this.startupRefreshInFlight = null
+      })
+    this.startupRefreshInFlight = refresh
+    return refresh
+  }
+
   /** Refreshes only local installation evidence for lifecycle-triggered
-   * updates. Manual and startup synchronization continue to use refresh(). */
+   * updates and the lightweight startup reconciliation. */
   async refreshInstalledProviders(
     targets: readonly InstalledLibraryRefreshTarget[]
   ): Promise<LibrarySnapshot> {
@@ -245,7 +287,21 @@ export class UnifiedLibraryService extends EventEmitter {
   setBackgroundEnrichmentPaused(paused: boolean): void {
     if (this.backgroundEnrichmentPaused === paused) return
     this.backgroundEnrichmentPaused = paused
-    if (!paused && this.backgroundEnrichmentPending) this.startBackgroundEnrichment()
+    if (!paused) {
+      for (const resume of this.performanceResumeWaiters) resume()
+      this.performanceResumeWaiters.clear()
+      if (this.backgroundEnrichmentPending) this.startBackgroundEnrichment()
+    }
+  }
+
+  dispose(): void {
+    this.cancelScheduledFullRefresh()
+    if (this.snapshotEmitTimer) clearTimeout(this.snapshotEmitTimer)
+    this.snapshotEmitTimer = undefined
+    for (const timer of this.playtimeSyncTimers.values()) clearTimeout(timer)
+    this.playtimeSyncTimers.clear()
+    for (const resume of this.performanceResumeWaiters) resume()
+    this.performanceResumeWaiters.clear()
   }
 
   async resolveCompletionTimes(gameId: string): Promise<GameCompletionTimes | null> {
@@ -276,8 +332,8 @@ export class UnifiedLibraryService extends EventEmitter {
     return achievementService.sync(this.getSnapshot().games, forceUnavailable)
   }
 
-  markGameStarted(gameId: string, startedAt?: number): void {
-    if (gameRepository.markStarted(gameId, startedAt)) this.emitSnapshot()
+  markGameStarted(gameId: string, startedAt?: number, source: 'local' | 'geforce-now' = 'local'): void {
+    if (gameRepository.markStarted(gameId, startedAt, source)) this.emitSnapshot()
   }
 
   recordGameSession(
@@ -562,21 +618,36 @@ export class UnifiedLibraryService extends EventEmitter {
     return { snapshot: this.getSnapshot(), synchronizedAt: Date.now(), stages }
   }
 
-  private async doRefresh(): Promise<LibrarySnapshot> {
+  private async doRefresh(deferForGamePerformance: boolean): Promise<LibrarySnapshot> {
     const steamAccount = steamAuthManager.getAccount() ?? (await steamAuthManager.restoreSession())
     gameRepository.openProfile(steamAccount?.steamId)
     syncCoordinator.beginSession()
     artworkService.beginSyncSession()
-    await Promise.allSettled([
-      steamLibraryService.refresh(steamAuthManager),
-      epicLibraryService.refresh(epicAuthManager),
-      gogLibraryService.refresh(),
-      xboxLibraryService.refresh(),
-      playStationLibraryService.refresh(playStationAuthManager),
-      retroLibraryService.refresh(),
-      eaLibraryService.refresh(),
-      ubisoftLibraryService.refresh()
-    ])
+    const batches: ReadonlyArray<ReadonlyArray<() => Promise<unknown>>> = [
+      [
+        () => steamLibraryService.refresh(steamAuthManager),
+        () => epicLibraryService.refresh(epicAuthManager)
+      ],
+      [
+        () => xboxLibraryService.refresh(),
+        () => playStationLibraryService.refresh(playStationAuthManager)
+      ],
+      // These adapters intentionally overlap: all three share one in-flight
+      // Windows registry discovery instead of spawning three PowerShell scans.
+      [
+        () => gogLibraryService.refresh(),
+        () => eaLibraryService.refresh(),
+        () => ubisoftLibraryService.refresh()
+      ],
+      [() => retroLibraryService.refresh()]
+    ]
+    for (const [index, batch] of batches.entries()) {
+      if (deferForGamePerformance) await this.waitForGamePerformanceWindow()
+      await Promise.allSettled(batch.map((run) => run()))
+      if (index < batches.length - 1) await yieldToMainLoop()
+    }
+
+    librarySyncState.set('lastFullSyncAt', Date.now())
 
     this.startBackgroundEnrichment()
     this.emitSnapshot()
@@ -610,6 +681,38 @@ export class UnifiedLibraryService extends EventEmitter {
     // wishlist offers before the user leaves onboarding.
     if (steamAuthManager.getAccount()) startupTasks.push(storeService.refresh())
     void Promise.allSettled(startupTasks)
+  }
+
+  private scheduleFullRefreshIfStale(): void {
+    if (
+      this.scheduledFullRefreshTimer ||
+      this.refreshInFlight ||
+      !shouldScheduleFullLibrarySync(librarySyncState.get('lastFullSyncAt'))
+    ) {
+      return
+    }
+
+    this.scheduledFullRefreshTimer = setTimeout(() => {
+      this.scheduledFullRefreshTimer = undefined
+      if (this.backgroundEnrichmentPaused) {
+        this.scheduleFullRefreshIfStale()
+        return
+      }
+      void this.startFullRefresh(true).catch((error) => {
+        console.warn('[library] Deferred full synchronization failed:', error)
+      })
+    }, STARTUP_FULL_LIBRARY_SYNC_DELAY_MS)
+    this.scheduledFullRefreshTimer.unref()
+  }
+
+  private cancelScheduledFullRefresh(): void {
+    if (this.scheduledFullRefreshTimer) clearTimeout(this.scheduledFullRefreshTimer)
+    this.scheduledFullRefreshTimer = undefined
+  }
+
+  private waitForGamePerformanceWindow(): Promise<void> {
+    if (!this.backgroundEnrichmentPaused) return Promise.resolve()
+    return new Promise((resolve) => this.performanceResumeWaiters.add(resolve))
   }
 
   private getExcludedGameIds(): string[] {
