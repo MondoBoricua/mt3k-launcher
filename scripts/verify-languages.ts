@@ -13,6 +13,16 @@ function placeholders(value: string): string[] {
   return [...value.matchAll(/\{\w+\}/g)].map(([match]) => match).sort()
 }
 
+const intentionallyNonCyrillicRussianValues = new Set([
+  'ORBIT Plus', 'Steam', 'Discord', 'Epic', 'Xbox', 'Wi-Fi', 'LAN', 'Bluetooth',
+  'ORBIT', 'GeForce NOW', 'GOG', 'PlayStation', 'EA', 'Ubisoft', 'Xbox Game Pass',
+  'Game Pass', 'RetroAchievements', 'Steam Store', 'SteamGridDB',
+  'Steam · Epic · GOG · Xbox · Instant Gaming', 'ORBIT Core', 'Hardware Control',
+  'Menu / Start', 'View / Select', 'Xbox / Guide', 'Patreon', 'ORBIT Horizon',
+  'KB{ids}', 'NVIDIA', 'AMD', 'Intel', 'Shift', 'Caps Lock', 'Backspace',
+  'Orbit', 'Nova', 'Pulse', 'Drift', 'Ember', 'Pixel', 'Xbox / Microsoft Store'
+])
+
 for (const dictionary of [translations, mainTranslations]) {
   const canonical = dictionary.en as Record<string, string>
   for (const language of LANGUAGES) {
@@ -33,8 +43,11 @@ for (const value of [undefined, null, '', 'fr', 'ES', 'es-ES', {}, 1]) {
 }
 assert.deepEqual(LANGUAGE_OPTIONS.map(({ id }) => id), [...LANGUAGES])
 assert.equal(LANGUAGE_OPTIONS.find(({ id }) => id === 'es')?.label, 'Español')
+assert.equal(LANGUAGE_OPTIONS.find(({ id }) => id === 'ru')?.label, 'Русский')
 assert.equal(translate('es', 'nav.settings'), 'Ajustes')
+assert.equal(translate('ru', 'nav.settings'), 'Настройки')
 assert.equal(translate('es', 'onboarding.success.titleWithName', { name: '$& {name}' }), '¡Bienvenido, $& {name}!')
+assert.equal(translate('ru', 'onboarding.success.titleWithName', { name: '$& {name}' }), 'Добро пожаловать, $& {name}!')
 assert.equal(translate('invalid' as 'en', 'nav.home'), translations.en['nav.home'])
 assert.equal(languageLocale('es'), 'es-ES')
 assert.equal(languageCountry('es'), 'ES')
@@ -42,9 +55,30 @@ assert.equal(steamLanguage('es'), 'spanish')
 assert.equal(acceptLanguages('es'), 'es-ES,es,en-US,en')
 assert.equal(new Intl.NumberFormat(languageLocale('es')).format(12345.67), '12.345,67')
 assert.equal(new Intl.DateTimeFormat(languageLocale('es'), { month: 'long', timeZone: 'UTC' }).format(new Date('2026-09-07T12:00:00Z')), 'septiembre')
+assert.equal(languageLocale('ru'), 'ru-RU')
+assert.equal(languageCountry('ru'), 'RU')
+assert.equal(steamLanguage('ru'), 'russian')
+assert.equal(acceptLanguages('ru'), 'ru-RU,ru,en-US,en')
+assert.equal(new Intl.NumberFormat(languageLocale('ru')).format(12345.67), '12 345,67')
+assert.equal(new Intl.DateTimeFormat(languageLocale('ru'), { month: 'long', timeZone: 'UTC' }).format(new Date('2026-09-07T12:00:00Z')), 'сентябрь')
 for (const region of Object.keys(STORE_REGIONS) as (keyof typeof STORE_REGIONS)[]) {
   const localized = localizedStoreRegion(region, 'es')
   assert.equal(localized.steamLanguage, 'spanish')
+  assert.equal(localized.countryCode, STORE_REGIONS[region].countryCode)
+  assert.equal(localized.currency, STORE_REGIONS[region].currency)
+}
+
+for (const [key, value] of Object.entries(translations.ru)) {
+  if (/[A-Za-z]/.test(value) && !/[А-Яа-яЁё]/u.test(value)) {
+    assert.ok(
+      intentionallyNonCyrillicRussianValues.has(value),
+      `ru: ${key} contains no Cyrillic text`
+    )
+  }
+}
+for (const region of Object.keys(STORE_REGIONS) as (keyof typeof STORE_REGIONS)[]) {
+  const localized = localizedStoreRegion(region, 'ru')
+  assert.equal(localized.steamLanguage, 'russian')
   assert.equal(localized.countryCode, STORE_REGIONS[region].countryCode)
   assert.equal(localized.currency, STORE_REGIONS[region].currency)
 }

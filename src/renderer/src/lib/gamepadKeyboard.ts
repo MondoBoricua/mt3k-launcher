@@ -25,14 +25,18 @@ export interface TextSelectionState {
 }
 
 /**
- * Automatic opening is reserved for PlayStation controllers. Other input
- * methods can still request the ORBIT keyboard deliberately from their own UI.
+ * PlayStation and Steam controllers use ORBIT's controller-first keyboard;
+ * Xbox can request Windows' gaming-aware system input pane instead.
  */
 export function shouldUseOrbitKeyboard(
   controllerFamily: ControllerFamily | null,
   explicitlyRequested = false
 ): boolean {
-  return explicitlyRequested || controllerFamily === 'playstation'
+  return (
+    explicitlyRequested ||
+    controllerFamily === 'playstation' ||
+    controllerFamily === 'steam'
+  )
 }
 
 /** Xbox uses Windows' gaming-aware system input pane when a field opts in. */

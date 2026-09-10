@@ -5,6 +5,7 @@ import { useLibraryStore } from '@renderer/state/libraryStore'
 import { OnboardingWelcome } from './OnboardingWelcome'
 import { OnboardingSuccess } from './OnboardingSuccess'
 import { useSyncStore } from '@renderer/state/syncStore'
+import { runOnboardingLibrarySync } from './onboardingLibrarySync'
 import './onboarding.css'
 
 export function OnboardingFlow(): JSX.Element {
@@ -29,18 +30,12 @@ export function OnboardingFlow(): JSX.Element {
     const baseline = useSyncStore.getState().status.startedAt
     setSyncBaselineStartedAt(baseline)
     setOnboardingStep('success')
-    void (async () => {
-      await initLibrary()
-      // Re-running onboarding from Settings can happen while an older refresh
-      // is still active. Only queue a second pass when the first call merely
-      // joined that old session instead of creating a new one.
-      if (baseline !== undefined) {
-        await refreshLibrary()
-        if (useSyncStore.getState().status.startedAt === baseline) {
-          await refreshLibrary()
-        }
-      }
-    })()
+    void runOnboardingLibrarySync({
+      baselineStartedAt: baseline,
+      initLibrary,
+      refreshLibrary,
+      getSyncStartedAt: () => useSyncStore.getState().status.startedAt
+    })
   }
 
   return (

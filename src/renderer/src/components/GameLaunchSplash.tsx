@@ -335,7 +335,9 @@ export function GameLaunchSplash({ status }: Props): JSX.Element {
         </div>
 
         <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-accent">
-          ORBIT{status.provider ? ` · ${status.provider.toUpperCase()}` : ''}
+          ORBIT{status.trackingMethod === 'geforce-now-window'
+            ? ' · GEFORCE NOW'
+            : status.provider ? ` · ${status.provider.toUpperCase()}` : ''}
         </p>
         <h1
           id="game-launch-name"

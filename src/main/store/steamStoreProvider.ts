@@ -1,5 +1,12 @@
 import type { StoreOffer, StoreProduct, StoreRelease } from '@shared/ipc'
 import { latestLibraryActivity } from '@shared/libraryTime'
+import {
+  parseSteamDynamicStoreWishlist,
+  parseSteamWishlistCount,
+  parseSteamWishlistPayload,
+  type SteamWishlistEntry,
+  type SteamWishlistSyncResult
+} from '@shared/steamWishlistPolicy'
 import type { SteamAuthManager } from '../steam/steamAuth'
 import { gameRepository } from '../library/gameRepository'
 import { fetchWithElectronNet } from '../networkFetch'
@@ -17,12 +24,6 @@ import {
 
 const REQUEST_TIMEOUT_MS = 15_000
 const RELEASE_CALENDAR_LIMIT = 18
-
-interface SteamWishlistItem {
-  appid?: number
-  priority?: number
-  date_added?: number
-}
 
 interface FeaturedItem {
   id?: number
@@ -78,7 +79,7 @@ function parseSupportedLanguages(value?: string): string[] {
 
 function hasSupportedInterfaceLanguage(languages: string[]): boolean {
   if (languages.length === 0) return true
-  return languages.some((language) => /^(english|german|deutsch|spanish(?: - (?:spain|latin america))?|español(?: - (?:españa|latinoamérica))?|inglés|alemán)$/i.test(language))
+  return languages.some((language) => /^(english|german|deutsch|spanish(?: - (?:spain|latin america))?|español(?: - (?:españa|latinoamérica))?|inglés|alemán|russian|русский)$/iu.test(language))
 }
 
 function hasUnsupportedTitleScript(name: string): boolean {
@@ -349,51 +350,125 @@ function genreAffinity(genres: string[]): { score: number; reason?: string } {
 export async function fetchSteamWishlist(
   steamId: string,
   auth: SteamAuthManager
-): Promise<Array<{ appId: number; addedAt?: number }>> {
+): Promise<SteamWishlistSyncResult> {
   const url = new URL('https://api.steampowered.com/IWishlistService/GetWishlist/v1/')
   url.searchParams.set('steamid', steamId)
+  const countUrl = new URL(
+    'https://api.steampowered.com/IWishlistService/GetWishlistItemCount/v1/'
+  )
+  countUrl.searchParams.set('steamid', steamId)
+  let modernItems: SteamWishlistEntry[] | undefined
   try {
-    const response = await fetchWithElectronNet(url, {
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-    })
-    if (response.ok) {
-      const json = (await response.json()) as { response?: { items?: SteamWishlistItem[] } }
-      const items = json.response?.items ?? []
-      if (items.length > 0) {
-        return items
-          .filter((item): item is SteamWishlistItem & { appid: number } => Number.isInteger(item.appid))
-          .sort((left, right) => (left.priority ?? Infinity) - (right.priority ?? Infinity))
-          .map((item) => ({ appId: item.appid, addedAt: item.date_added ? item.date_added * 1000 : undefined }))
-      }
+    const [response, countResponse] = await Promise.all([
+      fetchWithElectronNet(url, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      }),
+      fetchWithElectronNet(countUrl, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      }).catch(() => undefined)
+    ])
+    if (!response.ok) throw new Error(`Steam wishlist failed (${response.status})`)
+    const payload = await response.json()
+    modernItems = parseSteamWishlistPayload(payload)
+    const expectedCount = countResponse?.ok
+      ? parseSteamWishlistCount(await countResponse.json())
+      : undefined
+    if (expectedCount !== undefined) {
+      return { items: parseSteamWishlistPayload(payload, expectedCount), complete: true }
     }
   } catch {
-    // Authenticated legacy fallback below.
+    // Authenticated fallbacks below.
   }
 
-  const collected = new Map<number, { appId: number; addedAt?: number; priority?: number }>()
-  for (let page = 0; page < 100; page++) {
-    const fallback = await auth.fetchAuthenticated(
-      `https://store.steampowered.com/wishlist/profiles/${steamId}/wishlistdata/?p=${page}`
+  try {
+    const response = await auth.fetchAuthenticated(
+      'https://store.steampowered.com/dynamicstore/userdata/',
+      {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+          Referer: 'https://store.steampowered.com/'
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      }
     )
-    if (!fallback.ok) break
-    const json = (await fallback.json()) as Record<string, { added?: number; priority?: number }>
-    const entries = Object.entries(json)
-    if (entries.length === 0) break
-    for (const [rawAppId, item] of entries) {
-      const appId = Number(rawAppId)
-      if (!Number.isInteger(appId) || appId <= 0) continue
-      collected.set(appId, {
-        appId,
-        addedAt: item.added ? item.added * 1000 : undefined,
-        priority: item.priority
-      })
+    if (!response.ok || response.url.includes('/login')) {
+      throw new Error(`Steam authenticated userdata failed (${response.status})`)
     }
+    const source = await response.text()
+    const body = source.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1]
+    const appIds = parseSteamDynamicStoreWishlist(
+      JSON.parse(body === undefined ? source : decodeHtmlText(body))
+    )
+    const modernByAppId = new Map(modernItems?.map((item) => [item.appId, item]))
+    return {
+      items: appIds.map((appId) => modernByAppId.get(appId) ?? { appId }),
+      complete: true
+    }
+  } catch {
+    // The deprecated authenticated page API is the final complete fallback.
   }
-  return [...collected.values()].sort(
-    (left, right) =>
-      (left.priority ?? Infinity) - (right.priority ?? Infinity) ||
-      (right.addedAt ?? 0) - (left.addedAt ?? 0)
-  )
+
+  try {
+    const collected = new Map<number, SteamWishlistEntry>()
+    let complete = false
+    for (let page = 0; page < 100; page++) {
+      const fallback = await auth.fetchAuthenticated(
+        `https://store.steampowered.com/wishlist/profiles/${steamId}/wishlistdata/?p=${page}`,
+        {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+        }
+      )
+      if (!fallback.ok || fallback.url.includes('/login')) {
+        throw new Error(`Steam authenticated wishlist failed (${fallback.status})`)
+      }
+      const payload = await fallback.json()
+      if (Array.isArray(payload) && payload.length === 0) {
+        complete = true
+        break
+      }
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+        throw new Error('Steam authenticated wishlist returned an invalid page')
+      }
+      const json = payload as Record<string, { added?: number; priority?: number }>
+      const entries = Object.entries(json)
+      if (entries.length === 0) {
+        complete = true
+        break
+      }
+      const sizeBeforePage = collected.size
+      for (const [rawAppId, item] of entries) {
+        const appId = Number(rawAppId)
+        if (!Number.isInteger(appId) || appId <= 0 || typeof item !== 'object' || item === null) {
+          throw new Error('Steam authenticated wishlist contained an invalid item')
+        }
+        collected.set(appId, {
+          appId,
+          addedAt: item.added ? item.added * 1000 : undefined,
+          priority: item.priority
+        })
+      }
+      if (collected.size === sizeBeforePage) {
+        throw new Error('Steam authenticated wishlist pagination did not advance')
+      }
+    }
+    if (!complete) throw new Error('Steam authenticated wishlist exceeded the pagination limit')
+    return {
+      items: [...collected.values()].sort(
+        (left, right) =>
+          (left.priority ?? Infinity) - (right.priority ?? Infinity) ||
+          (right.addedAt ?? 0) - (left.addedAt ?? 0)
+      ),
+      complete: true
+    }
+  } catch (error) {
+    if (modernItems) return { items: modernItems, complete: false }
+    throw error
+  }
 }
 
 export async function fetchFeaturedProducts(
@@ -459,8 +534,10 @@ export async function fetchSteamProduct(
   if (!response.ok) return null
   const json = (await response.json()) as Record<string, { success?: boolean; data?: SteamAppDetails }>
   const result = json[String(appId)]
-  if (!result?.success || !result.data || result.data.type?.toLowerCase() !== 'game') return null
+  if (!result?.success || !result.data) return null
   const data = result.data
+  const isGame = data.type?.toLowerCase() === 'game'
+  if (!isGame && !existing?.steamWishlisted) return null
   const checkedAt = Date.now()
   const genres = (data.genres ?? [])
     .map((genre) => genre.description?.trim())
@@ -484,10 +561,10 @@ export async function fetchSteamProduct(
   const resolvedName = data.name ?? existing?.name ?? String(appId)
   const portrait = portraitUrl(appId)
   const [epicOffer, gogOffer, xboxOffer, instantGamingOffer, artworkAvailable] = await Promise.all([
-    fetchEpicOffer(resolvedName, region, checkedAt).catch(() => null),
-    fetchGogOffer(resolvedName, region, checkedAt).catch(() => null),
-    fetchXboxOffer(resolvedName, region, checkedAt).catch(() => null),
-    fetchInstantGamingOffer(resolvedName, region, checkedAt).catch(() => null),
+    isGame ? fetchEpicOffer(resolvedName, region, checkedAt).catch(() => null) : null,
+    isGame ? fetchGogOffer(resolvedName, region, checkedAt).catch(() => null) : null,
+    isGame ? fetchXboxOffer(resolvedName, region, checkedAt).catch(() => null) : null,
+    isGame ? fetchInstantGamingOffer(resolvedName, region, checkedAt).catch(() => null) : null,
     hasRemoteArtwork(portrait)
   ])
   const externalOffers = [epicOffer, gogOffer, xboxOffer, instantGamingOffer]
@@ -508,6 +585,7 @@ export async function fetchSteamProduct(
     supportedLanguages:
       supportedLanguages.length > 0 ? supportedLanguages : existing?.supportedLanguages,
     discoverEligible:
+      isGame &&
       hasSupportedInterfaceLanguage(supportedLanguages) &&
       !hasUnsupportedTitleScript(data.name?.trim() || existing?.name || ''),
     releaseDateText: data.release_date?.date?.trim() || existing?.releaseDateText,

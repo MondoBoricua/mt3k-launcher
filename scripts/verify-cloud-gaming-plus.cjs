@@ -7,8 +7,23 @@ const vm = require('node:vm')
 const { EventEmitter } = require('node:events')
 const ts = require('typescript')
 const root = path.resolve(__dirname, '..')
+const productionOrbitPlusConfig = JSON.parse(
+  fs.readFileSync(path.join(root, 'resources', 'orbit-plus.json'), 'utf8')
+)
+const pendingOrbitPlusConfig = JSON.stringify({
+  patreonMembershipUrl: productionOrbitPlusConfig.patreonMembershipUrl,
+  serviceUrl: productionOrbitPlusConfig.serviceUrl,
+  gumroad: {
+    enabled: false,
+    testMode: true,
+    offers: productionOrbitPlusConfig.gumroad.offers
+  }
+})
 const cache = new Map()
 const counters = { fetch: 0, spawn: 0, external: 0, scan: 0 }
+const launches = []
+const fixtureSettings = { language: 'de' }
+let spawnFailure = false
 const game = { id: 'steam:42', provider: 'steam', providerGameId: '42', appId: 42, metadata: {} }
 const application = { id: 'launcher:geforce-now', name: 'GeForce NOW', target: 'native', available: true }
 const fakeWindow = { isDestroyed: () => false, minimize() {}, hide() {} }
@@ -27,14 +42,23 @@ const stubs = {
     shell: { openExternal: async () => { counters.external++ } }, BrowserWindow: class {}, dialog: {}
   },
   'electron-store': MemoryStore,
-  'node:fs': { ...fs, existsSync: () => true, readdirSync: () => [] },
+  'node:fs': {
+    ...fs,
+    existsSync: () => true,
+    readdirSync: () => [],
+    readFileSync: (file, ...args) =>
+      path.basename(String(file)) === 'orbit-plus.json'
+        ? pendingOrbitPlusConfig
+        : fs.readFileSync(file, ...args)
+  },
   'node:child_process': {
     execFile: () => { throw new Error('Unexpected process inspection') },
-    spawn: () => {
+    spawn: (executable, args, options) => {
       counters.spawn++
+      launches.push({ executable, args, options })
       const child = new EventEmitter()
       Object.assign(child, { pid: 1, exitCode: null, unref() {}, kill() { child.exitCode = 0; child.emit('exit', 0); return true } })
-      process.nextTick(() => child.emit('spawn'))
+      process.nextTick(() => child.emit(spawnFailure ? 'error' : 'spawn', ...(spawnFailure ? [new Error('Spawn fixture failed')] : [])))
       return child
     }
   }
@@ -44,7 +68,7 @@ const localStubs = {
     counters.fetch++
     return new Response(JSON.stringify({ data: { apps: { numberReturned: 1, pageInfo: { hasNextPage: false }, items: [{ id: gameId, cmsId: 42, title: 'Cloud Test', variants: [{ id: '42', appStore: 'STEAM', storeId: '42' }] }] } } }), { status: 200 })
   } },
-  'src/main/settingsStore.ts': { settingsStore: { get: key => key === 'language' ? 'de' : undefined, store: {} } },
+  'src/main/settingsStore.ts': { settingsStore: { get: key => fixtureSettings[key], store: fixtureSettings } },
   'src/main/mediaControllerBridge.ts': { MediaControllerBridge: Controller },
   'src/main/externalWindowActivation.ts': { activateExternalProcessWindow: async () => true },
   'src/main/orbitWindow.ts': { revealOrbitWindow() {} },
@@ -72,7 +96,12 @@ function load(relative) {
 }
 
 async function main() {
+  assert.equal(productionOrbitPlusConfig.gumroad.enabled, true)
+  assert.equal(productionOrbitPlusConfig.gumroad.testMode, false)
+  assert.match(productionOrbitPlusConfig.gumroad.offers.annual.checkoutUrl, /^https:\/\//)
+  assert.match(productionOrbitPlusConfig.gumroad.offers.lifetime.checkoutUrl, /^https:\/\//)
   const { orbitPlusService: plus, OrbitPlusService } = load('src/main/orbitPlus/orbitPlusService.ts')
+  const { ORBIT_PLUS_OFFLINE_ACCESS_MINIMUM_MS } = load('src/shared/ipc.ts')
   const { geForceNowCatalogService: catalog } = load('src/main/geforceNow/geforceNowCatalogService.ts')
   const { geForceNowWebService: web } = load('src/main/geforceNow/geforceNowWebService.ts')
   const { applicationService: apps } = load('src/main/applicationService.ts')
@@ -83,6 +112,19 @@ async function main() {
     plus.session = { sessionToken: 'fixture', checkedAt: now, entitlement: { source: 'patreon', plan: 'monthly', features: ['manual-audio', 'cloud-gaming'], verifiedAt: now, expiresAt: now + 86400000, offlineUntil: now + 3600000 } }
   }
   const blocked = /ORBIT Plus required: cloud-gaming/
+  const rolloutSnapshot = plus.getSnapshot()
+  assert.deepEqual(
+    rolloutSnapshot.offers.map(({ plan, priceCents, available, testMode }) => ({ plan, priceCents, available, testMode })),
+    [
+      { plan: 'annual', priceCents: 1999, available: false, testMode: true },
+      { plan: 'lifetime', priceCents: 4999, available: false, testMode: true }
+    ],
+    'Pending test-mode offers are visible but unavailable'
+  )
+  await assert.rejects(plus.openCheckout('annual'), /checkout is not available/)
+  const disabledActivation = await plus.activateLicense('ORBIT-ANNUAL-1234567890')
+  assert.equal(disabledActivation.issue, 'service-not-configured')
+  assert.deepEqual(counters, { fetch: 0, spawn: 0, external: 0, scan: 0 }, 'Disabled commerce has no side effects')
   assert.equal(catalog.getSnapshot([game]).state, 'locked')
   assert.equal(catalog.matchGame(game), null)
   catalog.refreshIfStale()
@@ -127,7 +169,7 @@ async function main() {
   now += 25 * 60000
   assert.equal(plus.getSnapshot().access, 'grace')
   assert.doesNotThrow(() => plus.requireFeature('cloud-gaming'))
-  now += 60 * 60000
+  now += ORBIT_PLUS_OFFLINE_ACCESS_MINIMUM_MS - 25 * 60000 + 1
   assert.equal(plus.getSnapshot().access, 'locked')
   assert.throws(() => plus.requireFeature('cloud-gaming'), blocked)
   await assert.rejects(catalog.refresh(true), blocked)
@@ -140,7 +182,11 @@ async function main() {
   plus.dependencies.fetch = async (_url, init) => init.method === 'DELETE'
     ? new Response(null, { status: 204 })
     : new Promise(resolve => { completeRefresh = resolve })
-  const pendingRefresh = plus.refresh()
+  const pendingRefresh = plus.refresh(true)
+  for (let attempt = 0; attempt < 10 && !completeRefresh; attempt++) {
+    await new Promise(setImmediate)
+  }
+  assert.equal(typeof completeRefresh, 'function', 'Forced Patreon refresh reaches the network fixture')
   await plus.disconnect()
   completeRefresh(new Response(JSON.stringify({ entitlement }), { status: 200 }))
   await pendingRefresh
@@ -168,6 +214,7 @@ async function main() {
   const olderRefresh = deferred(), ownerUpdate = deferred()
   const owner = newMember(async (_url, init) => init.method === 'PUT' ? ownerUpdate.promise : olderRefresh.promise)
   const oldRefresh = owner.refresh()
+  await new Promise(setImmediate)
   const disabling = owner.setOwnerTestAccess(false)
   ownerUpdate.resolve(response({ entitlement, ownerTestAccess: { available: true, enabled: false } }))
   await disabling
@@ -217,10 +264,15 @@ async function main() {
   await connected.startPatreonConnection(status => completedStates.push(status.state))
   assert.deepEqual(completedStates, ['opening-browser', 'waiting-for-browser', 'success'])
   assert.equal(connected.hasFeature('cloud-gaming'), true, 'Successful legacy Plus sign-in still unlocks cloud gaming')
-  assert.equal(connected.getSnapshot().accessUntil, entitlement.offlineUntil)
+  const confirmedAccessUntil = connected.getSnapshot().accessUntil
+  assert.equal(
+    confirmedAccessUntil,
+    now + ORBIT_PLUS_OFFLINE_ACCESS_MINIMUM_MS,
+    'A positive membership check grants the local seven-day minimum'
+  )
   connected.dependencies.fetch = async () => { throw new Error('Offline fixture') }
   assert.equal((await connected.refresh()).access, 'active', 'Transient failure retains a valid verified grant')
-  assert.equal(connected.getSnapshot().accessUntil, entitlement.offlineUntil, 'Network failure never extends access')
+  assert.equal(connected.getSnapshot().accessUntil, confirmedAccessUntil, 'Network failure never shortens access')
 
   grant()
   const beforeDispose = catalog.getSnapshot([game]).updatedAt
@@ -236,6 +288,79 @@ async function main() {
   assert.equal(updates, updatesAtDispose, 'Disposed catalog emits no late updates')
   assert.equal(catalog.getSnapshot([game]).updatedAt, beforeDispose, 'Disposed catalog keeps the last valid cache')
   assert.equal(catalog.matchGame(game).geforceNowTitle, 'Cloud Test')
+
+  // Native routing uses the selected store variant, never a generic parent CMS ID.
+  grant()
+  const nativeMatch = { ...catalog.matchGame(game), cmsId: 9999, variantId: '123456', shortName: 'Game STEAM & "Edition"' }
+  let minimized = 0
+  const nativeWindow = { isDestroyed: () => false, minimize: () => minimized++, hide() {} }
+  const installed = async () => { counters.scan++; return { applications: [application] } }
+  apps.getSnapshot = installed
+  fixtureSettings.geForceNowLaunchMode = 'native'
+  assert.equal(await apps.isGeForceNowNativeAvailable(), true)
+  let trackingArmed = 0
+  await apps.launchGeForceNowGame(nativeMatch, nativeWindow, () => { trackingArmed++ })
+  assert.equal(trackingArmed, 1, 'Native tracking is armed before the handoff')
+  const nativeLaunch = launches.at(-1)
+  assert.equal(nativeLaunch.executable, 'C:\\fixture\\GeForceNOWStreamer.exe')
+  assert.equal(nativeLaunch.args.length, 1)
+  assert.equal(nativeLaunch.options.shell, false)
+  assert.equal(nativeLaunch.options.cwd, 'C:\\fixture')
+  const route = new URLSearchParams(nativeLaunch.args[0].slice('--url-route=#?'.length))
+  assert.equal(route.get('cmsId'), nativeMatch.variantId)
+  assert.equal(route.get('parentGameId'), gameId)
+  assert.equal(route.get('shortName'), nativeMatch.shortName)
+  assert.equal(route.get('launchSource'), 'External')
+  assert.equal(minimized, 1, 'Native handoff minimizes only after successful spawn')
+
+  fixtureSettings.geForceNowLaunchMode = 'web'
+  apps.getSnapshot = async () => { throw new Error('Web must not inspect native apps') }
+  await apps.launchGeForceNowGame(nativeMatch, nativeWindow, () => { trackingArmed++ })
+  assert.equal(trackingArmed, 1, 'Web launches do not arm native session tracking')
+  assert.ok(launches.at(-1).args.some(arg => arg.startsWith('--app=https://play.geforcenow.com/games?')))
+  web.dispose()
+
+  apps.getSnapshot = installed
+  fixtureSettings.geForceNowLaunchMode = 'native'
+  stubs['node:fs'].existsSync = filename => !filename.endsWith('GeForceNOWStreamer.exe')
+  assert.equal(await apps.isGeForceNowNativeAvailable(), false, 'Partial/uninstalled client cannot enable native mode')
+  await apps.launchGeForceNowGame(nativeMatch, nativeWindow, () => { trackingArmed++ })
+  assert.equal(trackingArmed, 1, 'Web fallback does not arm native session tracking')
+  assert.ok(launches.at(-1).args.some(arg => arg.startsWith('--app=')), 'Removed app falls back to web')
+  web.dispose()
+  stubs['node:fs'].existsSync = () => true
+
+  const beforeInvalid = counters.spawn
+  for (const invalid of [
+    { ...nativeMatch, variantId: '42&launchSource=Injected' },
+    { ...nativeMatch, variantId: '9007199254740992' },
+    { ...nativeMatch, geforceNowGameId: '--app=attacker' },
+    { ...nativeMatch, shortName: 'Game\u0000Other' }
+  ]) await assert.rejects(apps.launchGeForceNowGame(invalid, nativeWindow), /Invalid GeForce NOW native/)
+  assert.equal(counters.spawn, beforeInvalid, 'Invalid native launch data causes no process start')
+  spawnFailure = true
+  await assert.rejects(apps.launchGeForceNowGame(nativeMatch, nativeWindow), /Spawn fixture failed/)
+  assert.equal(counters.spawn, beforeInvalid + 1, 'Native failure never starts a second browser session')
+  assert.equal(minimized, 1, 'Native spawn failure leaves ORBIT visible')
+  spawnFailure = false
+
+  const beforeRevoked = counters.spawn
+  plus.session = undefined
+  await assert.rejects(apps.launchGeForceNowGame(nativeMatch, nativeWindow), blocked)
+  grant()
+  apps.getSnapshot = async () => { plus.session = undefined; return { applications: [application] } }
+  await assert.rejects(apps.launchGeForceNowGame(nativeMatch, nativeWindow), blocked)
+  assert.equal(counters.spawn, beforeRevoked, 'Revocation during discovery prevents native handoff')
+
+  // Execute the actual settings validator with only the dependencies used by these inputs.
+  const handlersSource = fs.readFileSync(path.join(root, 'src/main/ipcHandlers.ts'), 'utf8')
+  const handlersAst = ts.createSourceFile('ipcHandlers.ts', handlersSource, ts.ScriptTarget.Latest, true)
+  const validator = handlersAst.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'validateSettingsPartial')
+  const validatorJs = ts.transpileModule(validator.getText(handlersAst), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
+  const validate = vm.runInNewContext(validatorJs + ';validateSettingsPartial', { ...load('src/shared/geforceNow.ts') })
+  for (const value of ['web', 'native']) assert.doesNotThrow(() => validate({ geForceNowLaunchMode: value }))
+  for (const value of ['desktop', '--url-route=bad', null, 1, {}, undefined]) assert.throws(() => validate({ geForceNowLaunchMode: value }), /Invalid GeForce NOW launch mode/)
+  console.log('Native cloud handoff: exact store route, encoded args, saved web/native choice, missing app fallback, spawn failure, settings validation and entitlement races passed.')
   console.log(`Cloud Plus main: access/expiry, native/browser gates, immediate disconnect, stale refresh/owner/auth responses, cancellation, cleanup and URL checks passed. 2000 matches: ${matchDuration.toFixed(1)} ms, one entitlement lookup.`)
 }
 main().catch(error => { console.error(error); process.exitCode = 1 })

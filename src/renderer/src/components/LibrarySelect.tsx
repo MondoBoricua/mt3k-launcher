@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Check, ChevronDown } from 'lucide-react'
 import { useBackHandler } from '@renderer/hooks/useBackHandler'
-import { focusElement } from '@renderer/lib/spatialNavigation'
+import { useFocusScope } from '@renderer/hooks/useFocusScope'
 
 export interface LibrarySelectOption<T extends string> {
   value: T
@@ -113,16 +113,20 @@ function LibrarySelectMenu<T extends string>({
   onClose: () => void
 }): JSX.Element {
   const selectedRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useBackHandler(onClose)
 
-  useEffect(() => {
-    const focusFrame = requestAnimationFrame(() => focusElement(selectedRef.current))
-    return () => {
-      cancelAnimationFrame(focusFrame)
-      if (anchor?.isConnected) requestAnimationFrame(() => focusElement(anchor))
-    }
-  }, [anchor])
+  useFocusScope({
+    scopeRef: menuRef,
+    resolveFocusTarget: () =>
+      selectedRef.current ??
+      menuRef.current?.querySelector<HTMLElement>(
+        '[data-focusable]:not([data-disabled="true"])'
+      ) ??
+      null,
+    returnFocus: anchor
+  })
 
   useEffect(() => {
     const closeOnResize = (): void => onClose()
@@ -132,6 +136,7 @@ function LibrarySelectMenu<T extends string>({
 
   return (
     <motion.div
+      ref={menuRef}
       data-focus-scope="active"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}

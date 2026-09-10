@@ -166,7 +166,7 @@ export function TopBar(): JSX.Element {
         }`}
         style={{
           translate: '-50% -50%',
-          scale: String(DOCK_SCALE[dockSize]),
+          scale: `calc(${DOCK_SCALE[dockSize]} * var(--orbit-holo-dock-scale, 1))`,
           transform: `translate3d(${rollingHome ? topBarGeometry.dockOffset : 0}px, 0, 0)`
         }}
       >
@@ -252,6 +252,7 @@ export function TopBar(): JSX.Element {
                   />
                 )}
                 <motion.span
+                  data-dock-icon
                   key={active ? `${item.id}-active` : `${item.id}-idle`}
                   initial={
                     active && motionMode !== 'calm'
@@ -294,6 +295,7 @@ export function TopBar(): JSX.Element {
                   </span>
                 )}
                 <span
+                  data-dock-label
                   aria-hidden="true"
                   className="pointer-events-none absolute left-1/2 top-[calc(100%+0.55rem)] z-30 -translate-x-1/2 translate-y-1 whitespace-nowrap rounded-full border border-white/10 bg-black/80 px-2.5 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg backdrop-blur-md transition duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100 group-data-[focused=true]:translate-y-0 group-data-[focused=true]:opacity-100"
                 >

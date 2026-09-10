@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import {
   deriveEpicDownloadActivity,
   deriveSteamDownloadActivity,
@@ -9,9 +10,12 @@ import {
   parseSteamDownloadSample
 } from '../src/main/downloads/launcherDownloadParsers.ts'
 import {
+  bytesPerSecondToMegabits,
   clampLauncherProgress,
+  launcherDownloadControlActions,
   orderedLauncherDownloads,
-  shouldApplyLauncherDownloadSnapshot
+  shouldApplyLauncherDownloadSnapshot,
+  withDerivedLauncherTransferMetrics
 } from '../src/shared/launcherDownloads.ts'
 import type { LauncherDownloadActivity, LauncherDownloadSnapshot } from '../src/shared/ipc.ts'
 import {
@@ -19,6 +23,7 @@ import {
   parseXboxPackageProgressEvent,
   XboxPackageActivityMonitor
 } from '../src/main/xbox/xboxPackageActivity.ts'
+import { isXboxInstallControlAction } from '../src/main/xbox/xboxInstallRequest.ts'
 import {
   isLauncherApplicationId,
   launcherProviderForApplicationId,
@@ -139,6 +144,43 @@ assert.equal(hasEpicPendingDownloadSettled(Number.NaN, 25_001), false)
 assert.equal(clampLauncherProgress(-2), 0)
 assert.equal(clampLauncherProgress(2), 1)
 assert.equal(clampLauncherProgress(Number.NaN), undefined)
+assert.equal(bytesPerSecondToMegabits(12_500_000), 100)
+assert.equal(bytesPerSecondToMegabits(-1), undefined)
+assert.equal(bytesPerSecondToMegabits(undefined), undefined)
+
+const measuredTransfer = withDerivedLauncherTransferMetrics(
+  {
+    id: 'xbox:transfer',
+    provider: 'xbox',
+    providerGameId: '9NBLGGH4R315',
+    title: 'Transfer',
+    phase: 'downloading',
+    confidence: 'exact',
+    bytesDownloaded: 10_000_000,
+    bytesTotal: 20_000_000,
+    updatedAt: 2_000
+  },
+  {
+    id: 'xbox:transfer',
+    provider: 'xbox',
+    providerGameId: '9NBLGGH4R315',
+    title: 'Transfer',
+    phase: 'downloading',
+    confidence: 'exact',
+    bytesDownloaded: 5_000_000,
+    bytesTotal: 20_000_000,
+    updatedAt: 1_000
+  }
+)
+assert.equal(measuredTransfer.bytesPerSecond, 5_000_000)
+assert.equal(measuredTransfer.etaSeconds, 2)
+assert.equal(
+  withDerivedLauncherTransferMetrics(
+    { ...measuredTransfer, phase: 'paused' },
+    measuredTransfer
+  ).bytesPerSecond,
+  undefined
+)
 
 const baseActivity: LauncherDownloadActivity = {
   id: 'steam:10',
@@ -156,15 +198,49 @@ assert.deepEqual(
   ]).map((activity) => activity.id),
   ['steam:20', 'steam:10']
 )
+assert.deepEqual(launcherDownloadControlActions(baseActivity), [])
+assert.deepEqual(
+  launcherDownloadControlActions({ ...baseActivity, phase: 'downloading' }),
+  ['cancel', 'open-provider']
+)
+assert.deepEqual(
+  launcherDownloadControlActions({
+    ...baseActivity,
+    id: 'xbox:request:9nblggh4r315',
+    provider: 'xbox',
+    providerGameId: '9NBLGGH4R315',
+    phase: 'paused'
+  }),
+  ['resume', 'cancel', 'open-provider']
+)
+assert.equal(isXboxInstallControlAction('pause'), true)
+assert.equal(isXboxInstallControlAction('resume'), true)
+assert.equal(isXboxInstallControlAction('delete'), false)
+
+const downloadCenterSource = await readFile(
+  new URL('../src/renderer/src/components/DownloadCenterPanel.tsx', import.meta.url),
+  'utf8'
+)
+assert.match(downloadCenterSource, /bytesPerSecondToMegabits/u)
+assert.match(downloadCenterSource, /aria-controls="download-center-info-panel"/u)
+assert.match(downloadCenterSource, /if \(infoOpen\) closeInfo\(\)/u)
+assert.match(downloadCenterSource, /window\.setInterval\(\(\) => void refreshDownloads\(\), 2_000\)/u)
+assert.match(downloadCenterSource, /overflow-y-auto/u)
+assert.match(downloadCenterSource, /PROVIDER_INSTALLATION_CAPABILITIES\.map/u)
 
 const snapshot = (revision: number): LauncherDownloadSnapshot => ({
   revision,
+  checkedAt: revision,
   updatedAt: revision,
   activities: []
 })
 assert.equal(shouldApplyLauncherDownloadSnapshot(snapshot(4), snapshot(3)), false)
 assert.equal(shouldApplyLauncherDownloadSnapshot(snapshot(4), snapshot(4)), false)
 assert.equal(shouldApplyLauncherDownloadSnapshot(snapshot(4), snapshot(5)), true)
+assert.equal(
+  shouldApplyLauncherDownloadSnapshot(snapshot(4), { ...snapshot(4), checkedAt: 5 }),
+  true
+)
 
 assert.equal(isLauncherApplicationId('launcher:epic'), true)
 assert.equal(isLauncherApplicationId('launcher:ubisoft'), true)

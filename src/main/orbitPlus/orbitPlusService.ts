@@ -4,11 +4,15 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  ORBIT_PLUS_PATREON_REFRESH_INTERVAL_MS,
+  orbitPlusConfirmedOfflineAccessUntil,
   orbitPlusHasFeature,
+  orbitPlusMembershipDecisionAccess,
   type OrbitPlusConnectionStatus,
   type OrbitPlusEntitlement,
   type OrbitPlusFeature,
   type OrbitPlusIssue,
+  type OrbitPlusMembershipDecision,
   type OrbitPlusOwnerTestAccess,
   type OrbitPlusSnapshot
 } from '@shared/ipc'
@@ -16,28 +20,38 @@ import { fetchWithElectronNet, type MainProcessFetch } from '../networkFetch'
 import {
   cachedEntitlementIsUsable,
   freshEntitlementIsUsable,
+  orbitPlusMembershipDecisionIsStale,
+  orbitPlusMembershipEndNeedsConfirmation,
   parseOrbitPlusEntitlement,
+  parseOrbitPlusMembershipDecision,
   parseOrbitPlusOwnerTestAccess,
   parseOrbitPlusPollResponse,
   parseOrbitPlusStartResponse,
   validatedOrbitPlusServiceUrl,
   validatedPatreonMembershipUrl
 } from './orbitPlusPolicy'
+import { parseGumroadCommerceConfig, type GumroadCommerceConfig } from './gumroadPolicy'
+import { GumroadLicenseService, type GumroadProviderSnapshot } from './gumroadLicenseService'
 
 const DEFAULT_PATREON_MEMBERSHIP_URL =
   'https://www.patreon.com/cw/GAMINGCONSOLEMODE/membership'
 const REQUEST_TIMEOUT_MS = 12_000
 const FRESH_ENTITLEMENT_MS = 20 * 60_000
+const MEMBERSHIP_END_CONFIRMATION_DELAY_MS = 1_500
+const OFFLINE_RETRY_GRACE_MS = 24 * 60 * 60_000
 
 interface PublicOrbitPlusConfig {
   patreonMembershipUrl?: unknown
   serviceUrl?: unknown
+  gumroad?: unknown
 }
 
 interface StoredOrbitPlusSession {
-  sessionToken: string
+  sessionToken?: string
   accountName?: string
   entitlement?: OrbitPlusEntitlement
+  membership?: OrbitPlusMembershipDecision
+  offlineAccessUntil?: number
   ownerTestAccess?: OrbitPlusOwnerTestAccess
   checkedAt: number
 }
@@ -72,10 +86,15 @@ function readPublicConfig(): PublicOrbitPlusConfig {
   }
 }
 
-function loadConfig(): { purchaseUrl: string; serviceUrl?: string } {
+function loadConfig(): {
+  purchaseUrl: string
+  serviceUrl?: string
+  gumroad?: GumroadCommerceConfig
+} {
   const config = readPublicConfig()
   let purchaseUrl = DEFAULT_PATREON_MEMBERSHIP_URL
   let serviceUrl: string | undefined
+  let gumroad: GumroadCommerceConfig | undefined
   try {
     purchaseUrl = validatedPatreonMembershipUrl(
       process.env['ORBIT_PATREON_MEMBERSHIP_URL'] ?? config.patreonMembershipUrl ?? purchaseUrl
@@ -91,7 +110,12 @@ function loadConfig(): { purchaseUrl: string; serviceUrl?: string } {
   } catch {
     serviceUrl = undefined
   }
-  return { purchaseUrl, serviceUrl }
+  try {
+    gumroad = parseGumroadCommerceConfig(config.gumroad)
+  } catch {
+    gumroad = undefined
+  }
+  return { purchaseUrl, serviceUrl, gumroad }
 }
 
 function jsonRecord(value: unknown): Record<string, unknown> {
@@ -103,24 +127,46 @@ function jsonRecord(value: unknown): Record<string, unknown> {
 
 function validatedStoredSession(value: unknown): StoredOrbitPlusSession {
   const input = jsonRecord(value)
+  if (typeof input.checkedAt !== 'number' || !Number.isSafeInteger(input.checkedAt)) {
+    throw new Error('Invalid stored ORBIT Plus session')
+  }
   if (
-    typeof input.sessionToken !== 'string' ||
-    !input.sessionToken.trim() ||
-    input.sessionToken.length > 8_192 ||
-    typeof input.checkedAt !== 'number' ||
-    !Number.isSafeInteger(input.checkedAt)
+    input.sessionToken !== undefined &&
+    (typeof input.sessionToken !== 'string' ||
+      !input.sessionToken.trim() ||
+      input.sessionToken.length > 8_192)
   ) {
     throw new Error('Invalid stored ORBIT Plus session')
   }
+  const sessionToken =
+    typeof input.sessionToken === 'string' ? input.sessionToken.trim() : undefined
   const accountName =
     typeof input.accountName === 'string' && input.accountName.trim().length <= 160
       ? input.accountName.trim()
       : undefined
+  const entitlement =
+    input.entitlement === undefined ? undefined : parseOrbitPlusEntitlement(input.entitlement)
+  const membership =
+    input.membership === undefined
+      ? undefined
+      : parseOrbitPlusMembershipDecision(input.membership, entitlement)
+  if (
+    input.offlineAccessUntil !== undefined &&
+    (typeof input.offlineAccessUntil !== 'number' ||
+      !Number.isSafeInteger(input.offlineAccessUntil) ||
+      input.offlineAccessUntil <= 0)
+  ) {
+    throw new Error('Invalid stored ORBIT Plus session')
+  }
+  const offlineAccessUntil =
+    typeof input.offlineAccessUntil === 'number' ? input.offlineAccessUntil : undefined
+  if (!sessionToken && !entitlement) throw new Error('Invalid stored ORBIT Plus session')
   return {
-    sessionToken: input.sessionToken.trim(),
+    sessionToken,
     accountName,
-    entitlement:
-      input.entitlement === undefined ? undefined : parseOrbitPlusEntitlement(input.entitlement),
+    entitlement,
+    membership,
+    offlineAccessUntil,
     ownerTestAccess: parseOrbitPlusOwnerTestAccess(input.ownerTestAccess),
     checkedAt: input.checkedAt
   }
@@ -129,6 +175,7 @@ function validatedStoredSession(value: unknown): StoredOrbitPlusSession {
 export class OrbitPlusService {
   private readonly dependencies: OrbitPlusServiceDependencies
   private readonly config = loadConfig()
+  private readonly licenseService: GumroadLicenseService
   private session: StoredOrbitPlusSession | undefined
   private sessionLoaded = false
   private operationGeneration = 0
@@ -146,6 +193,11 @@ export class OrbitPlusService {
         dependencies.delay ??
         ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
     }
+    this.licenseService = new GumroadLicenseService(this.config.gumroad, {
+      fetch: this.dependencies.fetch,
+      openExternal: this.dependencies.openExternal,
+      now: this.dependencies.now
+    })
   }
 
   private secureStorageAvailable(): boolean {
@@ -192,34 +244,101 @@ export class OrbitPlusService {
     this.sessionLoaded = true
   }
 
-  private snapshot(issue?: OrbitPlusIssue): OrbitPlusSnapshot {
+  private expireConnection(session: StoredOrbitPlusSession): void {
+    if (!session.entitlement) {
+      this.clearSession()
+      return
+    }
+    this.saveSession({
+      ...session,
+      sessionToken: undefined,
+      offlineAccessUntil: this.retryGraceUntil(session)
+    })
+  }
+
+  private retryGraceUntil(session: StoredOrbitPlusSession): number | undefined {
+    if (!session.entitlement || session.membership?.state === 'inactive') return undefined
+    const confirmedMinimum = orbitPlusConfirmedOfflineAccessUntil(
+      session.entitlement,
+      session.membership,
+      session.checkedAt
+    )
+    return Math.max(
+      session.offlineAccessUntil ?? confirmedMinimum ?? 0,
+      this.dependencies.now() + OFFLINE_RETRY_GRACE_MS
+    )
+  }
+
+  private preserveAccessForRetry(session: StoredOrbitPlusSession): void {
+    if (!session.entitlement || session.membership?.state === 'inactive') return
+    try {
+      this.saveSession({ ...session, offlineAccessUntil: this.retryGraceUntil(session) })
+    } catch {
+      // A failed retry must not turn a temporary storage problem into revocation.
+    }
+  }
+
+  private snapshot(
+    issue?: OrbitPlusIssue,
+    licenseSnapshot: GumroadProviderSnapshot = this.licenseService.getSnapshot()
+  ): OrbitPlusSnapshot {
     const now = this.dependencies.now()
     const session = this.loadSession()
     const ownerDisabled = session?.ownerTestAccess?.enabled === false
-    const entitlementNotExpired = !ownerDisabled && freshEntitlementIsUsable(session?.entitlement, now)
+    const entitlementNotExpired = freshEntitlementIsUsable(session?.entitlement, now)
     const freshlyVerified =
       entitlementNotExpired &&
       session !== undefined &&
       session.checkedAt + FRESH_ENTITLEMENT_MS >= now
-    const cachedAccess = !ownerDisabled && cachedEntitlementIsUsable(session?.entitlement, now)
+    const cachedAccess = cachedEntitlementIsUsable(session?.entitlement, now)
     const entitlement = session?.entitlement
+    const offlineAccessUntil = session
+      ? session.offlineAccessUntil ??
+        orbitPlusConfirmedOfflineAccessUntil(entitlement, session.membership, session.checkedAt)
+      : undefined
+    const offlineAccess =
+      entitlement !== undefined &&
+      offlineAccessUntil !== undefined &&
+      offlineAccessUntil >= now
     const permanent = entitlement?.source === 'lifetime-key' && entitlement.expiresAt === undefined
-    const accessUntil = Math.min(
-      entitlement?.expiresAt ?? Infinity,
-      Math.max(
-        (session?.checkedAt ?? 0) + FRESH_ENTITLEMENT_MS,
-        permanent ? Infinity : entitlement?.offlineUntil ?? 0
-      )
+    const legacyAccessUntil = Math.max(
+      Math.min(
+        entitlement?.expiresAt ?? Infinity,
+        Math.max(
+          (session?.checkedAt ?? 0) + FRESH_ENTITLEMENT_MS,
+          permanent ? Infinity : entitlement?.offlineUntil ?? 0
+        )
+      ),
+      offlineAccessUntil ?? 0
     )
-    return {
-      access: freshlyVerified ? 'active' : cachedAccess ? 'grace' : 'locked',
-      accessUntil: (freshlyVerified || cachedAccess) && Number.isFinite(accessUntil) ? accessUntil : undefined,
-      connected: Boolean(session),
+    const decisionAccess = session?.membership
+      ? orbitPlusMembershipDecisionAccess(
+          session.membership,
+          entitlement,
+          now,
+          offlineAccessUntil
+        )
+      : undefined
+    const access = ownerDisabled
+      ? 'locked'
+      : decisionAccess?.access ??
+        (freshlyVerified ? 'active' : cachedAccess || offlineAccess ? 'grace' : 'locked')
+    const accessUntil = decisionAccess?.accessUntil ??
+      ((freshlyVerified || cachedAccess || offlineAccess) && Number.isFinite(legacyAccessUntil)
+        ? legacyAccessUntil
+        : undefined)
+    const accessGranted = access === 'active' || access === 'grace'
+    const patreonSnapshot: OrbitPlusSnapshot = {
+      access,
+      accessUntil: accessGranted ? accessUntil : undefined,
+      connected: Boolean(session?.sessionToken),
       serviceAvailable: Boolean(this.config.serviceUrl),
       secureStorageAvailable: this.secureStorageAvailable(),
       purchaseUrl: this.config.purchaseUrl,
       accountName: session?.accountName,
-      entitlement: freshlyVerified || cachedAccess ? session?.entitlement : undefined,
+      entitlement: accessGranted ? entitlement : undefined,
+      membership: session?.membership,
+      offlineAccessUntil,
       ownerTestAccess: session?.ownerTestAccess,
       checkedAt: session?.checkedAt,
       issue:
@@ -229,6 +348,37 @@ export class OrbitPlusService {
           : !this.secureStorageAvailable()
             ? 'secure-storage-unavailable'
             : undefined)
+    }
+    const patreonGranted =
+      patreonSnapshot.access !== 'locked' && patreonSnapshot.entitlement !== undefined
+    const licenseGranted =
+      licenseSnapshot.access !== 'locked' && licenseSnapshot.entitlement !== undefined
+    const licenseWins =
+      licenseGranted &&
+      (!patreonGranted ||
+        (licenseSnapshot.access === 'active' && patreonSnapshot.access === 'grace') ||
+        licenseSnapshot.entitlement?.plan === 'lifetime')
+    return {
+      ...patreonSnapshot,
+      ...(licenseWins
+        ? {
+            access: licenseSnapshot.access,
+            accessUntil: licenseSnapshot.accessUntil,
+            offlineAccessUntil: licenseSnapshot.license.offlineAccessUntil,
+            entitlement: licenseSnapshot.entitlement,
+            membership: undefined,
+            accountName: undefined
+          }
+        : {}),
+      offers: this.licenseService.offers(),
+      license: licenseSnapshot.license,
+      activeSources: [
+        ...(patreonGranted ? (['patreon'] as const) : []),
+        ...(licenseGranted && licenseSnapshot.entitlement
+          ? [licenseSnapshot.entitlement.source]
+          : [])
+      ],
+      issue: issue ?? licenseSnapshot.issue ?? patreonSnapshot.issue
     }
   }
 
@@ -281,48 +431,109 @@ export class OrbitPlusService {
   }
 
   async restore(): Promise<OrbitPlusSnapshot> {
-    const session = this.loadSession()
-    if (!session) return this.snapshot()
-    return this.refresh()
+    return this.refresh(false)
   }
 
-  async refresh(): Promise<OrbitPlusSnapshot> {
+  private async refreshPatreon(force = false): Promise<OrbitPlusSnapshot> {
     if (this.connectionRunning) return this.snapshot()
     const session = this.loadSession()
     if (!session) return this.snapshot()
-    if (!this.config.serviceUrl) return this.snapshot('service-not-configured')
+    if (
+      !force &&
+      session.checkedAt + ORBIT_PLUS_PATREON_REFRESH_INTERVAL_MS > this.dependencies.now()
+    ) {
+      return this.snapshot()
+    }
+    if (!session.sessionToken) {
+      this.preserveAccessForRetry(session)
+      return this.snapshot('session-expired')
+    }
+    if (!this.config.serviceUrl) {
+      this.preserveAccessForRetry(session)
+      return this.snapshot('service-not-configured')
+    }
     const generation = this.beginOperation()
     try {
-      const { response, body } = await this.requestJson('/v1/entitlements/orbit-plus', {
+      const readMembership = () => this.requestJson('/v1/entitlements/orbit-plus', {
         headers: { authorization: `Bearer ${session.sessionToken}` }
       }, [200, 401])
+      let { response, body } = await readMembership()
       if (generation !== this.operationGeneration) return this.snapshot()
       if (response.status === 401) {
-        this.clearSession()
+        this.expireConnection(session)
         return this.snapshot('session-expired')
       }
       if (response.status !== 200) throw new Error('ORBIT Plus refresh failed')
+      const parseMembership = (value: Record<string, unknown>) => {
+        const parsedEntitlement =
+          value.entitlement === undefined
+            ? undefined
+            : parseOrbitPlusEntitlement(value.entitlement)
+        const membership =
+          value.membership === undefined
+            ? undefined
+            : parseOrbitPlusMembershipDecision(value.membership, parsedEntitlement)
+        return {
+          entitlement:
+            membership || freshEntitlementIsUsable(parsedEntitlement, this.dependencies.now())
+              ? parsedEntitlement
+              : undefined,
+          membership,
+          ownerTestAccess: parseOrbitPlusOwnerTestAccess(value.ownerTestAccess)
+        }
+      }
+      let parsed = parseMembership(body)
+      if (orbitPlusMembershipDecisionIsStale(session.membership, parsed.membership)) {
+        this.preserveAccessForRetry(session)
+        return this.snapshot('verification-failed')
+      }
+      if (
+        parsed.membership === undefined &&
+        orbitPlusMembershipEndNeedsConfirmation(
+          session.entitlement,
+          parsed.entitlement,
+          parsed.ownerTestAccess
+        )
+      ) {
+        await this.dependencies.delay(MEMBERSHIP_END_CONFIRMATION_DELAY_MS)
+        if (generation !== this.operationGeneration) return this.snapshot()
+        const confirmation = await readMembership()
+        if (generation !== this.operationGeneration) return this.snapshot()
+        if (confirmation.response.status === 401) {
+          this.expireConnection(session)
+          return this.snapshot('session-expired')
+        }
+        if (confirmation.response.status !== 200) {
+          throw new Error('ORBIT Plus membership-end confirmation failed')
+        }
+        body = confirmation.body
+        parsed = parseMembership(body)
+        if (orbitPlusMembershipDecisionIsStale(session.membership, parsed.membership)) {
+          this.preserveAccessForRetry(session)
+          return this.snapshot('verification-failed')
+        }
+      }
       const accountName =
         typeof body.accountName === 'string' && body.accountName.trim().length <= 160
           ? body.accountName.trim()
           : session.accountName
-      const parsedEntitlement =
-        body.entitlement === undefined ? undefined : parseOrbitPlusEntitlement(body.entitlement)
-      const ownerTestAccess = parseOrbitPlusOwnerTestAccess(body.ownerTestAccess)
-      const entitlement = freshEntitlementIsUsable(parsedEntitlement, this.dependencies.now())
-        ? parsedEntitlement
-        : undefined
       const checkedAt = this.dependencies.now()
       this.saveSession({
         sessionToken: session.sessionToken,
         accountName,
-        entitlement,
-        ownerTestAccess,
+        entitlement: parsed.entitlement,
+        membership: parsed.membership,
+        offlineAccessUntil: orbitPlusConfirmedOfflineAccessUntil(
+          parsed.entitlement,
+          parsed.membership,
+          checkedAt
+        ),
+        ownerTestAccess: parsed.ownerTestAccess,
         checkedAt
       })
-      if (!entitlement) {
+      if (!parsed.entitlement) {
         return this.snapshot(
-          ownerTestAccess && !ownerTestAccess.enabled
+          parsed.ownerTestAccess && !parsed.ownerTestAccess.enabled
             ? 'owner-test-disabled'
             : 'membership-required'
         )
@@ -330,8 +541,16 @@ export class OrbitPlusService {
       return this.snapshot()
     } catch {
       if (generation !== this.operationGeneration) return this.snapshot()
+      this.preserveAccessForRetry(this.loadSession() ?? session)
       return this.snapshot('network-unavailable')
     }
+  }
+
+  async refresh(forceValue: unknown = false): Promise<OrbitPlusSnapshot> {
+    if (typeof forceValue !== 'boolean') throw new Error('Invalid ORBIT Plus refresh mode')
+    const licenseSnapshot = await this.licenseService.refresh(forceValue)
+    const patreonSnapshot = await this.refreshPatreon(forceValue)
+    return this.snapshot(patreonSnapshot.issue ?? licenseSnapshot.issue, licenseSnapshot)
   }
 
   async startPatreonConnection(
@@ -392,6 +611,8 @@ export class OrbitPlusService {
         )
         if (generation !== this.operationGeneration) return this.snapshot()
         if (pollResponse.status === 410) {
+          const existingSession = this.loadSession()
+          if (existingSession) this.preserveAccessForRetry(existingSession)
           const snapshot = this.snapshot('session-expired')
           sendStatus({ state: 'error', issue: 'session-expired', snapshot })
           return snapshot
@@ -403,6 +624,8 @@ export class OrbitPlusService {
           continue
         }
         if (status.state !== 'complete') {
+          const existingSession = this.loadSession()
+          if (existingSession) this.preserveAccessForRetry(existingSession)
           const issue: OrbitPlusIssue =
             status.state === 'expired' ? 'session-expired' : 'verification-failed'
           const snapshot = this.snapshot(issue)
@@ -410,21 +633,27 @@ export class OrbitPlusService {
           return snapshot
         }
 
-        const entitlement = freshEntitlementIsUsable(
-          status.entitlement,
-          this.dependencies.now()
-        )
-          ? status.entitlement
-          : undefined
+        const entitlement =
+          status.membership || freshEntitlementIsUsable(status.entitlement, this.dependencies.now())
+            ? status.entitlement
+            : undefined
+        const checkedAt = this.dependencies.now()
         this.saveSession({
           sessionToken: status.sessionToken,
           accountName: status.accountName,
           entitlement,
+          membership: status.membership,
+          offlineAccessUntil: orbitPlusConfirmedOfflineAccessUntil(
+            entitlement,
+            status.membership,
+            checkedAt
+          ),
           ownerTestAccess: status.ownerTestAccess,
-          checkedAt: this.dependencies.now()
+          checkedAt
         })
-        const snapshot = entitlement
-          ? this.snapshot()
+        const current = this.snapshot()
+        const snapshot = current.access !== 'locked'
+          ? current
           : this.snapshot(
               status.ownerTestAccess && !status.ownerTestAccess.enabled
                 ? 'owner-test-disabled'
@@ -438,6 +667,8 @@ export class OrbitPlusService {
       return snapshot
     } catch {
       if (generation !== this.operationGeneration) return this.snapshot()
+      const existingSession = this.loadSession()
+      if (existingSession) this.preserveAccessForRetry(existingSession)
       const snapshot = this.snapshot('network-unavailable')
       sendStatus({ state: 'error', issue: 'network-unavailable', snapshot })
       return snapshot
@@ -455,6 +686,20 @@ export class OrbitPlusService {
     return this.snapshot('cancelled')
   }
 
+  async openCheckout(plan: unknown): Promise<void> {
+    await this.licenseService.openCheckout(plan)
+  }
+
+  async activateLicense(key: unknown): Promise<OrbitPlusSnapshot> {
+    const licenseSnapshot = await this.licenseService.activate(key)
+    return this.snapshot(licenseSnapshot.issue, licenseSnapshot)
+  }
+
+  async deactivateLicense(): Promise<OrbitPlusSnapshot> {
+    const licenseSnapshot = await this.licenseService.deactivate()
+    return this.snapshot(licenseSnapshot.issue, licenseSnapshot)
+  }
+
   async setOwnerTestAccess(enabled: unknown): Promise<OrbitPlusSnapshot> {
     if (typeof enabled !== 'boolean') throw new Error('Invalid owner test access state')
     if (this.connectionRunning) return this.snapshot()
@@ -462,6 +707,7 @@ export class OrbitPlusService {
     if (!session || !session.ownerTestAccess?.available) {
       return this.snapshot('verification-failed')
     }
+    if (!session.sessionToken) return this.snapshot('session-expired')
     if (!this.config.serviceUrl) return this.snapshot('service-not-configured')
 
     const generation = this.beginOperation()
@@ -477,7 +723,7 @@ export class OrbitPlusService {
       )
       if (generation !== this.operationGeneration) return this.snapshot()
       if (response.status === 401) {
-        this.clearSession()
+        this.expireConnection(session)
         return this.snapshot('session-expired')
       }
       if (response.status !== 200) return this.snapshot('verification-failed')
@@ -488,24 +734,38 @@ export class OrbitPlusService {
       }
       const entitlement =
         body.entitlement === undefined ? undefined : parseOrbitPlusEntitlement(body.entitlement)
+      const membership =
+        body.membership === undefined
+          ? undefined
+          : parseOrbitPlusMembershipDecision(body.membership, entitlement)
+      if (orbitPlusMembershipDecisionIsStale(session.membership, membership)) {
+        this.preserveAccessForRetry(session)
+        return this.snapshot('verification-failed')
+      }
       const accountName =
         typeof body.accountName === 'string' && body.accountName.trim().length <= 160
           ? body.accountName.trim()
           : session.accountName
+      const checkedAt = this.dependencies.now()
       this.saveSession({
         sessionToken: session.sessionToken,
         accountName,
         entitlement,
+        membership,
+        offlineAccessUntil: enabled
+          ? orbitPlusConfirmedOfflineAccessUntil(entitlement, membership, checkedAt)
+          : undefined,
         ownerTestAccess,
-        checkedAt: this.dependencies.now()
+        checkedAt
       })
       if (!enabled) return this.snapshot('owner-test-disabled')
-      if (!freshEntitlementIsUsable(entitlement, this.dependencies.now())) {
+      if (this.snapshot().access === 'locked') {
         return this.snapshot('verification-failed')
       }
       return this.snapshot()
     } catch {
       if (generation !== this.operationGeneration) return this.snapshot()
+      this.preserveAccessForRetry(this.loadSession() ?? session)
       return this.snapshot('network-unavailable')
     }
   }
@@ -514,7 +774,7 @@ export class OrbitPlusService {
     const session = this.loadSession()
     this.cancelPatreonConnection()
     this.clearSession()
-    if (session && this.config.serviceUrl) {
+    if (session?.sessionToken && this.config.serviceUrl) {
       await this.requestJson(
         '/v1/sessions/current',
         {
@@ -525,6 +785,11 @@ export class OrbitPlusService {
       ).catch(() => undefined)
     }
     return this.snapshot()
+  }
+
+  dispose(): void {
+    this.cancelPatreonConnection()
+    this.licenseService.dispose()
   }
 }
 

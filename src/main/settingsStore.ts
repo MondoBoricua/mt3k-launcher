@@ -1,9 +1,11 @@
 import { DEFAULT_LANGUAGE, normalizeLanguage } from '@shared/language'
 import Store from 'electron-store'
+import { normalizeGeForceNowLaunchMode } from '@shared/geforceNow'
 import { normalizeTextScale, TEXT_SCALE_DEFAULT } from '@shared/textScale'
 import {
   DEFAULT_AUDIO_CUE_PRESETS,
   isCornerStyleId,
+  isHomeLayoutId,
   isThemeId,
   type OrbitSettings
 } from '@shared/ipc'
@@ -66,6 +68,7 @@ const defaults: OrbitSettings = {
   gameTitleMusicDelaySeconds: GAME_TITLE_MUSIC_DELAY_DEFAULT,
   gameTitleMusicFadeSeconds: GAME_TITLE_MUSIC_FADE_DEFAULT,
   gameCardPrimaryAction: 'launch',
+  geForceNowLaunchMode: 'web',
   closeLaunchersAfterGame: false,
   notificationsEnabled: true,
   notificationPosition: 'top-right',
@@ -90,6 +93,11 @@ const LEGACY_STEAM_GRID_DB_TOKEN = 'steamGridDbApiKey'
 const LEGACY_STEAM_WEB_API_KEY = 'steamWebApiKey'
 const legacySettingsStore = settingsStore as unknown as Store<Record<string, unknown>>
 
+const storedHomeLayout = legacySettingsStore.get('homeLayout')
+if (!isHomeLayoutId(storedHomeLayout)) {
+  legacySettingsStore.set('homeLayout', 'orbit')
+}
+
 /**
  * Renderer-facing settings must never inherit credentials left by an older
  * ORBIT build. The vault migrates this legacy value once OS encryption is
@@ -99,8 +107,10 @@ export function publicSettingsSnapshot(): OrbitSettings {
   const snapshot = { ...legacySettingsStore.store }
   snapshot.theme = isThemeId(snapshot.theme) ? snapshot.theme : 'midnight'
   snapshot.cornerStyle = isCornerStyleId(snapshot.cornerStyle) ? snapshot.cornerStyle : 'theme'
+  snapshot.homeLayout = isHomeLayoutId(snapshot.homeLayout) ? snapshot.homeLayout : 'orbit'
   snapshot.language = normalizeLanguage(snapshot.language)
   snapshot.textScale = normalizeTextScale(snapshot.textScale)
+  snapshot.geForceNowLaunchMode = normalizeGeForceNowLaunchMode(snapshot.geForceNowLaunchMode)
   snapshot.launcherMusic = snapshot.launcherMusic ?? LAUNCHER_MUSIC_ENABLED_DEFAULT
   snapshot.launcherMusicVolume = normalizeLauncherMusicVolume(snapshot.launcherMusicVolume)
   snapshot.launcherMusicSource = isLauncherMusicSource(snapshot.launcherMusicSource)

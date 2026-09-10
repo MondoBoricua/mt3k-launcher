@@ -4,7 +4,8 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const path = require('node:path')
 const { createRequire } = require('node:module')
-const { app, BrowserWindow } = require('electron')
+const prepareOnly = process.argv.includes('--prepare-only')
+const { app, BrowserWindow } = prepareOnly ? {} : require('electron')
 const { build } = createRequire(require.resolve('vite'))('esbuild')
 
 const root = path.resolve(__dirname, '..')
@@ -14,8 +15,13 @@ const viewsOnly = process.argv.includes('--views-only')
 const textScaleMode = viewsOnly || process.argv.includes('--text-scale')
 const backgroundMotionPlusMode = process.argv.includes('--background-motion-plus')
 const premiumAppearanceMode = process.argv.includes('--premium-appearance')
-app.setPath('userData', path.join(output, 'profile'))
-app.commandLine.appendSwitch('disable-renderer-backgrounding')
+const uninstalledColorsMode = process.argv.includes('--uninstalled-colors')
+const cuadroHomeMode = process.argv.includes('--cuadro-home')
+const orbitHomeMode = process.argv.includes('--orbit-home')
+if (!prepareOnly) {
+  app.setPath('userData', path.join(output, 'profile'))
+  app.commandLine.appendSwitch('disable-renderer-backgrounding')
+}
 
 const fixture = `
 import React from 'react'
@@ -40,6 +46,8 @@ import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 import { OnboardingWelcome } from '@renderer/views/Onboarding/OnboardingWelcome'
 
 const errors = []
+const focusEvents = []
+document.addEventListener('focusin', event => focusEvents.push(event.target))
 const pad = { id: 'Xbox Controller', index: 0, connected: true, mapping: 'standard', buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })), axes: [0, 0, 0, 0] }
 Object.defineProperty(navigator, 'getGamepads', { value: () => [pad] })
 Object.defineProperty(document, 'hasFocus', { value: () => true })
@@ -54,7 +62,7 @@ const responses = {
   'app.getVersion': '0.1.3',
   'game.resolveTrailer': null, 'game.resolveTitleMusic': null, 'game.resolveAchievements': null,
   'store.search': { products: [] },
-  'downloads.get': { revision: 0, updatedAt: 0, activities: [] },
+  'downloads.get': { revision: 0, checkedAt: 0, updatedAt: 0, activities: [] },
   'system.status.get': { platform: 'windows', state: 'ready', checkedAt: 0, battery: { present: false, charging: false, powerSource: 'ac' }, network: { connected: false, type: 'unknown' }, bluetooth: { available: false, enabled: false } },
   'retroAchievements.credentials.get': { configured: false },
   'steam.credentials.get': { configured: false },
@@ -99,10 +107,36 @@ let exited = 0
 pushBackHandler(() => exited++)
 const sampleGame = { id: 'local:text-size', provider: 'local', providerGameId: 'text-size', name: 'The Long Adventure: A Journey Beyond the Horizon', installed: true, addedAt: Date.now(), lastPlayed: Date.now(), playtimeMinutes: 147,
   local: { executablePath: 'C:/test/game.exe' }, metadata: { genres: ['Adventure', 'Role-playing'], developers: ['Example Studio'], summary: 'Explore a vast world, discover new places and experience an unforgettable adventure with your friends.' } }
+const requestedFixture = new URLSearchParams(window.location.search).get('fixture')
+if (requestedFixture === 'cuadro') {
+  sampleGame.metadata.completionTimes = {
+    state: 'available', provider: 'howlongtobeat', mainStoryMinutes: 1_620,
+    mainExtraMinutes: 2_460, completionistMinutes: 3_780, allStylesMinutes: 2_760,
+    fetchedAt: Date.now()
+  }
+  responses['game.resolveAchievements'] = {
+    gameId: sampleGame.id, provider: 'local', state: 'available', unlocked: 2, total: 4,
+    fetchedAt: Date.now(), achievements: [
+      { id: 'first-step', name: 'Der erste Schritt', unlocked: true, unlockedAt: Date.now() - 1_000 },
+      { id: 'explorer', name: 'Weit gereist', unlocked: true, unlockedAt: Date.now() },
+      { id: 'secret', name: 'Geheimes Kapitel', unlocked: false },
+      { id: 'complete', name: 'Alles geschafft', unlocked: false }
+    ]
+  }
+  usePreferencesStore.setState({ homeLayout: 'cuadro', showAchievements: true })
+  document.documentElement.dataset.homeLayout = 'cuadro'
+  useLibraryStore.setState({
+    snapshot: {
+      ...emptyLibrary,
+      games: Array.from({ length: 8 }, (_, i) => ({ ...sampleGame, id: 'local:sample-' + i }))
+    }
+  })
+  useNavigationStore.setState({ mainView: 'home' })
+}
 let renderView
 function Fixture() {
   useGamepadNavigation()
-  const [view, setView] = React.useState('settings')
+  const [view, setView] = React.useState(requestedFixture === 'cuadro' ? 'home' : 'settings')
   renderView = setView
   return <>{view !== 'onboarding' && <TopBar />}{view === 'settings' ? <SettingsView /> : view === 'home' ? <HomeView /> : view === 'library' ? <LibraryView /> : view === 'store' ? <StoreView /> : view === 'onboarding' ? <OnboardingWelcome onContinue={() => {}} /> : <GameDetailPanel game={sampleGame} />}<NotificationCenter /></>
 }
@@ -117,23 +151,68 @@ window.settingsQA = {
   hydrate: () => usePreferencesStore.getState().hydrate(),
   legacyScale: () => { delete settings.textScale },
   setLayout: (homeLayout) => { usePreferencesStore.setState({ homeLayout }); document.documentElement.dataset.homeLayout = homeLayout },
+  setHomeBanners: (showHomeBanners) => usePreferencesStore.setState({ showHomeBanners }),
+  setCardSize: (gameCardSize) => { usePreferencesStore.setState({ gameCardSize }); document.documentElement.dataset.cardSize = gameCardSize },
+  setHomeInsights: () => {
+    sampleGame.metadata.completionTimes = {
+      state: 'available', provider: 'howlongtobeat', mainStoryMinutes: 1_620,
+      mainExtraMinutes: 2_460, completionistMinutes: 3_780, allStylesMinutes: 2_760,
+      fetchedAt: Date.now()
+    }
+    sampleGame.metadata.releaseDateText = '2024'
+    sampleGame.metadata.criticScore = 88
+    sampleGame.metadata.publishers = ['Example Publishing']
+    responses['game.resolveAchievements'] = {
+      gameId: sampleGame.id, provider: 'local', state: 'available', unlocked: 2, total: 4,
+      fetchedAt: Date.now(),
+      achievements: [
+        { id: 'first-step', name: 'Der erste Schritt', unlocked: true, unlockedAt: Date.now() - 1_000 },
+        { id: 'explorer', name: 'Weit gereist', unlocked: true, unlockedAt: Date.now() },
+        { id: 'secret', name: 'Geheimes Kapitel', unlocked: false },
+        { id: 'complete', name: 'Alles geschafft', unlocked: false }
+      ]
+    }
+  },
   showView: (view) => {
     useLibraryStore.setState({ snapshot: { ...emptyLibrary, games: Array.from({ length: 8 }, (_, i) => ({ ...sampleGame, id: 'local:sample-' + i })) } })
     useNavigationStore.setState({ mainView: view === 'details' ? 'library' : view })
     renderView(view)
   },
+  showUninstalledLibrary: () => {
+    useLibraryStore.setState({ snapshot: { ...emptyLibrary, games: Array.from({ length: 8 }, (_, i) => ({ ...sampleGame, id: 'local:uninstalled-' + i, installed: false })) } })
+    useNavigationStore.setState({ mainView: 'library' })
+    renderView('library')
+  },
+  setUninstalledColor: (color) => usePreferencesStore.getState().setUninstalledGameColor(color),
   notification: () => useNotificationStore.getState().push({ titleKey: 'notification.test.title', messageKey: 'notification.test.body', force: true, durationMs: 60000 }),
   clearNotifications: () => useNotificationStore.setState({ items: [] }),
   button: (index, pressed) => { pad.buttons[index] = { pressed, touched: pressed, value: pressed ? 1 : 0 } },
   setPage: (page) => useSettingsNavigationStore.getState().setPage(page),
   setLanguage: (language) => usePreferencesStore.setState({ language }),
+  hasPlusFeature: (feature) => useOrbitPlusStore.getState().hasFeature(feature),
+  showPlusCommerce: () => useOrbitPlusStore.setState({
+    initialized: true,
+    snapshot: {
+      access: 'locked', connected: false, serviceAvailable: true,
+      secureStorageAvailable: true, purchaseUrl: 'https://www.patreon.com/',
+      offers: [
+        { plan: 'annual', priceCents: 1999, currency: 'EUR', billing: 'yearly', testMode: false, available: true },
+        { plan: 'lifetime', priceCents: 4999, currency: 'EUR', billing: 'one-time', testMode: false, available: true }
+      ],
+      license: { state: 'none', configured: false }
+    }
+  }),
   enableManualAudio: () => {
+    const verifiedAt = Date.now()
+    const paidThrough = verifiedAt + 86400000
     useOrbitPlusStore.setState({
       initialized: true,
       snapshot: {
-        access: 'active', connected: true, serviceAvailable: true,
+        access: 'active', offlineAccessUntil: verifiedAt + 7 * 86400000,
+        connected: true, serviceAvailable: true,
         secureStorageAvailable: true, purchaseUrl: 'https://www.patreon.com/',
-        entitlement: { source: 'patreon', plan: 'monthly', features: ['manual-audio', 'cloud-gaming', 'background-motion', 'premium-appearance'], verifiedAt: Date.now(), expiresAt: Date.now() + 86400000 }
+        entitlement: { source: 'patreon', plan: 'monthly', features: ['manual-audio', 'cloud-gaming', 'background-motion', 'premium-appearance'], verifiedAt, expiresAt: paidThrough },
+        membership: { state: 'active', verifiedAt, revision: 1, paidThrough }
       }
     })
     usePreferencesStore.setState({
@@ -141,6 +220,23 @@ window.settingsQA = {
       customUiAudioCues: {
         navigate: { name: 'soft-navigation.wav', url: 'orbit-media://ui-audio/navigate/navigate.wav' },
         confirm: { name: 'confirm-chime.ogg', url: 'orbit-media://ui-audio/confirm/confirm.ogg' }
+      }
+    })
+  },
+  enableOfflineManualAudio: () => {
+    const now = Date.now()
+    const verifiedAt = now - 8 * 86400000
+    const paidThrough = now - 7 * 86400000
+    useOrbitPlusStore.setState({
+      initialized: true,
+      snapshot: {
+        access: 'grace', accessUntil: now + 86400000,
+        offlineAccessUntil: now + 86400000,
+        connected: true, serviceAvailable: true,
+        secureStorageAvailable: true, purchaseUrl: 'https://www.patreon.com/',
+        issue: 'network-unavailable',
+        entitlement: { source: 'patreon', plan: 'monthly', features: ['manual-audio', 'cloud-gaming', 'background-motion', 'premium-appearance'], verifiedAt, expiresAt: paidThrough },
+        membership: { state: 'active', verifiedAt, revision: 1, paidThrough }
       }
     })
   },
@@ -177,7 +273,18 @@ window.settingsQA = {
   },
   setTheme: (theme) => usePreferencesStore.getState().setTheme(theme),
   setCornerStyle: (cornerStyle) => usePreferencesStore.getState().setCornerStyle(cornerStyle),
-  focus: (selector) => focusElement(document.querySelector(selector)),
+  focus: (selector) => {
+    const target = document.querySelector(selector)
+    const previous = document.activeElement
+    const delivered = focusEvents.length
+    focusElement(target)
+    // Hidden offscreen Chromium windows can update activeElement without
+    // delivering native focus events. Exercise the real React handlers too.
+    if (target && focusEvents.length === delivered) {
+      if (previous && previous !== target) previous.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: target }))
+      target.dispatchEvent(new FocusEvent('focusin', { bubbles: true, relatedTarget: previous }))
+    }
+  },
   move: moveFocus,
   key: (key) => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
@@ -188,6 +295,18 @@ window.settingsQA = {
     page: useSettingsNavigationStore.getState().page,
     focused: document.activeElement?.getAttribute('data-settings-section-header'),
     focusedId: document.activeElement?.id,
+    focusedGameId: document.activeElement?.getAttribute('data-game-id'),
+    homeLayout: document.querySelector('[data-home-layout]')?.getAttribute('data-home-layout'),
+    homeStageMode: document.querySelector('[data-home-stage-mode]')?.getAttribute('data-home-stage-mode'),
+    homeBannerCount: document.querySelectorAll('.home-stage [data-focusable]').length,
+    focusedHomeJumpBack: document.activeElement?.getAttribute('data-home-jump-back'),
+    focusedWishlistOffer: document.activeElement?.getAttribute('data-home-wishlist-offer'),
+    focusedTopNav: Boolean(document.activeElement?.closest('[data-top-nav]')),
+    cuadroCards: document.querySelectorAll('[data-cuadro-card=true]').length,
+    cuadroActive: document.querySelectorAll('[data-cuadro-active=true]').length,
+    cuadroActiveGameId: document.querySelector('[data-cuadro-active=true]')?.getAttribute('data-game-id'),
+    cuadroPanels: document.querySelectorAll('[data-cuadro-info-panel]').length,
+    cuadroPanelGameId: document.querySelector('[data-cuadro-info-panel]')?.getAttribute('data-cuadro-info-game-id'),
     activeTab: document.activeElement?.getAttribute('data-settings-page'),
     headers: [...document.querySelectorAll('[data-settings-section-header]')].filter(e => !e.closest('[inert]')).map(e => e.dataset.settingsSectionHeader),
     expanded: [...document.querySelectorAll('[data-settings-section-header][aria-expanded="true"]')].filter(e => !e.closest('[inert]')).map(e => e.dataset.settingsSectionHeader),
@@ -199,6 +318,8 @@ window.settingsQA = {
     scaleSaveState: usePreferencesStore.getState().textScaleSaveState,
     storedBackdropMotion: usePreferencesStore.getState().homeBackdropMotion,
     savedBackdropMotion: settings.homeBackdropMotion
+    , uninstalledGameColor: usePreferencesStore.getState().uninstalledGameColor,
+    savedUninstalledGameColor: settings.uninstalledGameColor
     , theme: usePreferencesStore.getState().theme,
     cornerStyle: usePreferencesStore.getState().cornerStyle,
     appliedTheme: document.documentElement.dataset.theme,
@@ -210,7 +331,8 @@ window.settingsQA = {
 async function main() {
   await fs.mkdir(output, { recursive: true })
   const assets = await fs.readdir(path.join(root, 'out/renderer/assets'))
-  const css = assets.find((name) => /^index-.*\.css$/.test(name))
+  const rendererHtml = await fs.readFile(path.join(root, 'out/renderer/index.html'), 'utf8')
+  const css = rendererHtml.match(/href="\.\/assets\/(index-[^"]+\.css)"/)?.[1]
   assert.ok(css, 'Run npm run build first')
   await build({
     stdin: { contents: fixture, resolveDir: root, loader: 'tsx' },
@@ -227,6 +349,10 @@ async function main() {
   const onboardingCss = assets.find(name => /^OnboardingFlow-.*\.css$/.test(name))
   await fs.writeFile(path.join(output, 'style.css'), (await fs.readFile(path.join(root, 'out/renderer/assets', css), 'utf8')) + (onboardingCss ? await fs.readFile(path.join(root, 'out/renderer/assets', onboardingCss), 'utf8') : ''))
   await fs.writeFile(path.join(output, 'index.html'), '<!doctype html><html data-theme="midnight"><head><meta charset="utf-8"><link rel="stylesheet" href="style.css"></head><body><div id="root"></div><script src="fixture.js"></script></body></html>')
+  if (prepareOnly) {
+    console.log(`Prepared browser fixture at ${output}`)
+    return
+  }
   await app.whenReady()
   const window = new BrowserWindow({ width: 1280, height: 720, useContentSize: true, show: false, webPreferences: { offscreen: true, backgroundThrottling: false, sandbox: true, contextIsolation: true } })
   window.webContents.session.webRequest.onBeforeRequest((details, callback) => {
@@ -264,6 +390,361 @@ async function main() {
   }
   await window.loadFile(path.join(output, 'index.html'))
   await settle()
+  if (orbitHomeMode) {
+    await js('settingsQA.setLayout("orbit"); settingsQA.setHomeBanners(true); settingsQA.showView("home")')
+    await waitFor('settingsQA.state().homeStageMode === "banners"')
+    assert.equal((await state()).homeBannerCount, 2, 'ORBIT Home exposes both banner cards')
+
+    await js('settingsQA.focus("[data-home-game-row=true] [data-home-game-card=true]")')
+    await waitFor('settingsQA.state().homeStageMode === "game-focus"')
+    await key('ArrowUp')
+    await waitFor('settingsQA.state().homeStageMode === "banners"')
+    await waitFor('settingsQA.state().focusedHomeJumpBack === "true"')
+    assert.equal((await state()).homeBannerCount, 2, 'Up restores both ORBIT Home banner cards')
+
+    await key('ArrowRight')
+    await waitFor('settingsQA.state().focusedWishlistOffer === "empty"')
+    assert.equal((await state()).homeStageMode, 'banners', 'Right keeps the banner stage visible')
+    await key('ArrowLeft')
+    await waitFor('settingsQA.state().focusedHomeJumpBack === "true"')
+    await key('ArrowUp')
+    await waitFor('settingsQA.state().focusedTopNav')
+    assert.equal((await state()).homeStageMode, 'banners', 'Banner Up continues to the top navigation')
+
+    const assertBannerBounds = async () => {
+      const geometry = await js(`(() => {
+        const cards = [...document.querySelectorAll('.home-stage [data-focusable]')]
+        const rects = cards.map(card => card.getBoundingClientRect())
+        return {
+          count: cards.length,
+          visible: rects.every(rect => rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight),
+          horizontalOverflow: document.documentElement.scrollWidth > innerWidth
+        }
+      })()`)
+      assert.deepEqual(geometry, { count: 2, visible: true, horizontalOverflow: false })
+    }
+
+    await assertBannerBounds()
+    await window.webContents.capturePage().then((image) =>
+      fs.writeFile(path.join(output, 'orbit-home-banners-1280x720-de.png'), image.toPNG())
+    )
+
+    window.setContentSize(1920, 1080)
+    await js('settingsQA.focus("[data-home-game-row=true] [data-home-game-card=true]")')
+    await waitFor('settingsQA.state().homeStageMode === "game-focus"')
+    await key('ArrowUp')
+    await waitFor('settingsQA.state().focusedHomeJumpBack === "true"')
+    await assertBannerBounds()
+    assert.deepEqual(await js('settingsQA.errors'), [])
+    await window.webContents.capturePage().then((image) =>
+      fs.writeFile(path.join(output, 'orbit-home-banners-1920x1080-de.png'), image.toPNG())
+    )
+    console.log('ORBIT Home: stable two-card banner focus, row-to-banner jump-back, banner-to-top navigation, and 1280×720/1920×1080 bounds passed.')
+    window.destroy()
+    return
+  }
+  if (cuadroHomeMode) {
+    await js('settingsQA.setAppearanceAccess(false); settingsQA.setLayout("cuadro"); settingsQA.showView("home")')
+    await waitFor('Boolean(document.querySelector(".home-layout[data-home-layout]"))')
+    assert.equal(
+      await js('document.querySelector(".home-layout[data-home-layout]")?.dataset.homeLayout'),
+      'orbit',
+      'A saved Cuadro layout falls back to ORBIT without premium appearance access'
+    )
+    await js('settingsQA.setAppearanceAccess(true); settingsQA.setHomeInsights(); settingsQA.setLayout("cuadro"); settingsQA.showView("home")')
+    await waitFor('Boolean(document.querySelector(".cuadro-home[data-home-layout=cuadro]"))')
+    await js('document.activeElement?.blur(); settingsQA.focus("[data-cuadro-card=true]")')
+    await waitFor('Boolean(document.querySelector("[data-cuadro-info-panel]"))')
+    const cuadroLoadingPanelHeight = await js(
+      'document.querySelector("[data-cuadro-info-panel]").getBoundingClientRect().height'
+    )
+    await waitFor('Boolean(document.querySelector("[data-cuadro-achievements] .cuadro-achievement-track"))')
+    await settle()
+    const cuadroLoadedPanelHeight = await js(
+      'document.querySelector("[data-cuadro-info-panel]").getBoundingClientRect().height'
+    )
+    assert.ok(
+      Math.abs(cuadroLoadedPanelHeight - cuadroLoadingPanelHeight) <= 1,
+      `Cuadro detail panel must not resize when insights finish loading: ${cuadroLoadingPanelHeight} -> ${cuadroLoadedPanelHeight}`
+    )
+
+    const cuadroGeometry = await js(`(() => {
+      const cards = [...document.querySelectorAll('[data-cuadro-card=true]')]
+      const slots = [...document.querySelectorAll('[data-cuadro-slot=true]')]
+      const rects = slots.map(slot => slot.getBoundingClientRect())
+      const panelElement = document.querySelector('[data-cuadro-info-panel]')
+      const anchorElement = document.querySelector('[data-cuadro-info-anchor]')
+      const panel = panelElement.getBoundingClientRect()
+      const anchor = anchorElement.getBoundingClientRect()
+      const focusedCard = cards[0].getBoundingClientRect()
+      const grid = document.querySelector('.cuadro-grid')
+      const backdrop = document.querySelector('.cuadro-backdrop-art')
+      const backdropFrame = backdrop.querySelector('.home-backdrop-frame')
+      const previousAnchorPointerEvents = anchorElement.style.pointerEvents
+      const previousPanelPointerEvents = panelElement.style.pointerEvents
+      anchorElement.style.pointerEvents = 'auto'
+      panelElement.style.pointerEvents = 'auto'
+      const panelProbeTarget = document.elementFromPoint(
+        panel.right - Math.min(12, panel.width * 0.1),
+        panel.top + panel.height / 2
+      )
+      const panelPaintedAboveCard = panelElement === panelProbeTarget || panelElement.contains(panelProbeTarget)
+      anchorElement.style.pointerEvents = previousAnchorPointerEvents
+      panelElement.style.pointerEvents = previousPanelPointerEvents
+      return {
+        count: cards.length,
+        columns: getComputedStyle(grid).gridTemplateColumns.split(' ').length,
+        firstRowAligned: rects.slice(0, 5).every(rect => Math.abs(rect.top - rects[0].top) <= 1),
+        secondRowBelow: rects[5].top > rects[0].bottom,
+        leftEdge: rects[0].left,
+        rightEdge: innerWidth - rects[4].right,
+        panelInside: panel.left >= 0 && panel.right <= innerWidth,
+        panelAlignedWithAnchor:
+          panel.left >= anchor.left - 1 &&
+          panel.right <= anchor.right + 1 &&
+          Math.abs(panel.bottom - anchor.bottom) <= 1,
+        panelPaintedAboveCard,
+        panelRect: { left: panel.left, right: panel.right, bottom: panel.bottom },
+        anchorRect: {
+          left: anchor.left,
+          right: anchor.right,
+          top: anchor.top,
+          bottom: anchor.bottom,
+          height: anchor.height
+        },
+        slotRect: {
+          top: rects[0].top,
+          bottom: rects[0].bottom,
+          height: rects[0].height
+        },
+        focusedCardRect: {
+          top: focusedCard.top,
+          left: focusedCard.left,
+          right: focusedCard.right,
+          bottom: focusedCard.bottom
+        },
+        panelPlacement: document.querySelector('[data-cuadro-info-panel]').dataset.cuadroInfoPlacement,
+        focusTilts: cards.slice(0, 5).map(card => Number(card.dataset.cuadroFocusTilt)),
+        focusedTransform: getComputedStyle(cards[0]).transform,
+        backdropContainerFilter: getComputedStyle(backdrop).filter,
+        backdropFilter: getComputedStyle(backdropFrame).filter,
+        horizontalOverflow: document.documentElement.scrollWidth > innerWidth
+      }
+    })()`)
+    assert.equal(cuadroGeometry.count, 8)
+    assert.equal(cuadroGeometry.columns, 5)
+    assert.equal(cuadroGeometry.firstRowAligned, true)
+    assert.equal(cuadroGeometry.secondRowBelow, true)
+    assert.ok(cuadroGeometry.leftEdge >= 32 && cuadroGeometry.rightEdge >= 32)
+    assert.equal(cuadroGeometry.panelInside, true)
+    assert.equal(cuadroGeometry.panelAlignedWithAnchor, true, JSON.stringify(cuadroGeometry))
+    assert.equal(cuadroGeometry.panelPaintedAboveCard, true, JSON.stringify(cuadroGeometry))
+    assert.equal(cuadroGeometry.panelPlacement, 'bottom')
+    assert.deepEqual(cuadroGeometry.focusTilts, [-4, -4, 0, 4, 4])
+    assert.notEqual(cuadroGeometry.focusedTransform, 'none')
+    assert.equal(cuadroGeometry.backdropContainerFilter, 'none')
+    assert.match(cuadroGeometry.backdropFilter, /blur\(/)
+    assert.equal(cuadroGeometry.horizontalOverflow, false)
+    assert.equal(await js('Boolean(document.querySelector("[data-cuadro-hltb] strong"))'), true)
+    assert.equal(await js('document.querySelector("[data-cuadro-info-panel]").dataset.cuadroInfoGameId'), 'local:sample-0')
+
+    // Warm both neighbouring card composites before measuring sustained focus
+    // navigation. Offscreen Chromium's first GPU-layer allocation is startup work,
+    // while this gate protects the repeated controller path users actually feel.
+    await key('ArrowRight')
+    await waitFor('document.activeElement?.dataset.gridIndex === "1"')
+    await key('ArrowLeft')
+    await waitFor('document.activeElement?.dataset.gridIndex === "0"')
+
+    const cuadroPerformance = await js(`new Promise((resolve) => {
+      const frameIntervals = []
+      const inputDelays = []
+      const longTasks = []
+      const backdropRoot = document.querySelector('.cuadro-backdrop-art')
+      let backdropMutations = 0
+      const benchmarkStartedAt = performance.now()
+      let previousFrame
+      let animationFrame
+      let moves = 0
+      let nextInputAt = performance.now() + 42
+      const percentile = (values, fraction) => {
+        if (values.length === 0) return 0
+        const sorted = [...values].sort((left, right) => left - right)
+        return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))]
+      }
+      const sampleFrame = (now) => {
+        if (previousFrame !== undefined) frameIntervals.push(now - previousFrame)
+        previousFrame = now
+        animationFrame = requestAnimationFrame(sampleFrame)
+      }
+      let observer
+      if (typeof PerformanceObserver !== 'undefined') {
+        observer = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            longTasks.push({
+              duration: entry.duration,
+              startedAfterMs: entry.startTime - benchmarkStartedAt
+            })
+          }
+        })
+        try { observer.observe({ entryTypes: ['longtask'] }) } catch {}
+      }
+      const backdropObserver = new MutationObserver((records) => {
+        backdropMutations += records.length
+      })
+      backdropObserver.observe(backdropRoot, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['data-backdrop-transition-active', 'data-backdrop-game-id']
+      })
+      animationFrame = requestAnimationFrame(sampleFrame)
+      const interval = setInterval(() => {
+        const now = performance.now()
+        inputDelays.push(Math.max(0, now - nextInputAt))
+        nextInputAt = now + 42
+        settingsQA.key(moves % 2 === 0 ? 'ArrowRight' : 'ArrowLeft')
+        moves++
+        if (moves < 30) return
+        clearInterval(interval)
+        setTimeout(() => {
+          cancelAnimationFrame(animationFrame)
+          observer?.disconnect()
+          backdropObserver.disconnect()
+          resolve({
+            frames: frameIntervals.length,
+            frameP95Ms: percentile(frameIntervals, 0.95),
+            frameMaxMs: Math.max(0, ...frameIntervals),
+            inputDelayP95Ms: percentile(inputDelays, 0.95),
+            longTaskMaxMs: Math.max(0, ...longTasks.map((entry) => entry.duration)),
+            longestTaskStartedAfterMs:
+              [...longTasks].sort((left, right) => right.duration - left.duration)[0]?.startedAfterMs ?? 0,
+            backdropMutations
+          })
+        }, 450)
+      }, 42)
+    })`)
+    assert.ok(cuadroPerformance.frames >= 45, JSON.stringify(cuadroPerformance))
+    assert.ok(cuadroPerformance.frameP95Ms <= 34, JSON.stringify(cuadroPerformance))
+    assert.ok(cuadroPerformance.frameMaxMs <= 100, JSON.stringify(cuadroPerformance))
+    assert.ok(cuadroPerformance.longTaskMaxMs <= 80, JSON.stringify(cuadroPerformance))
+    assert.ok(cuadroPerformance.backdropMutations <= 2, JSON.stringify(cuadroPerformance))
+
+    await key('ArrowRight')
+    await waitFor('document.activeElement?.dataset.gridIndex === "1"')
+    await waitFor('document.querySelector("[data-cuadro-info-panel]")?.dataset.cuadroInfoGameId === "local:sample-1"')
+    await key('ArrowDown')
+    await waitFor('document.activeElement?.dataset.gridIndex === "6"')
+    assert.equal(
+      await js('document.querySelector("[data-cuadro-info-panel]")?.dataset.cuadroInfoGameId'),
+      'local:sample-6'
+    )
+    await window.webContents.capturePage().then((image) =>
+      fs.writeFile(path.join(output, 'cuadro-home-1280x720-de.png'), image.toPNG())
+    )
+
+    window.setContentSize(1920, 1080)
+    await js('document.activeElement?.blur(); settingsQA.focus("[data-cuadro-card=true]")')
+    await settle()
+    const cuadroFullHd = await js(`(() => {
+      const slots = [...document.querySelectorAll('[data-cuadro-slot=true]')].slice(0, 5)
+      const rects = slots.map(slot => slot.getBoundingClientRect())
+      return {
+        aligned: rects.every(rect => Math.abs(rect.top - rects[0].top) <= 1),
+        visible: rects.every(rect => rect.left >= 0 && rect.right <= innerWidth),
+        horizontalOverflow: document.documentElement.scrollWidth > innerWidth
+      }
+    })()`)
+    assert.deepEqual(cuadroFullHd, { aligned: true, visible: true, horizontalOverflow: false })
+    assert.deepEqual(await js('settingsQA.errors'), [])
+    await window.webContents.capturePage().then((image) =>
+      fs.writeFile(path.join(output, 'cuadro-home-1920x1080-de.png'), image.toPNG())
+    )
+    await js('settingsQA.setAppearanceAccess(false)')
+    await waitFor('document.querySelector(".home-layout[data-home-layout]")?.dataset.homeLayout === "orbit"')
+    console.log(`Cuadro Home: fixed five-column rows, generous edges, centre-facing cover tilt, undistorted bottom-drawer HLTB/achievement panel, vertical controller navigation, colour backdrop, warmed focus stress ${cuadroPerformance.frameP95Ms.toFixed(1)} ms p95 / ${cuadroPerformance.frameMaxMs.toFixed(1)} ms max / ${cuadroPerformance.longTaskMaxMs.toFixed(1)} ms longest task / ${cuadroPerformance.backdropMutations} backdrop mutations, and 1280×720/1920×1080 bounds passed.`)
+    window.destroy()
+    return
+  }
+  if (uninstalledColorsMode) {
+    await js('settingsQA.setPage("appearance")')
+    await waitFor('settingsQA.state().headers.includes("presentation")')
+    await open('presentation')
+    await waitFor('document.querySelectorAll("[data-uninstalled-game-color]").length === 8')
+
+    assert.equal(
+      await js('document.querySelector("button[data-uninstalled-game-color=gray]").getAttribute("aria-pressed")'),
+      'true',
+      'Full gray remains the default presentation'
+    )
+    await js('settingsQA.focus("[data-uninstalled-game-color=gray]")')
+    await key('ArrowRight')
+    assert.equal(
+      await js('document.activeElement?.dataset.uninstalledGameColor'),
+      'soft-gray',
+      'Keyboard/controller navigation reaches the soft-gray option'
+    )
+    await button(0)
+    assert.equal(
+      await js('document.querySelector("button[data-uninstalled-game-color=soft-gray]").getAttribute("aria-pressed")'),
+      'true',
+      'Controller activation selects soft gray'
+    )
+    assert.equal((await state()).savedUninstalledGameColor, 'soft-gray', 'Soft gray persists')
+    assert.equal(await js('document.documentElement.dataset.uninstalledGameColor'), 'soft-gray')
+    assert.equal((await state()).overflow, false)
+    await window.webContents.capturePage().then((image) =>
+      fs.writeFile(path.join(output, 'uninstalled-colors-1280-de.png'), image.toPNG())
+    )
+
+    await js('settingsQA.showUninstalledLibrary()')
+    await waitFor('Boolean(document.querySelector("[data-game-unavailable-locally=true]"))')
+    const softGrayPresentation = await js(`(() => {
+      const card = document.querySelector('[data-game-unavailable-locally=true]')
+      return {
+        filter: getComputedStyle(card.querySelector('.game-card-artwork')).filter,
+        tintOpacity: getComputedStyle(card.querySelector('[data-uninstalled-game-tint]')).opacity,
+        dimOpacity: getComputedStyle(card.querySelector('[data-uninstalled-game-dim]')).opacity,
+        badgeDisplay: getComputedStyle(card.querySelector('[data-uninstalled-game-badge]')).display
+      }
+    })()`)
+    assert.match(softGrayPresentation.filter, /grayscale\(0\.48\)/)
+    assert.equal(softGrayPresentation.tintOpacity, '0')
+    assert.equal(softGrayPresentation.dimOpacity, '0.45')
+    assert.notEqual(softGrayPresentation.badgeDisplay, 'none')
+
+    await js('settingsQA.setUninstalledColor("none")')
+    await settle()
+    const originalPresentation = await js(`(() => {
+      const card = document.querySelector('[data-game-unavailable-locally=true]')
+      return {
+        filter: getComputedStyle(card.querySelector('.game-card-artwork')).filter,
+        tintOpacity: getComputedStyle(card.querySelector('[data-uninstalled-game-tint]')).opacity,
+        dimOpacity: getComputedStyle(card.querySelector('[data-uninstalled-game-dim]')).opacity,
+        badgeDisplay: getComputedStyle(card.querySelector('[data-uninstalled-game-badge]')).display,
+        installed: card.dataset.gameInstalled,
+        label: card.getAttribute('aria-label')
+      }
+    })()`)
+    assert.equal(originalPresentation.filter, 'none')
+    assert.equal(originalPresentation.tintOpacity, '0')
+    assert.equal(originalPresentation.dimOpacity, '0')
+    assert.equal(originalPresentation.badgeDisplay, 'none')
+    assert.equal(originalPresentation.installed, 'false', 'Original presentation does not change installation state')
+    assert.match(originalPresentation.label, /Nicht installiert/)
+    assert.equal((await state()).savedUninstalledGameColor, 'none', 'Original presentation persists')
+
+    window.setContentSize(1920, 1080)
+    await settle()
+    assert.equal((await state()).overflow, false)
+    await window.webContents.capturePage().then((image) =>
+      fs.writeFile(path.join(output, 'uninstalled-original-1920-de.png'), image.toPNG())
+    )
+    assert.deepEqual(await js('settingsQA.errors'), [])
+    console.log('Uninstalled game presentation: eight focusable choices, soft gray, original artwork, persistence, unchanged install state, and 1280×720/1920×1080 layout passed.')
+    window.destroy()
+    return
+  }
   if (premiumAppearanceMode) {
     await js('settingsQA.setPage("appearance")')
     await waitFor('settingsQA.state().headers.includes("theme")')
@@ -281,6 +762,16 @@ async function main() {
     await window.webContents.capturePage().then((image) =>
       fs.writeFile(path.join(output, 'premium-appearance-locked-1280-de.png'), image.toPNG())
     )
+
+    await click('home-layout')
+    await waitFor('Boolean(document.querySelector(\'[data-home-style-option="cuadro"]\'))')
+    assert.equal(
+      await js('document.querySelector(\'[data-home-style-option="cuadro"]\').getAttribute("aria-disabled")'),
+      'true'
+    )
+    assert.equal(await js('document.querySelectorAll(\'[data-home-style-option]\').length'), 6)
+    await click('theme')
+    await waitFor('Boolean(document.querySelector(\'[data-theme-option="cobalt"]\'))')
 
     await js('settingsQA.setAppearanceAccess(true)')
     await settle()
@@ -319,8 +810,9 @@ async function main() {
       ['magenta', 'round'],
       'Restored access reapplies the preserved appearance'
     )
+
     assert.deepEqual(await js('settingsQA.errors'), [])
-    console.log('Premium appearance: six locked colours, four corner styles, square/round rendering, persistence, live entitlement fallback/restoration, and 1280×720/1920×1080 layout passed.')
+    console.log('Premium appearance: six locked colours, Cuadro gating, four corner styles, square/round rendering, persistence, live entitlement fallback/restoration, and 1280×720/1920×1080 layout passed.')
     window.destroy()
     return
   }
@@ -537,18 +1029,30 @@ async function main() {
   await key('Enter')
   assert.equal((await state()).savedLanguage, 'en', 'The existing setting is saved from the open panel')
   await key('Escape')
+  await js('settingsQA.showPlusCommerce()')
   await key(']')
   await waitFor('settingsQA.state().headers.includes("plus")')
   assert.equal((await state()).page, 'plus', 'Trigger-equivalent input still changes category')
   assert.equal((await state()).activeTab, 'plus', JSON.stringify({ state: await state(), active: await js('document.activeElement?.outerHTML'), errors: await js('settingsQA.errors') }))
   assert.deepEqual((await state()).expanded, ['plus'], 'The sole ORBIT Plus topic opens automatically')
-  assert.equal(await js('document.querySelectorAll("[data-orbit-plus-feature]").length'), 4, 'All four implemented Plus feature groups are listed')
+  assert.equal(await js('document.querySelectorAll("[data-orbit-plus-feature]").length'), 9, 'All nine Plus benefits are listed individually')
   assert.equal(await js('document.querySelectorAll("[data-orbit-plus-member-benefit]").length'), 4, 'Membership extras remain visibly separated')
+  assert.match(await js('document.body.textContent'), /Cuadro TV Launcher/, 'The premium TV layout is advertised')
+  assert.match(await js('document.body.textContent'), /Custom launcher music/, 'Custom launcher music is advertised')
+  assert.match(await js('document.body.textContent'), /€19\.99/, 'The live annual price is visible')
+  assert.match(await js('document.body.textContent'), /€49\.99/, 'The live lifetime price is visible')
   await window.webContents.capturePage().then((image) => fs.writeFile(path.join(output, 'orbit-plus-overview-1280-en.png'), image.toPNG()))
   await js('document.querySelector("[data-orbit-plus-feature]")?.scrollIntoView({ block: "center" })')
   await settle()
   await window.webContents.capturePage().then((image) => fs.writeFile(path.join(output, 'orbit-plus-features-1280-en.png'), image.toPNG()))
   await js('settingsQA.enableManualAudio()')
+  await settle()
+  assert.match(await js('document.body.textContent'), /Monthly plan/, 'The active Patreon grant is identified as a monthly plan')
+  assert.match(await js('document.body.textContent'), /paid through .*offline protected until/, 'Billing end and the longer offline protection are shown separately')
+  await js('settingsQA.enableOfflineManualAudio()')
+  await settle()
+  assert.match(await js('document.body.textContent'), /Grace period/, 'A failed offline recheck is shown as grace instead of revocation')
+  assert.equal(await js('settingsQA.hasPlusFeature("manual-audio")'), true, 'Manual audio remains available during offline grace')
 
   for (const [width, height, language, density] of [[1280, 720, 'de', 'standard'], [1920, 1080, 'en', 'compact']]) {
     window.setContentSize(width, height)
@@ -609,4 +1113,12 @@ async function main() {
   window.destroy()
 }
 
-main().then(() => app.quit()).catch((error) => { console.error(error); app.exit(1) })
+main()
+  .then(() => {
+    if (app) app.quit()
+  })
+  .catch((error) => {
+    console.error(error)
+    if (app) app.exit(1)
+    else process.exitCode = 1
+  })

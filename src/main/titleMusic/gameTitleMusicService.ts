@@ -4,6 +4,11 @@ import Store from 'electron-store'
 import type { LibraryGame } from '@shared/ipc'
 import { youtubeVideoIdFromUrl, type GameTitleMusic } from '@shared/gameTitleMusic'
 import {
+  normalizeMediaSearchQuery,
+  type MediaLinkSearchOption,
+  type MediaLinkSearchResult
+} from '@shared/mediaLinkSearch'
+import {
   rankThemeMusicCandidates,
   searchTitleForGame,
   type ThemeMusicCandidate
@@ -78,6 +83,41 @@ function candidateFromResult(value: unknown): ThemeMusicCandidate | undefined {
   }
 }
 
+function mediaOptionFromResult(value: unknown): MediaLinkSearchOption | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const result = value as {
+    video_id?: unknown
+    title?: unknown
+    author?: { name?: unknown }
+    duration?: { seconds?: unknown }
+    is_live?: unknown
+    is_upcoming?: unknown
+  }
+  const videoId = typeof result.video_id === 'string' ? result.video_id.trim() : ''
+  const rawTitle = textValue(result.title)
+  if (
+    !/^[A-Za-z0-9_-]{11}$/.test(videoId) ||
+    !rawTitle ||
+    result.is_live === true ||
+    result.is_upcoming === true
+  ) {
+    return undefined
+  }
+  const seconds = result.duration?.seconds
+  const author = textValue(result.author?.name)?.slice(0, 160)
+  return {
+    videoId,
+    url: `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`,
+    thumbnailUrl: `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`,
+    title: rawTitle.slice(0, 240),
+    author,
+    durationSeconds:
+      typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
+        ? Math.min(Math.round(seconds), 24 * 60 * 60)
+        : undefined
+  }
+}
+
 function storeCandidates(key: string, gameName: string, candidates: ThemeMusicCandidate[]): void {
   const now = Date.now()
   const selections = {
@@ -121,6 +161,21 @@ async function youtube(language: Language): Promise<import('youtubei.js').Innert
     sessionTasks.set(language, task)
   }
   return task
+}
+
+export async function searchYouTubeMedia(
+  queryValue: unknown,
+  language: Language
+): Promise<MediaLinkSearchResult> {
+  const query = normalizeMediaSearchQuery(queryValue)
+  if (!query) throw new Error('Invalid media search query')
+  const client = await youtube(language)
+  const results = await client.search(query, { type: 'video' })
+  const options = results.results
+    .map(mediaOptionFromResult)
+    .filter((item): item is MediaLinkSearchOption => Boolean(item))
+    .slice(0, 18)
+  return { state: options.length ? 'ready' : 'missing', query, options }
 }
 
 async function searchCandidates(

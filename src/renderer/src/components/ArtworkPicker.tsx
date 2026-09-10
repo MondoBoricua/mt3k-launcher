@@ -13,8 +13,14 @@ import {
   X
 } from 'lucide-react'
 import type { ArtworkSearchOptions, ImageOrientation } from '@shared/ipc'
+import {
+  ARTWORK_RESOLUTION_TARGETS,
+  assessArtworkResolution,
+  type ArtworkResolutionQuality
+} from '@shared/artworkResolution'
 import { useBackHandler } from '@renderer/hooks/useBackHandler'
 import { useT } from '@renderer/i18n/useT'
+import { ARTWORK_PICKER_CYCLE_EVENT } from '@renderer/lib/artworkPickerNavigation'
 import { focusElement } from '@renderer/lib/spatialNavigation'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
 
@@ -49,6 +55,7 @@ export function ArtworkPicker({
   const t = useT()
   const compact = usePreferencesStore((state) => state.uiDensity === 'compact')
   const customRef = useRef<HTMLButtonElement>(null)
+  const orientationButtonRefs = useRef<Partial<Record<PickerOrientation, HTMLButtonElement>>>({})
   const requestGenerationRef = useRef(0)
   const initialQuery = gameName.trim().slice(0, MAX_QUERY_LENGTH)
   const [orientation, setOrientation] = useState<PickerOrientation>(initialOrientation)
@@ -144,16 +151,35 @@ export function ArtworkPicker({
     load(orientation, nextQuery)
   }
 
-  const selectOrientation = (nextOrientation: PickerOrientation): void => {
-    if (busy || nextOrientation === orientation) return
-    const nextQuery = query.trim().slice(0, MAX_QUERY_LENGTH)
-    setOrientation(nextOrientation)
-    setFailure(null)
-    setNotice(null)
-    setQuery(nextQuery)
-    if (nextQuery.length >= MIN_QUERY_LENGTH) setSubmittedQuery(nextQuery)
-    load(nextOrientation, nextQuery)
-  }
+  const selectOrientation = useCallback(
+    (nextOrientation: PickerOrientation): void => {
+      if (busy || nextOrientation === orientation) return
+      const nextQuery = query.trim().slice(0, MAX_QUERY_LENGTH)
+      setOrientation(nextOrientation)
+      setFailure(null)
+      setNotice(null)
+      setQuery(nextQuery)
+      if (nextQuery.length >= MIN_QUERY_LENGTH) setSubmittedQuery(nextQuery)
+      load(nextOrientation, nextQuery)
+    },
+    [busy, load, orientation, query]
+  )
+
+  useEffect(() => {
+    const cycle = (event: Event): void => {
+      const requestedStep = (event as CustomEvent<-1 | 1>).detail
+      const step = requestedStep === -1 ? -1 : 1
+      const orientations: readonly PickerOrientation[] = ['vertical', 'horizontal', 'logo', 'icon']
+      const currentIndex = orientations.indexOf(orientation)
+      const nextOrientation = orientations[
+        (currentIndex + step + orientations.length) % orientations.length
+      ]
+      selectOrientation(nextOrientation)
+      requestAnimationFrame(() => focusElement(orientationButtonRefs.current[nextOrientation] ?? null))
+    }
+    window.addEventListener(ARTWORK_PICKER_CYCLE_EVENT, cycle)
+    return () => window.removeEventListener(ARTWORK_PICKER_CYCLE_EVENT, cycle)
+  }, [orientation, selectOrientation])
 
   const restoreActionFocus = (actionOrigin: HTMLElement | null): void => {
     requestAnimationFrame(() => {
@@ -269,11 +295,13 @@ export function ArtworkPicker({
       : orientation === 'logo'
         ? 'aspect-[3/1]'
         : 'aspect-video'
+  const optionImageClass = orientation === 'logo' ? 'object-contain p-4' : 'object-cover'
 
   return createPortal(
     <AnimatePresence>
       <motion.div
         data-focus-scope="active"
+        data-artwork-picker="true"
         role="dialog"
         aria-modal="true"
         aria-label={t('artwork.title')}
@@ -315,38 +343,45 @@ export function ArtworkPicker({
 
           <div className={`shrink-0 border-b border-white/[0.06] ${compact ? 'px-4 py-2' : 'px-[clamp(1.15rem,2.4vw,1.75rem)] py-3'}`}>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
-              <div
-                role="tablist"
-                aria-label={t('artwork.title')}
-                className="flex shrink-0 rounded-full border border-white/10 bg-black/25 p-1"
-              >
-                {(['vertical', 'horizontal', 'logo', 'icon'] as const).map((value) => (
-                  <button
-                    key={value}
-                    data-focusable
-                    data-disabled={busy ? 'true' : undefined}
-                    disabled={Boolean(busy)}
-                    aria-disabled={Boolean(busy)}
-                    type="button"
-                    role="tab"
-                    aria-selected={orientation === value}
-                    aria-controls="artwork-results"
-                    onClick={() => selectOrientation(value)}
-                    className={`min-w-[7rem] rounded-full px-4 py-2.5 text-sm font-semibold transition-colors disabled:opacity-45 data-[focused=true]:shadow-[0_0_0_2px_rgb(var(--color-accent)/0.45)] ${
-                      orientation === value
-                        ? 'bg-accent text-black'
-                        : 'text-white/55 hover:bg-white/[0.08] hover:text-white'
-                    }`}
-                  >
-                    {value === 'vertical'
-                      ? t('artwork.cover')
-                      : value === 'horizontal'
-                        ? t('artwork.background')
-                        : value === 'logo'
-                          ? t('artwork.logo')
-                          : t('artwork.icon')}
-                  </button>
-                ))}
+              <div className="flex shrink-0 items-center gap-2">
+                <ControllerTrigger>LT</ControllerTrigger>
+                <div
+                  role="tablist"
+                  aria-label={t('artwork.title')}
+                  className="flex rounded-full border border-white/10 bg-black/25 p-1"
+                >
+                  {(['vertical', 'horizontal', 'logo', 'icon'] as const).map((value) => (
+                    <button
+                      key={value}
+                      ref={(element) => {
+                        orientationButtonRefs.current[value] = element ?? undefined
+                      }}
+                      data-focusable
+                      data-disabled={busy ? 'true' : undefined}
+                      disabled={Boolean(busy)}
+                      aria-disabled={Boolean(busy)}
+                      type="button"
+                      role="tab"
+                      aria-selected={orientation === value}
+                      aria-controls="artwork-results"
+                      onClick={() => selectOrientation(value)}
+                      className={`min-w-[7rem] rounded-full px-4 py-2.5 text-sm font-semibold transition-colors disabled:opacity-45 data-[focused=true]:shadow-[0_0_0_2px_rgb(var(--color-accent)/0.45)] ${
+                        orientation === value
+                          ? 'bg-accent text-black'
+                          : 'text-white/55 hover:bg-white/[0.08] hover:text-white'
+                      }`}
+                    >
+                      {value === 'vertical'
+                        ? t('artwork.cover')
+                        : value === 'horizontal'
+                          ? t('artwork.background')
+                          : value === 'logo'
+                            ? t('artwork.logo')
+                            : t('artwork.icon')}
+                    </button>
+                  ))}
+                </div>
+                <ControllerTrigger>RT</ControllerTrigger>
               </div>
 
               {orientation !== 'icon' && (
@@ -462,6 +497,12 @@ export function ArtworkPicker({
                 {t('artwork.restore')}
               </button>
             )}
+            <span className="ml-auto rounded-full border border-white/[0.08] bg-black/20 px-3 py-2 text-[10px] font-semibold text-white/38">
+              {t('artwork.qualityGuide', {
+                width: ARTWORK_RESOLUTION_TARGETS[orientation].width,
+                height: ARTWORK_RESOLUTION_TARGETS[orientation].height
+              })}
+            </span>
           </div>
 
           <div
@@ -509,14 +550,24 @@ export function ArtworkPicker({
               </div>
             ) : result.state === 'ready' && result.options.length > 0 ? (
               <div className={optionGridClass}>
-                {result.options.map((option, index) => (
-                  <button
+                {result.options.map((option, index) => {
+                  const assessment = assessArtworkResolution(option.width, option.height, orientation)
+                  const qualityLabel = t(`artwork.quality.${assessment.quality}`)
+                  const resolutionLabel =
+                    option.width && option.height
+                      ? t('artwork.resolutionDetail', {
+                          width: option.width,
+                          height: option.height,
+                          megapixels: formatMegapixels(assessment.megapixels)
+                        })
+                      : t('artwork.resolutionUnknown')
+                  return <button
                     key={`${orientation}:${option.id}`}
                     data-focusable
                     data-disabled={busy ? 'true' : undefined}
                     disabled={Boolean(busy)}
                     type="button"
-                    aria-label={`${orientationLabel}, ${t('artwork.option', { index: index + 1 })}${
+                    aria-label={`${orientationLabel}, ${t('artwork.option', { index: index + 1 })}, ${resolutionLabel}, ${qualityLabel}${
                       option.sourceTitle
                         ? `, ${option.sourceTitle}`
                         : option.authorName
@@ -532,7 +583,7 @@ export function ArtworkPicker({
                       loading={index < (orientation === 'vertical' ? 6 : 3) ? 'eager' : 'lazy'}
                       referrerPolicy="no-referrer"
                       draggable={false}
-                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.025] group-data-[focused=true]:scale-[1.025]"
+                      className={`h-full w-full ${optionImageClass} transition-transform duration-300 group-hover:scale-[1.025] group-data-[focused=true]:scale-[1.025]`}
                     />
                     <span className="absolute inset-x-0 bottom-0 flex min-h-12 items-end bg-gradient-to-t from-black/85 to-transparent px-2.5 pb-2 pt-6 text-[10px] font-medium text-white/70">
                       <span className="min-w-0">
@@ -549,13 +600,19 @@ export function ArtworkPicker({
                         </span>
                       </span>
                     </span>
+                    <span title={`${resolutionLabel} · ${qualityLabel}`} className="absolute right-2 top-2 flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-full border border-white/15 bg-black/80 px-2 py-1 text-[9px] font-bold text-white shadow-lg backdrop-blur-md">
+                      <span>{option.width && option.height ? `${option.width}×${option.height}` : '—'}</span>
+                      {assessment.megapixels !== undefined && <span className="hidden text-white/45 2xl:inline">· {formatMegapixels(assessment.megapixels)} MP</span>}
+                      <span className={`h-1.5 w-1.5 rounded-full ${qualityTone(assessment.quality)}`} />
+                      <span className="truncate">{qualityLabel}</span>
+                    </span>
                     {busy === option.id && (
                       <span className="absolute inset-0 flex items-center justify-center bg-black/65">
                         <Loader2 size={25} className="animate-spin text-accent" />
                       </span>
                     )}
                   </button>
-                ))}
+                })}
               </div>
             ) : (
               <div role="status" aria-live="polite" className="flex min-h-64 flex-col items-center justify-center gap-4 text-center">
@@ -586,4 +643,25 @@ export function ArtworkPicker({
     </AnimatePresence>,
     document.body
   )
+}
+
+function ControllerTrigger({ children }: { children: string }): JSX.Element {
+  return (
+    <kbd className="hidden h-8 min-w-8 items-center justify-center rounded-lg border border-white/[0.12] bg-white/[0.05] px-2 text-[10px] font-black tracking-[0.08em] text-white/42 sm:flex">
+      {children}
+    </kbd>
+  )
+}
+
+function formatMegapixels(value: number | undefined): string {
+  if (value === undefined) return '—'
+  return value < 0.1 ? value.toFixed(2) : value.toFixed(1)
+}
+
+function qualityTone(quality: ArtworkResolutionQuality): string {
+  if (quality === 'optimal') return 'bg-emerald-300'
+  if (quality === 'good') return 'bg-lime-300'
+  if (quality === 'usable') return 'bg-amber-300'
+  if (quality === 'low') return 'bg-rose-300'
+  return 'bg-white/35'
 }

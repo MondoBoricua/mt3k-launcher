@@ -6,6 +6,7 @@ import type {
   LauncherDownloadSnapshot,
   LibraryGame
 } from '../../shared/ipc'
+import { withDerivedLauncherTransferMetrics } from '../../shared/launcherDownloads'
 import { gameRepository } from '../library/gameRepository'
 import { getSteamAppsDirectories } from '../steam/steamInstall'
 import { xboxLibraryService } from '../xbox/xboxLibrary'
@@ -239,6 +240,7 @@ export class LauncherDownloadMonitor extends EventEmitter {
   private fingerprint = ''
   private snapshot: LauncherDownloadSnapshot = {
     revision: 0,
+    checkedAt: Date.now(),
     updatedAt: Date.now(),
     activities: []
   }
@@ -279,6 +281,7 @@ export class LauncherDownloadMonitor extends EventEmitter {
     this.fingerprint = ''
     this.snapshot = {
       revision: this.snapshot.revision + 1,
+      checkedAt: Date.now(),
       updatedAt: Date.now(),
       activities: []
     }
@@ -295,6 +298,11 @@ export class LauncherDownloadMonitor extends EventEmitter {
       ...this.snapshot,
       activities: this.snapshot.activities.map((activity) => ({ ...activity }))
     }
+  }
+
+  getActivity(activityId: string): LauncherDownloadActivity | undefined {
+    const activity = this.snapshot.activities.find((candidate) => candidate.id === activityId)
+    return activity ? { ...activity } : undefined
   }
 
   setPollingPaused(paused: boolean): void {
@@ -350,7 +358,7 @@ export class LauncherDownloadMonitor extends EventEmitter {
     const previous = this.xboxRequestedActivities.get(id)
     let game = previous?.gameId ? gameRepository.getGame(previous.gameId) : undefined
     if (!game) game = gameRepository.getGame(`xbox:${event.productId}`)
-    const activity: LauncherDownloadActivity = {
+    const activity = withDerivedLauncherTransferMetrics({
       id,
       provider: 'xbox',
       providerGameId: event.productId,
@@ -362,7 +370,7 @@ export class LauncherDownloadMonitor extends EventEmitter {
       bytesDownloaded: event.bytesDownloaded,
       bytesTotal: event.bytesTotal,
       updatedAt: now
-    }
+    }, previous)
 
     for (const [packageId, packageActivity] of this.xboxActivities) {
       if (
@@ -596,7 +604,7 @@ export class LauncherDownloadMonitor extends EventEmitter {
     if (epicAttempt.status === 'fulfilled') await this.reconcileEpic(epicAttempt.value, now)
     if (!this.running) return
 
-    this.publish(now)
+    this.publish(Date.now())
     this.schedule(this.snapshot.activities.length > 0 ? ACTIVE_POLL_MS : IDLE_POLL_MS)
   }
 
@@ -716,11 +724,18 @@ export class LauncherDownloadMonitor extends EventEmitter {
       return Number(leftTerminal) - Number(rightTerminal) || right.updatedAt - left.updatedAt
     })
     const fingerprint = activities.map(publicActivityFingerprint).join('\n')
-    if (fingerprint === this.fingerprint) return
+    const checkedAt = Math.max(this.snapshot.checkedAt, now)
+    if (fingerprint === this.fingerprint) {
+      if (checkedAt !== this.snapshot.checkedAt) {
+        this.snapshot = { ...this.snapshot, checkedAt }
+      }
+      return
+    }
 
     this.fingerprint = fingerprint
     this.snapshot = {
       revision: this.snapshot.revision + 1,
+      checkedAt,
       updatedAt: now,
       activities
     }

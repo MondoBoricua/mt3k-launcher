@@ -8,8 +8,17 @@ function getActiveFocusScope(): HTMLElement | null {
   return (
     scopes
       .reverse()
-      .find((scope) => scope.offsetParent !== null && !scope.closest('[inert]')) ?? null
+      .find(isVisibleFocusTarget) ?? null
   )
+}
+
+export function isActiveFocusScope(scope: HTMLElement): boolean {
+  return getActiveFocusScope() === scope
+}
+
+export function isElementWithinActiveFocusScope(element: HTMLElement): boolean {
+  const activeScope = getActiveFocusScope()
+  return !activeScope || activeScope.contains(element)
 }
 
 export function getFocusableElements(): HTMLElement[] {
@@ -17,7 +26,7 @@ export function getFocusableElements(): HTMLElement[] {
   const root: ParentNode = activeScope ?? document
   return Array.from(
     root.querySelectorAll<HTMLElement>('[data-focusable]:not([data-disabled="true"])')
-  ).filter((el) => el.offsetParent !== null && !el.closest('[inert]'))
+  ).filter(isVisibleFocusTarget)
 }
 
 /**
@@ -261,7 +270,10 @@ function findXModeTarget(
 }
 
 function isVisibleFocusTarget(element: HTMLElement): boolean {
-  return element.offsetParent !== null && !element.closest('[inert]')
+  if (element.closest('[inert]')) return false
+  // Fixed-position dialogs intentionally have no offsetParent. Client rects
+  // distinguish them from display:none content without excluding overlays.
+  return element.offsetParent !== null || element.getClientRects().length > 0
 }
 
 function nearestHorizontalTarget(
@@ -689,6 +701,12 @@ export function focusElement(
 
 interface ScrollAnimation {
   frame: number
+  targetTop: number
+  targetLeft: number
+  velocityTop: number
+  velocityLeft: number
+  duration: number
+  lastFrameAt: number
 }
 
 const activeScrollAnimations = new WeakMap<HTMLElement, ScrollAnimation>()
@@ -773,30 +791,97 @@ function findScrollParents(el: HTMLElement): HTMLElement[] {
   return parents
 }
 
-function animateScrollTo(element: HTMLElement, targetTop: number, targetLeft: number): void {
-  const previous = activeScrollAnimations.get(element)
-  if (previous) cancelAnimationFrame(previous.frame)
-
-  const startTop = element.scrollTop
-  const startLeft = element.scrollLeft
+function animateScrollTo(
+  element: HTMLElement,
+  targetTop: number,
+  targetLeft: number,
+  duration = 105
+): void {
   const maxTop = Math.max(0, element.scrollHeight - element.clientHeight)
   const maxLeft = Math.max(0, element.scrollWidth - element.clientWidth)
   const finalTop = Math.min(targetTop, maxTop)
   const finalLeft = Math.min(targetLeft, maxLeft)
-  const startedAt = performance.now()
-  const duration = 105
-  const animation: ScrollAnimation = { frame: 0 }
+
+  const active = activeScrollAnimations.get(element)
+  if (active) {
+    // Controller repeat can arrive faster than a scrolling row's visual travel
+    // time. Retarget the running motion without discarding velocity so repeated
+    // navigation does not create a visible brake or jolt.
+    active.targetTop = finalTop
+    active.targetLeft = finalLeft
+    active.duration = duration
+    return
+  }
+
+  const animation: ScrollAnimation = {
+    frame: 0,
+    targetTop: finalTop,
+    targetLeft: finalLeft,
+    velocityTop: 0,
+    velocityLeft: 0,
+    duration,
+    lastFrameAt: performance.now()
+  }
+
+  const smoothAxis = (
+    current: number,
+    target: number,
+    velocity: number,
+    deltaSeconds: number,
+    smoothTime: number
+  ): { value: number; velocity: number } => {
+    const omega = 2 / smoothTime
+    const step = omega * deltaSeconds
+    const decay = 1 / (1 + step + 0.48 * step * step + 0.235 * step * step * step)
+    const distance = current - target
+    const temporaryVelocity = (velocity + omega * distance) * deltaSeconds
+    return {
+      value: target + (distance + temporaryVelocity) * decay,
+      velocity: (velocity - omega * temporaryVelocity) * decay
+    }
+  }
 
   const tick = (now: number): void => {
-    const progress = Math.min(1, (now - startedAt) / duration)
-    const eased = 1 - Math.pow(1 - progress, 3)
-    element.scrollTop = startTop + (finalTop - startTop) * eased
-    element.scrollLeft = startLeft + (finalLeft - startLeft) * eased
-    if (progress < 1) {
-      animation.frame = requestAnimationFrame(tick)
-    } else {
+    const currentMaxTop = Math.max(0, element.scrollHeight - element.clientHeight)
+    const currentMaxLeft = Math.max(0, element.scrollWidth - element.clientWidth)
+    animation.targetTop = Math.min(animation.targetTop, currentMaxTop)
+    animation.targetLeft = Math.min(animation.targetLeft, currentMaxLeft)
+
+    const deltaSeconds = Math.min(1 / 30, Math.max(1 / 120, (now - animation.lastFrameAt) / 1_000))
+    const smoothTime = Math.max(0.04, animation.duration / 3_000)
+    const top = smoothAxis(
+      element.scrollTop,
+      animation.targetTop,
+      animation.velocityTop,
+      deltaSeconds,
+      smoothTime
+    )
+    const left = smoothAxis(
+      element.scrollLeft,
+      animation.targetLeft,
+      animation.velocityLeft,
+      deltaSeconds,
+      smoothTime
+    )
+    animation.lastFrameAt = now
+    animation.velocityTop = top.velocity
+    animation.velocityLeft = left.velocity
+    element.scrollTop = top.value
+    element.scrollLeft = left.value
+
+    const settled =
+      Math.abs(element.scrollTop - animation.targetTop) < 0.35 &&
+      Math.abs(element.scrollLeft - animation.targetLeft) < 0.35 &&
+      Math.abs(animation.velocityTop) < 6 &&
+      Math.abs(animation.velocityLeft) < 6
+    if (settled) {
+      element.scrollTop = animation.targetTop
+      element.scrollLeft = animation.targetLeft
       activeScrollAnimations.delete(element)
+      return
     }
+
+    animation.frame = requestAnimationFrame(tick)
   }
 
   animation.frame = requestAnimationFrame(tick)
@@ -815,6 +900,15 @@ export function moveFocus(
   options: { allowNavigationLayerTransition?: boolean } = {}
 ): boolean {
   const current = document.activeElement as HTMLElement | null
+  const activeScope = getActiveFocusScope()
+  if (
+    activeScope &&
+    (!current || !current.hasAttribute('data-focusable') || !activeScope.contains(current))
+  ) {
+    const previous = document.activeElement
+    focusFirstIn(activeScope)
+    return document.activeElement !== previous
+  }
   if (
     current?.matches('input[type="range"]') &&
     (direction === 'left' || direction === 'right')
@@ -833,16 +927,17 @@ export function moveFocus(
     focusFirstIn()
     return document.activeElement !== previous
   }
-  if (
-    direction === 'up' &&
-    current.matches('[data-home-game-card="true"]') &&
-    document.querySelector('[data-home-jump-back="true"]')
-  ) {
+  const homeJumpBack =
+    direction === 'up' && current.matches('[data-home-game-card="true"]')
+      ? document.querySelector<HTMLElement>('[data-home-jump-back="true"]')
+      : null
+  if (homeJumpBack && current !== homeJumpBack) {
     window.dispatchEvent(new CustomEvent(HOME_SHOW_BANNERS_EVENT))
     return true
   }
   const next = findNextFocus(current, direction)
   if (!next) return false
+  if (activeScope && !activeScope.contains(next)) return false
   if (
     options.allowNavigationLayerTransition === false &&
     verticalNavigationLayer(current) !== verticalNavigationLayer(next)

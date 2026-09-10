@@ -23,6 +23,23 @@ import {
   isNewXboxGamePassMembership,
   XBOX_GAME_PASS_NEW_WINDOW_MS
 } from '../src/shared/xboxGamePassHistory.ts'
+import {
+  FULL_LIBRARY_SYNC_MAX_AGE_MS,
+  shouldScheduleFullLibrarySync
+} from '../src/shared/libraryStartupSync.ts'
+
+const fullSyncNow = Date.parse('2026-09-09T12:00:00.000Z')
+assert.equal(shouldScheduleFullLibrarySync(undefined, fullSyncNow), true)
+assert.equal(shouldScheduleFullLibrarySync(fullSyncNow - 60_000, fullSyncNow), false)
+assert.equal(
+  shouldScheduleFullLibrarySync(fullSyncNow - FULL_LIBRARY_SYNC_MAX_AGE_MS, fullSyncNow),
+  true
+)
+assert.equal(
+  shouldScheduleFullLibrarySync(fullSyncNow + FULL_LIBRARY_SYNC_MAX_AGE_MS, fullSyncNow),
+  true,
+  'a clock rollback must not suppress full synchronization indefinitely'
+)
 
 const sameTitleCopies = projectVisibleLibraryRecords([
   { id: 'steam:10', name: 'Same Game', provider: 'steam', owned: true, installed: false },
@@ -168,8 +185,8 @@ assert.deepEqual(
   decideSteamSyncHealth({
     primaryLibraryAvailable: true,
     fallbackLibraryAvailable: true,
+    completeFallbackLibraryAvailable: false,
     cachedGameCount: 250,
-    pendingMetadataCount: 0,
     ownedResponseWasEmpty: false,
     supplementalSourcesComplete: true,
     localLibraryComplete: false

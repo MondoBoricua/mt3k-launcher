@@ -16,6 +16,12 @@ export interface ParsedSteamOwnedGames {
   reportedCount: number
 }
 
+export interface ParsedSteamClientGame {
+  appId: number
+  name: string
+  installSize?: number
+}
+
 export interface ParsedSteamCommunityFriend {
   steamId: string
   displayName: string
@@ -146,12 +152,12 @@ function jsonObject(value: string | undefined): Record<string, unknown> | undefi
 }
 
 /** Parses the same #application_config attributes used by Steam's own store UI. */
-export function parseSteamUserTokenFromHtml(source: string): ParsedSteamUserToken | null {
-  const configTag = applicationConfigTag(source)
-  if (!configTag) return null
-
-  const userInfo = jsonObject(htmlAttribute(configTag, 'data-userinfo'))
-  const storeConfig = jsonObject(htmlAttribute(configTag, 'data-store_user_config'))
+export function parseSteamUserTokenFromConfigAttributes(
+  userInfoAttribute: string | undefined,
+  storeConfigAttribute: string | undefined
+): ParsedSteamUserToken | null {
+  const userInfo = jsonObject(userInfoAttribute)
+  const storeConfig = jsonObject(storeConfigAttribute)
   const steamId = typeof userInfo?.steamid === 'string' ? userInfo.steamid.trim() : ''
   const accessToken =
     typeof storeConfig?.webapi_token === 'string' ? storeConfig.webapi_token.trim() : ''
@@ -159,6 +165,15 @@ export function parseSteamUserTokenFromHtml(source: string): ParsedSteamUserToke
   if (userInfo?.logged_in !== true || !/^\d{17}$/.test(steamId)) return null
   if (!accessToken || accessToken.length > 4096) return null
   return { steamId, accessToken }
+}
+
+export function parseSteamUserTokenFromHtml(source: string): ParsedSteamUserToken | null {
+  const configTag = applicationConfigTag(source)
+  if (!configTag) return null
+  return parseSteamUserTokenFromConfigAttributes(
+    htmlAttribute(configTag, 'data-userinfo'),
+    htmlAttribute(configTag, 'data-store_user_config')
+  )
 }
 
 function finiteNonNegative(value: unknown): number | undefined {
@@ -219,4 +234,57 @@ export function parseSteamOwnedGamesPayload(payload: unknown): ParsedSteamOwnedG
     throw new Error('GetOwnedGames returned an incomplete game list')
   }
   return { games, reportedCount }
+}
+
+/**
+ * Steam returns an empty response object when no desktop-client app list is
+ * available. Playnite treats that as an empty optional source, not a failed
+ * account sync. A present but malformed apps field remains a real error.
+ */
+export function parseSteamClientAppsPayload(payload: unknown): ParsedSteamClientGame[] {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('GetClientAppList returned an invalid response')
+  }
+
+  const root = payload as Record<string, unknown>
+  const nested = root.response
+  if (
+    nested !== undefined &&
+    nested !== null &&
+    (typeof nested !== 'object' || Array.isArray(nested))
+  ) {
+    throw new Error('GetClientAppList returned an invalid response object')
+  }
+  const response = nested as Record<string, unknown> | null | undefined
+  const rawApps = response?.apps ?? root.apps
+  if (rawApps === undefined || rawApps === null) return []
+  if (!Array.isArray(rawApps)) {
+    throw new Error('GetClientAppList returned an invalid app list')
+  }
+
+  const games: ParsedSteamClientGame[] = []
+  const seen = new Set<number>()
+  for (const candidate of rawApps) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue
+    const app = candidate as Record<string, unknown>
+    const appId = app.appid
+    const name = typeof app.app === 'string' ? app.app.trim() : ''
+    if (
+      !Number.isInteger(appId) ||
+      (appId as number) <= 0 ||
+      (appId as number) > 0xffffffff ||
+      !name ||
+      seen.has(appId as number)
+    ) {
+      continue
+    }
+    seen.add(appId as number)
+    const size = Number(app.bytes_required)
+    games.push({
+      appId: appId as number,
+      name,
+      installSize: Number.isFinite(size) && size >= 0 ? size : undefined
+    })
+  }
+  return games
 }

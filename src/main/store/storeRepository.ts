@@ -8,6 +8,7 @@ import type {
   StoreRegionId,
   StoreSnapshot
 } from '@shared/ipc'
+import { reconcileSteamWishlist } from '@shared/steamWishlistPolicy'
 
 const SCHEMA_VERSION = 1
 
@@ -160,10 +161,15 @@ export class StoreRepository {
     return true
   }
 
-  replaceSteamWishlist(items: Array<{ productId: string; addedAt?: number }>): void {
-    const wishlist: Record<string, number> = {}
-    for (const item of items) wishlist[item.productId] = item.addedAt ?? Date.now()
-    databaseState.steamWishlist = wishlist
+  replaceSteamWishlist(
+    items: Array<{ productId: string; addedAt?: number }>,
+    complete = true
+  ): void {
+    databaseState.steamWishlist = reconcileSteamWishlist(
+      databaseState.steamWishlist,
+      items,
+      complete
+    )
     scheduleDatabasePersist()
   }
 

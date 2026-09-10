@@ -6,7 +6,8 @@ export const GAME_TRACKING_METHODS = [
   'install-directory',
   'package-identity',
   'executable',
-  'provider-handoff'
+  'provider-handoff',
+  'geforce-now-window'
 ] as const
 
 export type GameTrackingMethod = (typeof GAME_TRACKING_METHODS)[number]

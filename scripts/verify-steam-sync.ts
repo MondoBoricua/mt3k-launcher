@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import {
+  parseSteamClientAppsPayload,
+  parseSteamUserTokenFromConfigAttributes,
   parseSteamCommunityFriendsHtml,
   parseSteamOwnedGamesPayload,
   parseSteamUserTokenFromHtml
@@ -96,6 +98,15 @@ assert.deepEqual(token, {
   accessToken: 'library-token'
 })
 
+assert.deepEqual(
+  parseSteamUserTokenFromConfigAttributes(
+    '{"logged_in":true,"steamid":"76561198000000000"}',
+    '{"webapi_token":"rendered-token"}'
+  ),
+  { steamId: '76561198000000000', accessToken: 'rendered-token' },
+  'the offscreen Playnite-style path parses rendered application config attributes'
+)
+
 assert.equal(
   parseSteamUserTokenFromHtml(
     '<div id="application_config" data-userinfo="{&quot;logged_in&quot;:false}"></div>'
@@ -131,11 +142,39 @@ assert.throws(
 )
 
 assert.deepEqual(
+  parseSteamClientAppsPayload({ response: {} }),
+  [],
+  'a missing optional desktop-client app list is a successful empty source, as in Playnite'
+)
+assert.deepEqual(
+  parseSteamClientAppsPayload({ response: null }),
+  [],
+  'a null optional desktop-client response is also empty rather than a sync failure'
+)
+assert.deepEqual(
+  parseSteamClientAppsPayload({
+    response: {
+      apps: [
+        { appid: 10, app: 'Counter-Strike', bytes_required: '12345' },
+        { appid: 10, app: 'Duplicate' },
+        { appid: -1, app: 'Invalid' }
+      ]
+    }
+  }),
+  [{ appId: 10, name: 'Counter-Strike', installSize: 12345 }]
+)
+assert.throws(
+  () => parseSteamClientAppsPayload({ response: { apps: { appid: 10 } } }),
+  /invalid app list/,
+  'a present malformed app list must still surface a real provider error'
+)
+
+assert.deepEqual(
   decideSteamSyncHealth({
     primaryLibraryAvailable: true,
     fallbackLibraryAvailable: false,
+    completeFallbackLibraryAvailable: false,
     cachedGameCount: 250,
-    pendingMetadataCount: 0,
     ownedResponseWasEmpty: false,
     supplementalSourcesComplete: false,
     localLibraryComplete: true
@@ -148,8 +187,8 @@ assert.deepEqual(
   decideSteamSyncHealth({
     primaryLibraryAvailable: true,
     fallbackLibraryAvailable: false,
+    completeFallbackLibraryAvailable: false,
     cachedGameCount: 250,
-    pendingMetadataCount: 0,
     ownedResponseWasEmpty: false,
     supplementalSourcesComplete: true,
     localLibraryComplete: false
@@ -162,8 +201,8 @@ assert.deepEqual(
   decideSteamSyncHealth({
     primaryLibraryAvailable: true,
     fallbackLibraryAvailable: false,
+    completeFallbackLibraryAvailable: false,
     cachedGameCount: 250,
-    pendingMetadataCount: 0,
     ownedResponseWasEmpty: false,
     supplementalSourcesComplete: true,
     localLibraryComplete: true
@@ -175,8 +214,8 @@ assert.deepEqual(
   decideSteamSyncHealth({
     primaryLibraryAvailable: false,
     fallbackLibraryAvailable: false,
+    completeFallbackLibraryAvailable: false,
     cachedGameCount: 250,
-    pendingMetadataCount: 0,
     ownedResponseWasEmpty: false,
     supplementalSourcesComplete: false,
     localLibraryComplete: true
@@ -188,13 +227,29 @@ assert.deepEqual(
   decideSteamSyncHealth({
     primaryLibraryAvailable: true,
     fallbackLibraryAvailable: true,
+    completeFallbackLibraryAvailable: false,
     cachedGameCount: 250,
-    pendingMetadataCount: 3,
+    pendingMetadataCount: 457,
     ownedResponseWasEmpty: false,
     supplementalSourcesComplete: true,
     localLibraryComplete: true
   }),
-  { state: 'partial', issue: 'metadata-pending' }
+  { state: 'ready' },
+  'background classification of raw Dynamic Store IDs must not downgrade a complete library'
+)
+
+assert.deepEqual(
+  decideSteamSyncHealth({
+    primaryLibraryAvailable: false,
+    fallbackLibraryAvailable: true,
+    completeFallbackLibraryAvailable: true,
+    cachedGameCount: 250,
+    ownedResponseWasEmpty: false,
+    supplementalSourcesComplete: true,
+    localLibraryComplete: true
+  }),
+  { state: 'ready' },
+  'authenticated Store userdata is Playnite-compatible complete ID coverage'
 )
 
 assert.equal(canPruneSteamOwnedRecords(true, false, true), false)

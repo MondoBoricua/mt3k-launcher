@@ -21,10 +21,27 @@ import {
 
 assert.equal(detectRetroSystemId('D:\\ROMs\\NES\\Super Mario Bros. (USA).nes'), 'nes')
 assert.equal(detectRetroSystemId('D:\\ROMs\\PlayStation 2\\Shadow of the Colossus.cue'), 'ps2')
+assert.equal(
+  detectRetroSystemId("D:\\ROMs\\PS3\\Demon's Souls\\PS3_GAME\\USRDIR\\EBOOT.BIN"),
+  'ps3'
+)
+assert.equal(detectRetroSystemId('D:\\ROMs\\PS3\\Gran Turismo 6.iso'), 'ps3')
+assert.equal(detectRetroSystemId('D:\\ROMs\\Xbox360\\Forza Motorsport 4\\default.xex'), 'xbox360')
+assert.equal(detectRetroSystemId('D:\\ROMs\\Xbox360\\Lost Odyssey.iso'), 'xbox360')
+assert.equal(detectRetroSystemId('D:\\ROMs\\PS3\\compressed.zip'), undefined)
+assert.equal(detectRetroSystemId('D:\\ROMs\\Xbox360\\compressed.7z'), undefined)
 assert.equal(detectRetroSystemId('D:\\ROMs\\Wii\\Mario Kart.wbfs'), 'wii')
 assert.equal(detectRetroSystemId('D:\\ROMs\\Arcade\\galaga.7z'), 'arcade')
 assert.equal(detectRetroSystemId('D:\\Downloads\\readme.txt'), undefined)
 assert.equal(cleanRetroGameName('D:\\ROMs\\SNES\\Chrono Trigger (USA) [!].sfc'), 'Chrono Trigger')
+assert.equal(
+  cleanRetroGameName("D:\\ROMs\\PS3\\Demon's Souls\\PS3_GAME\\USRDIR\\EBOOT.BIN"),
+  "Demon's Souls"
+)
+assert.equal(
+  cleanRetroGameName('D:\\ROMs\\Xbox360\\Forza Motorsport 4\\default.xex'),
+  'Forza Motorsport 4'
+)
 assert.equal(
   matchingRetroArchCore('snes', ['mesen_libretro.dll', 'snes9x_libretro.dll']),
   'snes9x_libretro.dll'
@@ -44,9 +61,11 @@ assert.deepEqual(
     'retroarch',
     'duckstation',
     'pcsx2',
+    'rpcs3',
     'dolphin',
     'ppsspp',
     'cemu',
+    'xenia',
     'mgba',
     'melonds',
     'snes9x',
@@ -62,7 +81,11 @@ for (const system of RETRO_SYSTEMS) {
   assert.equal(managed[0].id, recommended.id)
   assert.ok(recommended.systems.includes(system.id))
   assert.ok(system.folderAliases.includes(system.id), `${system.id} managed folder is not detectable`)
-  assert.equal(detectRetroSystemId(`D:\\ORBIT\\ROMs\\${system.id}\\fixture.zip`), system.id)
+  const fixtureExtension = system.id === 'ps3' || system.id === 'xbox360' ? 'iso' : 'zip'
+  assert.equal(
+    detectRetroSystemId(`D:\\ORBIT\\ROMs\\${system.id}\\fixture.${fixtureExtension}`),
+    system.id
+  )
 }
 
 const retroArchGame: RetroGameConfig = {
@@ -104,9 +127,11 @@ const profileExpectations: Record<(typeof RETRO_LAUNCH_PROFILE_IDS)[number], str
   retroarch: ['-f', '-L', retroArchGame.corePath as string, retroArchGame.romPath],
   duckstation: ['-batch', '-fullscreen', '--', retroArchGame.romPath],
   pcsx2: ['-batch', '-fullscreen', '--', retroArchGame.romPath],
+  rpcs3: ['--no-gui', '--fullscreen', retroArchGame.romPath],
   dolphin: ['-b', '-C', 'Dolphin.Display.Fullscreen=True', '-e', retroArchGame.romPath],
   ppsspp: ['--fullscreen', retroArchGame.romPath],
   cemu: ['-f', '-g', retroArchGame.romPath],
+  xenia: [retroArchGame.romPath, '--fullscreen=true'],
   mgba: ['-f', retroArchGame.romPath],
   melonds: ['-f', retroArchGame.romPath],
   snes9x: [retroArchGame.romPath],
@@ -149,6 +174,21 @@ assert.deepEqual(
     retroArchGame.romPath
   ]),
   ['-config', 'window:fullscreen=yes', retroArchGame.romPath]
+)
+assert.deepEqual(
+  enforceRetroFullscreenArguments('rpcs3', [
+    '--fullscreen',
+    '--no-gui',
+    retroArchGame.romPath
+  ]),
+  ['--fullscreen', '--no-gui', retroArchGame.romPath]
+)
+assert.deepEqual(
+  enforceRetroFullscreenArguments('xenia', [
+    retroArchGame.romPath,
+    '--fullscreen=false'
+  ]),
+  [retroArchGame.romPath, '--fullscreen=true']
 )
 
 assert.equal(

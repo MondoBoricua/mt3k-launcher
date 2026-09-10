@@ -20,7 +20,7 @@ ORBIT is an Electron-based Windows launcher designed for handhelds, TVs and desk
 
 - Steam, Epic Games, GOG, Xbox / Microsoft Store, PlayStation, EA app, Ubisoft Connect, retro systems and custom local games
 - Console-style spatial navigation with visible focus and gamepad support
-- Four Home layouts, including the Xbox-inspired XMODE, CoreSense recommendations and optional 3D card depth
+- Six Home layouts, including the Xbox-inspired XMODE, CoreSense recommendations and the ORBIT Plus-exclusive Cuadro TV Launcher
 - Friends Hub with Steam, Epic and optional Discord presence, conversations and notifications
 - Favorites, custom collections and adjustable 4–8-column library layouts
 - Live Steam, Epic Games and Xbox download/update activity
@@ -32,7 +32,7 @@ ORBIT is an Electron-based Windows launcher designed for handhelds, TVs and desk
 - Safe per-game launch options and adaptive Xbox/PlayStation controller hints
 - Quick Settings and a compact system HUD for battery, network and Bluetooth status
 - Read-only Windows Update and graphics-driver checks
-- English, German and Spanish interfaces with adjustable text size
+- English, German, Spanish and Russian interfaces with adjustable text size
 - Optional Xbox Mode and background Hardware Control
 - Optional ORBIT Plus membership for cloud gaming and premium personalization
 
@@ -44,17 +44,15 @@ ORBIT is an Electron-based Windows launcher designed for handhelds, TVs and desk
 
 ## Download
 
-ORBIT `0.1.3` is the current stable release. Download **`ORBIT-XboxMode-Setup-0.1.3-x64.exe`** from the [latest GitHub Release](https://github.com/toonymak1993/orbit/releases/latest). This is the only file required: the setup contains ORBIT, the signed Xbox Mode AppX, the public ORBIT certificate and the verified English installation flow.
+ORBIT `0.1.4` is the current stable release. Download **`ORBIT-XboxMode-Setup-0.1.4-x64.exe`** from the [latest GitHub Release](https://github.com/toonymak1993/orbit/releases/latest). This is the only file required: the setup contains ORBIT, the signed Xbox Mode AppX, the public ORBIT certificate and the verified English installation flow.
 
 Run the setup from the Windows account that should own ORBIT and approve the administrator prompt. After installation, Windows opens **Settings > Gaming > Xbox mode** so ORBIT can be selected as the home app.
 
-> ORBIT `0.1.3` is signed with the publicly trusted Certum Open Source Code Signing certificate. ORBIT never installs this public certificate into a Windows trust store. During the one-time transition from old self-signed builds, setup keeps the legacy package and its development certificate in place because Windows scopes its data to the old package family. SmartScreen may still warn while a new certificate or binary builds reputation; always verify the SHA-256 and signer published in the release notes.
+> ORBIT `0.1.4` is signed with the publicly trusted Certum Open Source Code Signing certificate. ORBIT never installs this public certificate into a Windows trust store. During the one-time transition from old self-signed builds, setup keeps the legacy package and its development certificate in place because Windows scopes its data to the old package family. SmartScreen may still warn while a new certificate or binary builds reputation; always verify the SHA-256 and signer published in the release notes.
 
-### Previous public beta
+### Previous stable release
 
-ORBIT `0.1.2-beta.2` remains available as the final historical prerelease on the [0.1.2 Beta 2 release page](https://github.com/toonymak1993/orbit/releases/tag/v0.1.2-beta.2). New users should install the stable all-in-one setup above.
-
-Beta 2 adds the first publicly trusted ORBIT signing line, direct Xbox game installation requests, broader Xbox and Xbox 360 library reconciliation, richer Xbox download progress, Discord server access and more predictable hierarchical controller navigation. It also includes every Beta 1 feature. Beta 1 users must run this all-in-one setup manually once because the old build cannot trust a signer it did not yet know, then select **ORBIT Beta** under **Settings > Gaming > Xbox mode**. The legacy **ORBIT** package is intentionally retained to protect package-family-scoped data; do not remove it until you have confirmed your data in Beta 2. See the complete [0.1.2 Beta 2 testing notes](docs/releases/0.1.2-beta.2.md) before installing.
+ORBIT `0.1.3` remains available on its [release page](https://github.com/toonymak1993/orbit/releases/tag/v0.1.3). New users should install the current all-in-one setup above. Existing Certum-signed installations can update on the same trusted publisher line.
 
 ### Requirements
 
@@ -64,21 +62,21 @@ Beta 2 adds the first publicly trusted ORBIT signing line, direct Xbox game inst
 
 Xbox Mode visibility still depends on Microsoft's supported markets, device policy and phased Windows rollout. Keep Windows, the Xbox app and Game Bar current.
 
-## What's new in 0.1.3
+## What's new in 0.1.4
 
-- ORBIT Plus arrives with secure Patreon membership verification, GeForce NOW cloud-library integration, dynamic Home backgrounds, six premium colour themes, flexible corner styles and custom launcher/UI audio
-- Xbox sign-in adds Xbox friends and achievement access, while local Game Pass history makes newly discovered membership games easier to find
-- English, German and Spanish are now complete across launcher and native messages, with 75–150% text scaling designed for handheld and TV layouts
-- Game pages gain trailers, optional title music, editable metadata, clearer launch/running states and a configurable game-card primary action
-- Controller cursor mode, spatial navigation, tray background mode, startup behavior and elevated-game detection are more robust
-- Library refreshes, provider reconciliation and the GitHub updater now recover more safely from partial data, active games and interrupted downloads
-- The single English Xbox Mode setup still includes the complete app and remains signed with ORBIT's official Certum certificate
+- The first complete ORBIT Plus release adds secure Patreon membership verification plus annual and lifetime license-key activation, all mapped to the same provider-neutral entitlement
+- Plus gains the Next Game Picker, controller-ready achievement video guides, the exclusive Cuadro TV Launcher, GeForce NOW cloud launching and session tracking, dynamic Home motion, premium themes, corner styles and custom launcher/UI audio
+- The free launcher gains Russian, a controller-ready Download Center, Steam wishlist and Family-library improvements, PS3/Xbox 360 retro support, a device Power menu and broader install/uninstall actions
+- Game details now provide a complete metadata workspace with artwork quality guidance and safe YouTube search for trailers and title music
+- ORBIT remains navigable while a game runs; stronger multi-signal process/window tracking handles launch, playtime, manual stop and automatic return more reliably
+- Played GeForce NOW titles participate in local Home history and can continue back into GeForce NOW, while cloud catalog discovery and direct matched-game launching remain ORBIT Plus features
+- The single English Xbox Mode setup still contains the complete app and is signed with ORBIT's official Certum certificate
 
-See the complete [0.1.3 release notes](docs/releases/0.1.3.md) for details. The ORBIT Plus security and entitlement model is documented separately in [ORBIT_PLUS.md](docs/ORBIT_PLUS.md).
+See the complete [0.1.4 release notes](docs/releases/0.1.4.md) for details. The ORBIT Plus security and entitlement model is documented separately in [ORBIT_PLUS.md](docs/ORBIT_PLUS.md).
 
 ## ORBIT Plus
 
-ORBIT remains a usable controller-first launcher without a membership. ORBIT Plus is an optional layer for cloud gaming and premium personalization. Patreon is the first access route; passwords, Patreon API credentials and provider identifiers never cross into the renderer, and the launcher stores only an encrypted ORBIT session plus a time-limited verified entitlement. GeForce NOW, game licenses and third-party subscriptions remain separate.
+ORBIT remains a complete controller-first launcher without Plus. ORBIT Plus is an optional layer for cloud gaming, guided discovery and premium personalization. Access can be verified through Patreon or an annual/lifetime license key; the launcher keeps only encrypted ORBIT sessions and license credentials in Windows secure storage. Payment details, Patreon passwords, provider credentials and private signing material never enter the renderer or repository. GeForce NOW accounts, games and third-party subscriptions remain separate. Visit the [official ORBIT website](https://www.getorbitlauncher.com/) for product information and future downloads.
 
 ## Build from source
 
@@ -98,7 +96,7 @@ Create a production build with `npm run build`. Windows installer and Xbox Mode 
 
 ## Project status
 
-ORBIT `0.1.3` is the current stable public release. The earlier `0.1.2-beta.2` build remains available only as historical test material. Integrations and packaging will continue to evolve as the launcher is tested across more PCs, handhelds and game libraries.
+ORBIT `0.1.4` is the current stable public release. `0.1.3` remains available as the previous stable build, while older beta packages are historical test material. The next development phase prioritizes measured stability, startup/navigation performance, lower resource use and reliable long-session behavior before another large feature wave.
 
 ORBIT is an independent project and is not affiliated with Valve, Epic Games, Microsoft, Xbox or the publishers shown in screenshots.
 

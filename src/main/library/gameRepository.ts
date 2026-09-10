@@ -997,12 +997,21 @@ export class GameRepository {
     return true
   }
 
-  markStarted(gameId: string, startedAt = Date.now()): boolean {
+  markStarted(gameId: string, startedAt = Date.now(), source: 'local' | 'geforce-now' = 'local'): boolean {
     this.ensureOpen()
     const game = this.account.games[gameId]
     if (!game) return false
     const now = Date.now()
-    game.lastStartedAt = normalizeLibraryTimestamp(startedAt) || now
+    const timestamp = normalizeLibraryTimestamp(startedAt) || now
+    if (source === 'geforce-now') {
+      // Preserve the last known local history before aggregate/provider recency
+      // starts reflecting this cloud session too.
+      game.lastLocalStartedAt ??= latestLibraryActivity(game)
+      game.lastGeForceNowStartedAt = timestamp
+    } else {
+      game.lastLocalStartedAt = timestamp
+    }
+    game.lastStartedAt = timestamp
     game.updatedAt = now
     this.rebuildRecentIds()
     this.commit(now)
@@ -1391,6 +1400,9 @@ export class GameRepository {
         pendingPlaytimeSeconds: validPlaytimeSeconds(candidate.pendingPlaytimeSeconds) || undefined,
         lastPlayedTimestamp: normalizeLibraryTimestamp(candidate.lastPlayedTimestamp) || undefined,
         lastStartedAt: normalizeLibraryTimestamp(candidate.lastStartedAt) || undefined,
+        lastLocalStartedAt: candidate.lastLocalStartedAt === 0 ? 0 :
+          normalizeLibraryTimestamp(candidate.lastLocalStartedAt) || undefined,
+        lastGeForceNowStartedAt: normalizeLibraryTimestamp(candidate.lastGeForceNowStartedAt) || undefined,
         installed: Boolean(candidate.installed),
         libraryAccess:
           candidate.libraryAccess === 'owned' || candidate.libraryAccess === 'shared'

@@ -9,6 +9,9 @@
   --color-accent: 63 208 255;
   --color-accent-2: 139 92 246;
   --color-uninstalled-game: 124 132 148;
+  --uninstalled-game-artwork-filter: grayscale(1) saturate(0) brightness(0.62) contrast(0.9);
+  --uninstalled-game-tint-opacity: 1;
+  --uninstalled-game-dim-opacity: 1;
   --color-game-running: 52 211 153;
 
   --radius-card: 1.25rem;

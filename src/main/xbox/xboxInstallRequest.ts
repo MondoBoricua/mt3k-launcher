@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline'
 
@@ -7,6 +7,8 @@ const PROGRESS_MARKER = 'ORBIT_XBOX_INSTALL_PROGRESS:'
 const INSTALL_TIMEOUT_MS = 30_000
 
 export type XboxInstallRequestStatus = 'queued' | 'unsupported' | 'failed'
+export const XBOX_INSTALL_CONTROL_ACTIONS = ['pause', 'resume', 'cancel'] as const
+export type XboxInstallControlAction = (typeof XBOX_INSTALL_CONTROL_ACTIONS)[number]
 export type XboxProductInstallPhase =
   | 'downloading'
   | 'installing'
@@ -174,12 +176,41 @@ try {
 Write-OrbitInstallResult 'failed'
 `
 
+const XBOX_INSTALL_CONTROL_SCRIPT = String.raw`
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+
+$productId = ([string]$env:ORBIT_XBOX_PRODUCT_ID).Trim().ToUpperInvariant()
+$action = ([string]$env:ORBIT_XBOX_INSTALL_ACTION).Trim().ToLowerInvariant()
+if ($productId -notmatch '^[A-Z0-9]{12}$' -or $action -notin @('pause', 'resume', 'cancel')) {
+  [Console]::Out.Write('failed')
+  exit 0
+}
+
+try {
+  $null = Add-Type -AssemblyName System.Runtime.WindowsRuntime -PassThru
+  $null = [Windows.ApplicationModel.Store.Preview.InstallControl.AppInstallManager, Windows.ApplicationModel.Store, ContentType = WindowsRuntime]
+  $manager = [Windows.ApplicationModel.Store.Preview.InstallControl.AppInstallManager]::new()
+  if ($action -eq 'pause') { $manager.Pause($productId) }
+  elseif ($action -eq 'resume') { $manager.Restart($productId) }
+  else { $manager.Cancel($productId) }
+  [Console]::Out.Write('ok')
+} catch {
+  [Console]::Out.Write('failed')
+}
+`
+
 export function normalizeXboxProductId(value: string): string {
   const productId = value.trim().toUpperCase()
   if (!/^[A-Z0-9]{12}$/.test(productId)) {
     throw new Error('Invalid Xbox product identifier')
   }
   return productId
+}
+
+export function isXboxInstallControlAction(value: unknown): value is XboxInstallControlAction {
+  return XBOX_INSTALL_CONTROL_ACTIONS.includes(value as XboxInstallControlAction)
 }
 
 export function parseXboxInstallRequestStatus(output: string): XboxInstallRequestStatus {
@@ -326,6 +357,31 @@ export class XboxProductInstallService extends EventEmitter {
     }
     this.requests.clear()
   }
+
+  control(value: string, actionValue: XboxInstallControlAction): Promise<boolean> {
+    const productId = normalizeXboxProductId(value)
+    if (!isXboxInstallControlAction(actionValue) || process.platform !== 'win32') {
+      return Promise.resolve(false)
+    }
+
+    return new Promise((resolve) => {
+      execFile(
+        'powershell.exe',
+        ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', XBOX_INSTALL_CONTROL_SCRIPT],
+        {
+          windowsHide: true,
+          timeout: 30_000,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            ORBIT_XBOX_PRODUCT_ID: productId,
+            ORBIT_XBOX_INSTALL_ACTION: actionValue
+          }
+        },
+        (error, stdout) => resolve(!error && stdout.trim() === 'ok')
+      )
+    })
+  }
 }
 
 export const xboxProductInstallService = new XboxProductInstallService()
@@ -334,4 +390,11 @@ export const xboxProductInstallService = new XboxProductInstallService()
  * alive so ORBIT can display the exact progress of its own request. */
 export function requestXboxProductInstall(value: string): Promise<XboxInstallRequestStatus> {
   return xboxProductInstallService.request(value)
+}
+
+export function controlXboxProductInstall(
+  value: string,
+  action: XboxInstallControlAction
+): Promise<boolean> {
+  return xboxProductInstallService.control(value, action)
 }

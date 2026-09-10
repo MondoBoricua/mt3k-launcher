@@ -3,6 +3,10 @@ import { existsSync } from 'node:fs'
 import { win32 as path } from 'node:path'
 import { shell } from 'electron'
 import type { LibraryGame } from '@shared/ipc'
+import {
+  canRequestGameInstall,
+  canRequestGameUninstall
+} from '@shared/gameInstallation'
 import { retroLaunchArguments } from '@shared/retroSystems'
 import { launcherDownloadMonitor } from './downloads/launcherDownloadMonitor'
 import {
@@ -20,6 +24,7 @@ import {
   normalizeXboxProductId,
   requestXboxProductInstall
 } from './xbox/xboxInstallRequest'
+import { uninstallXboxPackage } from './xbox/xboxUninstall'
 
 const WINDOWS_POWERSHELL_PATH = path.join(
   process.env.SystemRoot ?? 'C:\\Windows',
@@ -35,6 +40,9 @@ export interface GameLaunchReceipt {
   /** Config-driven emulators use this to verify fullscreen and fall back to Alt+Enter. */
   ensureFullscreenWithHotkey?: boolean
 }
+
+export type GameInstallRequestState = 'queued' | 'provider-opened'
+export type GameUninstallRequestState = 'completed' | 'provider-opened'
 
 function epicGameId(value: string): string {
   const id = value.trim()
@@ -228,7 +236,7 @@ function steamExecutable(game: LibraryGame): string | undefined {
   return candidates.find((candidate, index) => candidates.indexOf(candidate) === index && existsSync(candidate))
 }
 
-async function installSteamGame(game: LibraryGame): Promise<void> {
+async function installSteamGame(game: LibraryGame): Promise<GameInstallRequestState> {
   const appId = game.appId
   if (!appId) throw new Error('Invalid Steam app identifier')
 
@@ -236,7 +244,7 @@ async function installSteamGame(game: LibraryGame): Promise<void> {
   const executable = steamExecutable(game)
   if (!executable) {
     await shell.openExternal(fallbackUrl)
-    return
+    return 'provider-opened'
   }
 
   try {
@@ -247,13 +255,60 @@ async function installSteamGame(game: LibraryGame): Promise<void> {
       path.dirname(executable),
       true
     )
-    if (await waitForSteamInstallStart(appId, steamAppsDirectories)) return
+    if (await waitForSteamInstallStart(appId, steamAppsDirectories)) return 'queued'
   } catch {
     // Steam's direct console command is intentionally best-effort. The public
     // protocol remains the reliable fallback when the client rejects it.
   }
 
   await shell.openExternal(fallbackUrl)
+  return 'provider-opened'
+}
+
+export async function requestGameInstall(
+  game: LibraryGame
+): Promise<GameInstallRequestState> {
+  if (!canRequestGameInstall(game)) throw new Error('Game cannot be installed through ORBIT')
+
+  if (game.provider === 'steam') return installSteamGame(game)
+
+  if (game.provider === 'epic') {
+    const id = epicGameId(game.providerGameId)
+    await shell.openExternal(`com.epicgames.launcher://apps/${id}?action=install`)
+    return 'provider-opened'
+  }
+
+  if (game.provider === 'xbox') {
+    const productId = normalizeXboxProductId(
+      game.metadata.providerStoreId ?? game.providerGameId
+    )
+    if ((await requestXboxProductInstall(productId)) === 'queued') {
+      launcherDownloadMonitor.announceXboxInstallRequest(game, productId)
+      return 'queued'
+    }
+    await shell.openExternal(`msxbox://game/?productId=${productId}`)
+    return 'provider-opened'
+  }
+
+  const id = providerId(game.providerGameId, 'Ubisoft')
+  await shell.openExternal(`uplay://install/${encodeURIComponent(id)}`)
+  return 'provider-opened'
+}
+
+export async function requestGameUninstall(
+  game: LibraryGame
+): Promise<GameUninstallRequestState> {
+  if (!canRequestGameUninstall(game)) {
+    throw new Error('Game cannot be uninstalled through ORBIT')
+  }
+
+  if (game.provider === 'steam') {
+    await shell.openExternal(`steam://uninstall/${game.appId}`)
+    return 'provider-opened'
+  }
+
+  await uninstallXboxPackage(game.metadata.providerPackageFamilyName as string)
+  return 'completed'
 }
 
 /** Delegates launch/install actions to the owning local store client. */

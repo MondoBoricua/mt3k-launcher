@@ -3,6 +3,7 @@ import {
   type OrbitPlusAccessSource,
   type OrbitPlusEntitlement,
   type OrbitPlusFeature,
+  type OrbitPlusMembershipDecision,
   type OrbitPlusOwnerTestAccess,
   type OrbitPlusPlan
 } from '../../shared/ipc'
@@ -13,6 +14,7 @@ const ACCESS_SOURCES: readonly OrbitPlusAccessSource[] = [
   'lifetime-key'
 ]
 const ACCESS_PLANS: readonly OrbitPlusPlan[] = ['monthly', 'annual', 'lifetime']
+const MEMBERSHIP_STATES = ['active', 'grace', 'inactive'] as const
 const MAX_SHORT_STRING = 512
 const MAX_TOKEN_LENGTH = 8_192
 const MAX_DEVICE_SESSION_TTL_MS = 15 * 60_000
@@ -33,6 +35,7 @@ export type OrbitPlusPollResponse =
       sessionToken: string
       accountName?: string
       entitlement?: OrbitPlusEntitlement
+      membership?: OrbitPlusMembershipDecision
       ownerTestAccess?: OrbitPlusOwnerTestAccess
     }
 
@@ -166,6 +169,89 @@ export function parseOrbitPlusOwnerTestAccess(
   return { available: true, enabled: input.enabled }
 }
 
+export function parseOrbitPlusMembershipDecision(
+  value: unknown,
+  entitlement: OrbitPlusEntitlement | undefined
+): OrbitPlusMembershipDecision {
+  const input = record(value, 'ORBIT Plus membership decision')
+  if (!MEMBERSHIP_STATES.includes(input.state as OrbitPlusMembershipDecision['state'])) {
+    throw new Error('Invalid ORBIT Plus membership state')
+  }
+  if (
+    typeof input.revision !== 'number' ||
+    !Number.isSafeInteger(input.revision) ||
+    input.revision < 1
+  ) {
+    throw new Error('Invalid ORBIT Plus membership revision')
+  }
+  const decision: OrbitPlusMembershipDecision = {
+    state: input.state as OrbitPlusMembershipDecision['state'],
+    verifiedAt: timestamp(input.verifiedAt, 'ORBIT Plus membership verification time'),
+    revision: input.revision,
+    paidThrough: optionalTimestamp(input.paidThrough, 'ORBIT Plus paid-through time'),
+    graceUntil: optionalTimestamp(input.graceUntil, 'ORBIT Plus grace deadline')
+  }
+  if (decision.verifiedAt > Date.now() + 5 * 60_000) {
+    throw new Error('Invalid future ORBIT Plus membership decision')
+  }
+  if (decision.state === 'inactive') {
+    if (entitlement !== undefined || decision.graceUntil !== undefined) {
+      throw new Error('Inactive ORBIT Plus membership cannot grant access')
+    }
+    if (decision.paidThrough !== undefined && decision.paidThrough > decision.verifiedAt) {
+      throw new Error('Inactive ORBIT Plus membership cannot end a paid period early')
+    }
+    return decision
+  }
+  if (!entitlement) throw new Error('Active ORBIT Plus membership requires an entitlement')
+  if (entitlement.plan !== 'lifetime' && decision.paidThrough === undefined) {
+    throw new Error('Paid ORBIT Plus membership requires a current paid-through time')
+  }
+  if (
+    entitlement.expiresAt !== undefined &&
+    decision.paidThrough !== undefined &&
+    entitlement.expiresAt !== decision.paidThrough
+  ) {
+    throw new Error('ORBIT Plus entitlement and paid period do not match')
+  }
+  if (
+    decision.state === 'active' &&
+    decision.paidThrough !== undefined &&
+    decision.paidThrough < decision.verifiedAt
+  ) {
+    throw new Error('Active ORBIT Plus membership has an expired paid period')
+  }
+  if (
+    decision.state === 'grace' &&
+    (decision.graceUntil === undefined || decision.graceUntil < decision.verifiedAt)
+  ) {
+    throw new Error('ORBIT Plus grace membership requires a current grace deadline')
+  }
+  if (
+    decision.graceUntil !== undefined &&
+    decision.paidThrough !== undefined &&
+    decision.graceUntil < decision.paidThrough
+  ) {
+    throw new Error('ORBIT Plus grace deadline cannot precede the paid period')
+  }
+  return decision
+}
+
+export function orbitPlusMembershipDecisionIsStale(
+  previous: OrbitPlusMembershipDecision | undefined,
+  refreshed: OrbitPlusMembershipDecision | undefined
+): boolean {
+  if (!previous) return false
+  if (!refreshed || refreshed.revision < previous.revision) return true
+  return (
+    refreshed.revision === previous.revision &&
+    (refreshed.state !== previous.state ||
+      refreshed.verifiedAt !== previous.verifiedAt ||
+      refreshed.paidThrough !== previous.paidThrough ||
+      refreshed.graceUntil !== previous.graceUntil)
+  )
+}
+
 export function parseOrbitPlusStartResponse(
   value: unknown,
   serviceUrl: string,
@@ -207,12 +293,17 @@ export function parseOrbitPlusPollResponse(value: unknown): OrbitPlusPollRespons
     input.accountName === undefined
       ? undefined
       : shortString(input.accountName, 'Patreon account name', 160)
+  const entitlement =
+    input.entitlement === undefined ? undefined : parseOrbitPlusEntitlement(input.entitlement)
   return {
     state: 'complete',
     sessionToken: shortString(input.sessionToken, 'ORBIT Plus session token', MAX_TOKEN_LENGTH),
     accountName,
-    entitlement:
-      input.entitlement === undefined ? undefined : parseOrbitPlusEntitlement(input.entitlement),
+    entitlement,
+    membership:
+      input.membership === undefined
+        ? undefined
+        : parseOrbitPlusMembershipDecision(input.membership, entitlement),
     ownerTestAccess: parseOrbitPlusOwnerTestAccess(input.ownerTestAccess)
   }
 }
@@ -239,4 +330,18 @@ export function freshEntitlementIsUsable(
 ): boolean {
   if (!entitlement || entitlement.verifiedAt > now + 5 * 60_000) return false
   return entitlement.expiresAt === undefined || entitlement.expiresAt >= now
+}
+
+/** A previously confirmed grant must not be revoked by one incomplete refresh.
+ * Owner test mode is explicit and therefore does not need the extra confirmation. */
+export function orbitPlusMembershipEndNeedsConfirmation(
+  previousEntitlement: OrbitPlusEntitlement | undefined,
+  refreshedEntitlement: OrbitPlusEntitlement | undefined,
+  ownerTestAccess: OrbitPlusOwnerTestAccess | undefined
+): boolean {
+  return (
+    previousEntitlement !== undefined &&
+    refreshedEntitlement === undefined &&
+    ownerTestAccess?.enabled !== false
+  )
 }

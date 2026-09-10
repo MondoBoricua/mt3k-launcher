@@ -16,7 +16,9 @@ import {
 import { GameCardMenuHint } from './GameCardMenuHint'
 import { LibraryProviderBadge } from './LibraryProviderBadge'
 import { GameRunningIndicator } from './GameRunningIndicator'
-import { useRunningGameId } from '@renderer/state/runningGameContext'
+import { useRunningGameId, useRunningGameSource } from '@renderer/state/runningGameContext'
+import { isCloudHomeGame, isHomeGameRunning } from '@renderer/lib/homeGameEntries'
+import { GeForceNowHistoryBadge } from './GeForceNowHistoryBadge'
 import { isNewXboxGamePassMembership } from '@shared/xboxGamePassHistory'
 
 const PROVIDER_LABEL_KEYS = {
@@ -42,6 +44,7 @@ interface Props {
   ) => void
   activationTarget?: GameCardActivationTarget
   variant?: 'poster' | 'home' | 'float'
+  renderArtwork?: boolean
 }
 
 function GameCardComponent({
@@ -50,7 +53,8 @@ function GameCardComponent({
   homeReflection,
   onActiveChange,
   activationTarget = 'default',
-  variant = 'poster'
+  variant = 'poster',
+  renderArtwork = true
 }: Props): JSX.Element {
   const t = useT()
   const reduceMotion = useReducedMotion()
@@ -59,7 +63,10 @@ function GameCardComponent({
   const activateGameCard = useActivateGameCard()
   const geForceNowMatch = useGeForceNowStore((state) => state.matchesByGameId[game.id])
   const runningGameId = useRunningGameId()
-  const isRunning = runningGameId === game.id
+  const runningSource = useRunningGameSource()
+  const isHomeCard = variant === 'home' || variant === 'float'
+  const isCloudHistory = isHomeCard && isCloudHomeGame(game)
+  const isRunning = isHomeCard ? isHomeGameRunning(game, runningGameId, runningSource) : runningGameId === game.id
   // Cloud availability only changes presentation inside the cloud view. The
   // same uninstalled PC title remains muted in All and provider libraries.
   const showUninstalledState =
@@ -74,7 +81,6 @@ function GameCardComponent({
       : entitlement?.kind === 'purchased'
         ? t('library.entitlement.purchased')
         : undefined
-  const isHomeCard = variant === 'home' || variant === 'float'
   const activeMotion = reduceMotion ? { scale: 1, y: 0 } : { scale: 1.025, y: -1 }
   const homeMotion = isHomeCard
     ? homeReflection?.distance === 0
@@ -93,9 +99,11 @@ function GameCardComponent({
       data-game-running={isRunning ? 'true' : undefined}
       data-grid-index={navigationIndex}
       data-home-game-card={isHomeCard ? 'true' : undefined}
+      data-game-artwork-mounted={renderArtwork ? 'true' : 'false'}
       aria-label={[
         game.name,
         providerLabel,
+        isCloudHistory ? 'GeForce NOW' : undefined,
         game.libraryAccess === 'shared' ? t('details.steamShared') : undefined,
         entitlementLabel,
         isNewGamePass ? t('library.gamePass.newBadge') : undefined,
@@ -133,15 +141,20 @@ function GameCardComponent({
         variant === 'home' ? 'aspect-[1/1.08]' : 'aspect-[2/3]'
       }`}
     >
+      {isHomeCard && <GeForceNowHistoryBadge game={game} />}
       <GameRunningIndicator active={isRunning} className="bottom-2 right-2" />
       {/* Home shelves are still cover slots. Horizontal artwork is reserved for
           hero/backdrop surfaces; here it crops sparse backgrounds into blank tiles. */}
-      <GameImage
-        gameId={game.id}
-        name={game.name}
-        orientation="vertical"
-        className={`game-card-artwork h-full w-full object-cover ${isHomeCard ? 'object-top' : ''}`}
-      />
+      {renderArtwork ? (
+        <GameImage
+          gameId={game.id}
+          name={game.name}
+          orientation="vertical"
+          className={`game-card-artwork h-full w-full object-cover ${isHomeCard ? 'object-top' : ''}`}
+        />
+      ) : (
+        <span aria-hidden="true" className="block h-full w-full bg-surface-2" />
+      )}
       {showUninstalledState && (
         <>
           <span
@@ -155,9 +168,13 @@ function GameCardComponent({
           />
           <span
             aria-hidden="true"
+            data-uninstalled-game-dim
             className="pointer-events-none absolute inset-0 z-10 bg-black/20"
           />
-          <span className="pointer-events-none absolute bottom-2 left-2 z-30 flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-full border border-white/15 bg-black/75 px-2 py-1 text-[8px] font-bold uppercase tracking-[0.1em] text-white/82 shadow-card backdrop-blur-md">
+          <span
+            data-uninstalled-game-badge
+            className="pointer-events-none absolute bottom-2 left-2 z-30 flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-full border border-white/15 bg-black/75 px-2 py-1 text-[8px] font-bold uppercase tracking-[0.1em] text-white/82 shadow-card backdrop-blur-md"
+          >
             <span
               aria-hidden="true"
               className="h-1.5 w-1.5 shrink-0 rounded-full"
@@ -169,7 +186,7 @@ function GameCardComponent({
       )}
       <div
         data-game-card-badges="true"
-        className={`absolute left-2 right-10 top-2 z-30 flex items-center gap-1 overflow-hidden ${
+        className={`absolute left-2 right-10 top-2 z-30 ${isCloudHistory ? 'hidden' : 'flex'} items-center gap-1 overflow-hidden ${
           isHomeCard
             ? 'opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[focused=true]:opacity-100 motion-reduce:transition-none'
             : ''
@@ -216,7 +233,9 @@ function GameCardComponent({
       )}
       <div className="pointer-events-none absolute inset-0 z-20 bg-gradient-to-t from-black/90 via-black/10 to-transparent opacity-0 transition-opacity group-hover:opacity-100 group-data-[focused=true]:opacity-100" />
       <div className="pointer-events-none absolute inset-0 z-20 flex flex-col justify-end p-3 opacity-0 transition-opacity group-hover:opacity-100 group-data-[focused=true]:opacity-100">
-        <p className="line-clamp-2 text-sm font-semibold text-white">{game.name}</p>
+        <p data-game-card-title className="line-clamp-2 text-sm font-semibold text-white">
+          {game.name}
+        </p>
         {playtime && <p className="text-xs text-muted">{playtime}</p>}
       </div>
       {game.updateAvailable && (
@@ -260,5 +279,6 @@ export const GameCard = memo(
     previous.onActiveChange === next.onActiveChange &&
     previous.activationTarget === next.activationTarget &&
     previous.variant === next.variant &&
+    previous.renderArtwork === next.renderArtwork &&
     sameReflection(previous.homeReflection, next.homeReflection)
 )

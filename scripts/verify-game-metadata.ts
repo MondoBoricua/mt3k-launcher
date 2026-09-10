@@ -6,6 +6,7 @@ import {
 import {
   applyGameMetadataOverrides,
   patchGameMetadataOverrides,
+  patchesGameMetadataField,
   sameGameMetadataOverrides
 } from '../src/shared/gameMetadataOverrides.ts'
 import { safeExternalHttpsUrl } from '../src/shared/externalUrl.ts'
@@ -34,6 +35,16 @@ assert.equal(accepted.gameId, 'steam:1245620')
 assert.deepEqual(accepted.metadata?.genres, ['Action', 'RPG'])
 assert.equal(accepted.metadata?.completionTimes?.fetchedAt! > 0, true)
 assert.equal(Object.hasOwn(validateGameMetadataUpdate({ gameId: 'steam:1' }), 'name'), false)
+const trailerOnlyPatch = {
+  gameId: 'xbox:halo',
+  metadata: { trailerUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }
+}
+assert.equal(patchesGameMetadataField(trailerOnlyPatch, 'trailerUrl'), true)
+assert.equal(
+  patchesGameMetadataField(trailerOnlyPatch, 'storeUrl'),
+  false,
+  'an unchanged provider msxbox store URL must not block saving a trailer patch'
+)
 
 for (const invalid of [
   { gameId: 'steam:1', metadata: { titleMusicUrl: 'https://example.com/music' } },

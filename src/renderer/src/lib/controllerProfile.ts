@@ -1,4 +1,6 @@
-export type ControllerFamily = 'xbox' | 'playstation'
+import { isSteamControllerGamepadId } from '@shared/steamController'
+
+export type ControllerFamily = 'xbox' | 'playstation' | 'steam'
 
 export type ControllerButtonId =
   | 'south'
@@ -47,6 +49,21 @@ export const CONTROLLER_BUTTON_LABELS: Record<ControllerFamily, ControllerButton
     guide: 'PS',
     leftStick: 'L3',
     rightStick: 'R3'
+  },
+  steam: {
+    south: 'A',
+    east: 'B',
+    west: 'X',
+    north: 'Y',
+    leftBumper: 'L1',
+    rightBumper: 'R1',
+    leftTrigger: 'L2',
+    rightTrigger: 'R2',
+    menu: 'Menu',
+    view: 'View',
+    guide: 'Steam',
+    leftStick: 'L3',
+    rightStick: 'R3'
   }
 }
 
@@ -56,6 +73,7 @@ export const CONTROLLER_BUTTON_LABELS: Record<ControllerFamily, ControllerButton
  */
 export function detectControllerFamily(gamepadId: string): ControllerFamily {
   const normalizedId = gamepadId.toLowerCase()
+  if (isSteamControllerGamepadId(gamepadId)) return 'steam'
   const isPlayStation =
     normalizedId.includes('dualsense') ||
     normalizedId.includes('dualshock') ||

@@ -7,8 +7,10 @@ import type {
 export interface SteamSyncHealthInput {
   primaryLibraryAvailable: boolean
   fallbackLibraryAvailable: boolean
+  completeFallbackLibraryAvailable: boolean
   cachedGameCount: number
-  pendingMetadataCount: number
+  /** Background-only candidates from Dynamic Store; never a source-health gate. */
+  pendingMetadataCount?: number
   ownedResponseWasEmpty: boolean
   supplementalSourcesComplete: boolean
   localLibraryComplete: boolean
@@ -25,10 +27,13 @@ export interface SteamSyncHealthDecision {
  * library folder were readable too.
  */
 export function decideSteamSyncHealth(input: SteamSyncHealthInput): SteamSyncHealthDecision {
-  if (input.pendingMetadataCount > 0) {
-    return { state: 'partial', issue: 'metadata-pending' }
-  }
-  if (input.primaryLibraryAvailable) {
+  // Metadata enrichment classifies raw Dynamic Store IDs after the ownership
+  // sources have already completed. That list also contains DLC, tools and
+  // packages, so its background queue must not downgrade a healthy library.
+  // Playnite treats authenticated Store userdata as its complete ID fallback
+  // when the client-app list is unavailable. It lacks rich ownership data, so
+  // ORBIT may display a healthy library from it without using it for pruning.
+  if (input.primaryLibraryAvailable || input.completeFallbackLibraryAvailable) {
     if (!input.localLibraryComplete) {
       return { state: 'partial', issue: 'local-source-unavailable' }
     }

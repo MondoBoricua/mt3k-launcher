@@ -8,6 +8,7 @@ import {
   type GameLaunchFailureReason,
   type GameLaunchStatus,
   type GameProvider,
+  type GeForceNowLibraryMatch,
   type LibraryGame,
   type LocalGameBackupResult
 } from '@shared/ipc'
@@ -31,6 +32,11 @@ import {
   type ProviderReportedGameActivity
 } from './gamePresence'
 import { livingProcessRecords, processIdStillExists } from './processLiveness'
+import {
+  GeForceNowGameActivityReader,
+  detectGeForceNowGamePresences,
+  isGeForceNowGameWindow
+} from './geforceNow/geforceNowGameActivity'
 
 const WINDOWS_POWERSHELL_PATH = path.join(
   process.env.SystemRoot ?? 'C:\\Windows',
@@ -84,7 +90,8 @@ export interface CompletedGameSessionResult {
 
 export interface GameSessionCallbacks {
   getLibraryGames?: () => readonly LibraryGame[]
-  onGameConfirmed?: (game: LibraryGame, detectedAt: number) => void | Promise<void>
+  getGeForceNowMatches?: () => readonly GeForceNowLibraryMatch[]
+  onGameConfirmed?: (game: LibraryGame, detectedAt: number, source?: 'local' | 'geforce-now') => void | Promise<void>
   onSessionCompleted?: (
     game: LibraryGame,
     session: CompletedGameSession
@@ -898,6 +905,16 @@ export class GameSessionManager extends EventEmitter {
   private pendingLaunchDelay: PendingLaunchDelay | null = null
   private activeGame: LibraryGame | null = null
   private readonly steamActivityReader = new SteamGameActivityReader()
+  private readonly geForceNowActivityReader = new GeForceNowGameActivityReader()
+  private geForceNowLaunchIntent: {
+    game: LibraryGame
+    match: GeForceNowLibraryMatch
+    expiresAt: number
+  } | undefined
+  private geForceNowSessionIdentity: {
+    game: LibraryGame
+    match: GeForceNowLibraryMatch
+  } | undefined
   private providerPresenceTimer: ReturnType<typeof setTimeout> | null = null
   private providerLivenessTimer: ReturnType<typeof setInterval> | null = null
   private providerPresenceSampler: WindowsProcessSampler | null = null
@@ -928,6 +945,50 @@ export class GameSessionManager extends EventEmitter {
 
   getStatus(): GameLaunchStatus {
     return { ...this.status }
+  }
+
+  expectGeForceNowGame(game: LibraryGame, match: GeForceNowLibraryMatch): () => void {
+    if (this.providerPresenceDisposed) throw new Error('Game session manager is closed')
+    const cloudHandoff = this.status.phase === 'launching' &&
+      this.status.trackingMethod === 'geforce-now-window' &&
+      this.status.gameId === game.id && !this.status.cancelableUntil
+    if (this.status.phase !== 'idle' && !cloudHandoff) {
+      throw new Error('A game session is already active')
+    }
+    const intent = { game, match, expiresAt: Date.now() + 30 * 60_000 }
+    this.geForceNowLaunchIntent = intent
+    return () => {
+      if (this.geForceNowLaunchIntent === intent) this.geForceNowLaunchIntent = undefined
+    }
+  }
+
+  async startGeForceNow(game: LibraryGame, launch: () => Promise<void>): Promise<void> {
+    if (this.status.phase !== 'idle') throw new Error('A game session is already active')
+    const token = ++this.activeToken
+    const requestedAt = Date.now()
+    const cancelableUntil = requestedAt + GAME_LAUNCH_CANCEL_WINDOW_MS
+    this.activeGame = game
+    this.launchTargetRevealed = false
+    this.update({
+      phase: 'launching', gameId: game.id, gameName: game.name, provider: game.provider,
+      trackingMethod: 'geforce-now-window', requestedAt, cancelableUntil
+    })
+    this.maintainLaunchShield(token)
+    const shouldLaunch = await this.waitForLaunchWindow(token, cancelableUntil)
+    if (!shouldLaunch || token !== this.activeToken) return
+    this.update({ ...this.status, startedAt: Date.now(), cancelableUntil: undefined })
+    try {
+      await launch()
+    } catch (error) {
+      await this.fail(token, error instanceof Error ? error.message : 'Launch failed', 'launch-rejected')
+      return
+    }
+    if (token !== this.activeToken) return
+    this.releaseLaunchShield(false)
+    // NVIDIA handles its login/queue. Only a confirmed stream becomes a played
+    // session; the existing provider monitor owns running, return and history.
+    this.update({ phase: 'idle' })
+    this.scheduleProviderPresencePoll(0)
   }
 
   revealLauncher(): void {
@@ -1473,6 +1534,8 @@ export class GameSessionManager extends EventEmitter {
     this.sampler = null
     this.releaseLaunchShield(false)
     this.activeGame = null
+    this.geForceNowLaunchIntent = undefined
+    this.geForceNowSessionIdentity = undefined
     this.status = { phase: 'idle' }
     this.removeAllListeners()
     return completed
@@ -1494,6 +1557,7 @@ export class GameSessionManager extends EventEmitter {
       durationSeconds: Math.max(1, Math.round((endedAt - detectedAt) / 1_000))
     }
     const shouldBackup = Boolean(
+      this.status.trackingMethod !== 'geforce-now-window' &&
       game.local?.backupEnabled && game.local.savePath && this.callbacks.onGameEnded
     )
     this.update({
@@ -1522,7 +1586,7 @@ export class GameSessionManager extends EventEmitter {
     } catch {
       // Playtime persistence failure must not trap the user outside ORBIT.
     }
-    if (settingsStore.store.closeLaunchersAfterGame) {
+    if (this.status.trackingMethod !== 'geforce-now-window' && settingsStore.store.closeLaunchersAfterGame) {
       void closeLauncherProcesses(processes, ownedLauncherFamilies)
     }
     if (shouldBackup && this.callbacks.onGameEnded) {
@@ -1649,7 +1713,10 @@ export class GameSessionManager extends EventEmitter {
       return
     }
     if ([...this.providerAttachedProcessIds].some(processIdStillExists)) {
-      this.providerPresenceMissingSince = undefined
+      // The NVIDIA streamer can remain alive on the post-session screen.
+      if (this.status.trackingMethod !== 'geforce-now-window') {
+        this.providerPresenceMissingSince = undefined
+      }
       return
     }
     const now = Date.now()
@@ -1696,12 +1763,13 @@ export class GameSessionManager extends EventEmitter {
       return
     }
 
+    const pollToken = this.activeToken
     const libraryGames = this.callbacks.getLibraryGames?.() ?? []
     const [activeSteamGames, processSnapshot] = await Promise.all([
       this.steamActivityReader.getActiveGames(),
       this.getProviderPresenceSnapshot()
     ])
-    if (this.providerPresenceDisposed) return
+    if (this.providerPresenceDisposed || pollToken !== this.activeToken) return
     const providerActivities = new Map<string, ProviderReportedGameActivity>()
     const processes = livingProcessRecords(processSnapshot?.processes ?? [])
     const knownProcessIds = new Set(processes.map((candidate) => processId(candidate)))
@@ -1736,6 +1804,40 @@ export class GameSessionManager extends EventEmitter {
       providerActivities
     )
 
+    const cloudSession = this.status.trackingMethod === 'geforce-now-window'
+    const cloudIdentities = new Map<string, { game: LibraryGame; match: GeForceNowLibraryMatch }>()
+    let cloudEndedAt: number | undefined
+    if (processes.some(isGeForceNowGameWindow) || cloudSession) {
+      const stream = await this.geForceNowActivityReader.getStreamState()
+      if (this.providerPresenceDisposed || pollToken !== this.activeToken) return
+      cloudEndedAt = stream.endedAt
+      // Rotation or a temporary file lock must not end an already confirmed stream.
+      if (cloudSession && !stream.startedAt && !stream.endedAt) {
+        stream.startedAt = this.status.startedAt
+      }
+      if (this.geForceNowLaunchIntent && Date.now() > this.geForceNowLaunchIntent.expiresAt) {
+        this.geForceNowLaunchIntent = undefined
+      }
+      const identity = this.geForceNowSessionIdentity ?? this.geForceNowLaunchIntent
+      const cloudGames = identity
+        ? [identity.game, ...libraryGames.filter((game) => game.id !== identity.game.id)]
+        : libraryGames
+      const matches = this.callbacks.getGeForceNowMatches?.() ?? []
+      const cloudMatches = identity
+        ? [identity.match, ...matches.filter((match) => match.gameId !== identity.game.id)]
+        : matches
+      const cloudPresences = detectGeForceNowGamePresences(
+        processes, cloudGames, cloudMatches, stream,
+        this.geForceNowLaunchIntent?.game.id ?? identity?.game.id
+      )
+      activeLibraryGames.push(...cloudPresences)
+      if (cloudPresences.length === 0 && !cloudSession) this.geForceNowSessionIdentity = undefined
+      for (const presence of cloudPresences) {
+        const match = cloudMatches.find((candidate) => candidate.gameId === presence.game.id)
+        if (match) cloudIdentities.set(presence.game.id, { game: presence.game, match })
+      }
+    }
+
     const activeGameIds = new Set(activeLibraryGames.map(({ game }) => game.id))
     for (const gameId of this.suppressedProviderGameIds) {
       if (!activeGameIds.has(gameId)) this.suppressedProviderGameIds.delete(gameId)
@@ -1749,10 +1851,11 @@ export class GameSessionManager extends EventEmitter {
       ) {
         return
       }
-      if (activeGameIds.has(this.providerAttachedGameId)) {
-        const activePresence = activeLibraryGames.find(
-          ({ game }) => game.id === this.providerAttachedGameId
-        )
+      const activePresence = activeLibraryGames.find(
+        ({ game, trackingMethod }) => game.id === this.providerAttachedGameId &&
+          (trackingMethod === 'geforce-now-window') === cloudSession
+      )
+      if (activePresence) {
         this.providerAttachedProcessIds.clear()
         for (const pid of activePresence?.processIds ?? []) {
           this.providerAttachedProcessIds.add(pid)
@@ -1765,12 +1868,13 @@ export class GameSessionManager extends EventEmitter {
       )
       // Once confirmed, PID lifetime remains authoritative even when a protected
       // process temporarily loses its path/package metadata in the next sample.
-      if (trackedPidStillAlive) {
+      if (trackedPidStillAlive && (!cloudSession || (!processSnapshot && !cloudEndedAt))) {
         this.providerPresenceMissingSince = undefined
         return
       }
       const now = Date.now()
-      this.providerPresenceMissingSince ??= now
+      this.providerPresenceMissingSince ??= cloudSession && cloudEndedAt
+        ? Math.max(this.status.detectedAt ?? now, Math.min(now, cloudEndedAt)) : now
       if (now - this.providerPresenceMissingSince < PROVIDER_PRESENCE_EXIT_GRACE_MS) return
       await this.finishProviderAttachedSession(this.providerPresenceMissingSince)
       return
@@ -1834,8 +1938,14 @@ export class GameSessionManager extends EventEmitter {
       trackingMethod: latest.trackingMethod,
       trackingFallbackIndex: latest.trackingFallbackIndex
     })
+    if (latest.trackingMethod === 'geforce-now-window') {
+      this.geForceNowSessionIdentity = cloudIdentities.get(latest.game.id)
+      this.geForceNowLaunchIntent = undefined
+    }
     try {
-      await this.callbacks.onGameConfirmed?.(latest.game, detectedAt)
+      await this.callbacks.onGameConfirmed?.(
+        latest.game, detectedAt, latest.trackingMethod === 'geforce-now-window' ? 'geforce-now' : 'local'
+      )
     } catch {
       // Provider presence remains authoritative even when recency persistence fails.
     }

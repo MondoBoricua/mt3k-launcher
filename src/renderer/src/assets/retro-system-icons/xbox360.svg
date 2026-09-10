@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Xbox 360 console">
+  <defs>
+    <linearGradient id="shell" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#b7babf"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#shell)" d="M77 29h102c-10 39-14 72-14 99s4 60 14 99H77c10-39 14-72 14-99S87 68 77 29Z"/>
+  <path fill="#303338" d="M92 43h72c-7 35-10 63-10 85s3 50 10 85H92c7-35 10-63 10-85s-3-50-10-85Z"/>
+  <path fill="#dfe1e4" d="M107 43h42v170h-42c4-35 6-63 6-85s-2-50-6-85Z"/>
+  <circle cx="128" cy="75" r="14" fill="#f7f8f8" stroke="#70b52c" stroke-width="6"/>
+  <path fill="#8cc63f" d="M124 67h8v16h-8z"/>
+  <path fill="#8c8f94" d="M116 109h24v4h-24z"/>
+  <path fill="#0a0b0d" d="M98 190h60v7H98z"/>
+</svg>

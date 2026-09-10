@@ -7,6 +7,7 @@ import type {
   StoreSnapshot
 } from '@shared/ipc'
 import { isStoreDiscoverProductVisible } from '@shared/storeVisibility'
+import { createSteamWishlistProduct } from '@shared/steamWishlistPolicy'
 import { settingsStore } from '../settingsStore'
 import { steamAuthManager } from '../steam/steamAuth'
 import { syncCoordinator } from '../sync/syncCoordinator'
@@ -260,8 +261,9 @@ export class StoreService extends EventEmitter {
         .catch(() => ({ ok: false as const, products: [] }))
       const wishlistRequest = (async () => {
         const account = steamAuthManager.getAccount() ?? (await steamAuthManager.restoreSession())
-        return account ? fetchSteamWishlist(account.steamId, steamAuthManager) : []
-      })().catch(() => [])
+        if (!account) return { items: [], complete: true }
+        return fetchSteamWishlist(account.steamId, steamAuthManager)
+      })().catch(() => ({ items: [], complete: false }))
       const personalizedRequest = fetchPersonalizedCandidateIds(region).catch(() => [])
       const releaseCalendarRequest = fetchUpcomingSteamReleases(region)
         .then((releases) => ({ ok: true as const, releases }))
@@ -282,7 +284,7 @@ export class StoreService extends EventEmitter {
           .some((product) => isStoreDiscoverProductVisible(product, ownedAppIds))
       this.emitSnapshot()
 
-      const [wishlist, personalizedIds, releaseCalendar] = await Promise.all([
+      const [wishlistResult, personalizedIds, releaseCalendar] = await Promise.all([
         wishlistRequest,
         personalizedRequest,
         releaseCalendarRequest
@@ -293,9 +295,18 @@ export class StoreService extends EventEmitter {
         const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
         storeRepository.replaceMonthlyReleases(regionId, month, releaseCalendar.releases)
       }
+      const wishlist = wishlistResult.items
       storeRepository.replaceSteamWishlist(
-        wishlist.map((item) => ({ productId: `steam:${item.appId}`, addedAt: item.addedAt }))
+        wishlist.map((item) => ({ productId: `steam:${item.appId}`, addedAt: item.addedAt })),
+        wishlistResult.complete
       )
+      for (const item of wishlist) {
+        const productId = `steam:${item.appId}`
+        const current = storeRepository.getProduct(regionId, productId)
+        if (storeRepository.upsert(regionId, createSteamWishlistProduct(item.appId, current))) {
+          this.changedSinceLastRefresh++
+        }
+      }
       this.emitSnapshot()
 
       const targetIds = [

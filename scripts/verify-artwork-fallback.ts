@@ -37,6 +37,12 @@ assert.equal(
 )
 
 assert.equal(
+  matchLibretroThumbnail(pspFiles, 'God of War - Chains of Olympus', undefined, 'ru'),
+  'God of War - Chains of Olympus (Europe) (En,Fr,De,Es,It,Ru).png',
+  'Russian prefers European artwork when the ROM has no explicit region'
+)
+
+assert.equal(
   matchLibretroThumbnail(
     ['3rd Birthday, The (Europe).png', '3rd Birthday, The (USA).png'],
     'The 3rd Birthday',

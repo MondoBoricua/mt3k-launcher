@@ -14,7 +14,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/main/index.ts'),
-          discordSocialWorker: resolve('src/main/discord/discordSocialWorker.ts')
+          discordSocialWorker: resolve('src/main/discord/discordSocialWorker.ts'),
+          systemPowerWorker: resolve('src/main/systemPowerWorker.ts')
         },
         output: {
           entryFileNames: '[name].js'

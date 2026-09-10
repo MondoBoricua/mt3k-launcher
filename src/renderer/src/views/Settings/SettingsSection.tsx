@@ -59,7 +59,7 @@ export function SettingsSection({
   icon: LucideIcon
   title: string
   description: string
-  summary?: string
+  summary?: React.ReactNode
   children: React.ReactNode
 }): JSX.Element {
   const context = useContext(SectionsContext)

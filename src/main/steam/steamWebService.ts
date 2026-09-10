@@ -1,5 +1,6 @@
 import { fetchWithElectronNet } from '../networkFetch'
 import {
+  parseSteamClientAppsPayload,
   parseSteamOwnedGamesPayload,
   parseSteamUserTokenFromHtml
 } from './steamWebParsers'
@@ -201,10 +202,28 @@ export async function fetchOwnedGamesWithToken(
   token: SteamUserToken,
   language: string
 ): Promise<Map<number, SteamOwnedGame>> {
+  return fetchOwnedGames(token.steamId, 'access_token', token.accessToken, language)
+}
+
+/** Playnite's private-account path using the user's optional Web API key. */
+export async function fetchOwnedGamesWithApiKey(
+  steamId: string,
+  apiKey: string,
+  language: string
+): Promise<Map<number, SteamOwnedGame>> {
+  return fetchOwnedGames(steamId, 'key', apiKey, language)
+}
+
+async function fetchOwnedGames(
+  steamId: string,
+  credentialName: 'access_token' | 'key',
+  credential: string,
+  language: string
+): Promise<Map<number, SteamOwnedGame>> {
   const url = new URL(`${STEAM_API_ROOT}/IPlayerService/GetOwnedGames/v1/`)
   url.searchParams.set('format', 'json')
-  url.searchParams.set('access_token', token.accessToken)
-  url.searchParams.set('steamid', token.steamId)
+  url.searchParams.set(credentialName, credential)
+  url.searchParams.set('steamid', steamId)
   url.searchParams.set('include_appinfo', 'true')
   url.searchParams.set('include_played_free_games', 'true')
   url.searchParams.set('include_free_sub', 'true')
@@ -257,23 +276,9 @@ export async function fetchSteamClientGames(
 
   const response = await fetchWithRetry(url)
   if (!response.ok) throw new Error(`GetClientAppList failed (${response.status})`)
-  const json = (await response.json()) as {
-    response?: { apps?: Array<{ appid: number; app?: string; bytes_required?: string }> }
-    apps?: Array<{ appid: number; app?: string; bytes_required?: string }>
-  }
-  const entries = json.response?.apps ?? json.apps
-  if (!Array.isArray(entries)) {
-    throw new Error('GetClientAppList returned no app list')
-  }
   const games = new Map<number, SteamClientGame>()
-  for (const game of entries) {
-    if (!Number.isInteger(game.appid) || !game.app?.trim()) continue
-    const size = Number(game.bytes_required)
-    games.set(game.appid, {
-      appId: game.appid,
-      name: game.app.trim(),
-      installSize: Number.isFinite(size) ? size : undefined
-    })
+  for (const game of parseSteamClientAppsPayload(await response.json())) {
+    games.set(game.appId, game)
   }
   return games
 }

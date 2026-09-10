@@ -10,3 +10,6 @@ The PNG files in this directory are selected system illustrations from the
 
 ORBIT renamed the selected files to its internal retro-system identifiers. The
 image pixels are otherwise unmodified.
+
+The `ps3.svg` and `xbox360.svg` console silhouettes are original ORBIT artwork
+and are distributed under ORBIT's repository license.
