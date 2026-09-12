@@ -53,6 +53,7 @@
     "verify:steam-controller": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-steam-controller.ts",
     "verify:dualsense": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-dualsense-monitor.ts",
     "verify:background-service": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-background-service.ts",
+    "verify:windows-startup": "node --experimental-strip-types scripts/verify-windows-startup.ts",
     "verify:background-mode": "node --experimental-strip-types scripts/verify-background-mode.ts",
     "verify:background-mode:live": "node scripts/verify-background-mode-live.cjs",
     "verify:library": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-library-completeness.ts",

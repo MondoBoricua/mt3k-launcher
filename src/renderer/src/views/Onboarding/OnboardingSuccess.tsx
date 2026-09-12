@@ -83,6 +83,8 @@ interface Props {
 }
 
 const PAGE_ORDER: SetupPage[] = ['libraries', 'personalize', 'plus', 'hardware', 'ready']
+/** MT3K community edition: Plus is already included, so onboarding skips its page. */
+const COMMUNITY_PAGE_ORDER: SetupPage[] = PAGE_ORDER.filter((item) => item !== 'plus')
 const ORBIT_DISCORD_INVITE_URL = 'https://discord.gg/QdsbSwgxB6'
 
 const THEME_SWATCH: Record<ThemeId, string> = {
@@ -193,6 +195,8 @@ export function OnboardingSuccess({
   const t = useT()
   const controllerLabels = useControllerButtonLabels()
   const [page, setPage] = useState<SetupPage>('libraries')
+  const orbitPlusIncluded = useOrbitPlusStore((state) => state.snapshot.communityEdition === true)
+  const pageOrder = orbitPlusIncluded ? COMMUNITY_PAGE_ORDER : PAGE_ORDER
   const [region, setRegion] = useState<StoreRegionId>('eu')
   const [backgroundIndex, setBackgroundIndex] = useState(0)
   const [statIndex, setStatIndex] = useState(0)
@@ -239,7 +243,7 @@ export function OnboardingSuccess({
 
   const accountSignature = `${account?.steamId ?? ''}:${epicAccount?.accountId ?? ''}:${playStationAccount?.accountId ?? ''}`
   const previousAccountSignature = useRef(accountSignature)
-  const pageIndex = PAGE_ORDER.indexOf(page)
+  const pageIndex = pageOrder.indexOf(page)
   const xboxGames = snapshot.providerGames.filter((game) => game.provider === 'xbox')
   const xboxInstalled = xboxGames.filter((game) => game.installed).length
   const steamGames = snapshot.providerGames.filter((game) => game.provider === 'steam')
@@ -404,7 +408,7 @@ export function OnboardingSuccess({
   }, [containerRef, entryUnlocked, page])
 
   useBackHandler(() => {
-    if (pageIndex > 0) setPage(PAGE_ORDER[pageIndex - 1])
+    if (pageIndex > 0) setPage(pageOrder[pageIndex - 1])
     else onBack()
   })
 
@@ -456,7 +460,7 @@ export function OnboardingSuccess({
           </div>
 
           <nav className="onboarding-step-rail border-y border-white/[0.08] bg-black/25 shadow-card">
-            {PAGE_ORDER.map((item, index) => {
+            {pageOrder.map((item, index) => {
               const active = item === page
               const labelKey = `onboarding.setup.page.${item}` as TranslationKey
               return (
@@ -588,7 +592,7 @@ export function OnboardingSuccess({
           <button
             data-focusable
             type="button"
-            onClick={() => (pageIndex > 0 ? setPage(PAGE_ORDER[pageIndex - 1]) : onBack())}
+            onClick={() => (pageIndex > 0 ? setPage(pageOrder[pageIndex - 1]) : onBack())}
             className="flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold text-white/55 transition-colors hover:bg-white/[0.06] hover:text-white"
           >
             <ChevronLeft size={16} />
@@ -604,7 +608,7 @@ export function OnboardingSuccess({
           {page !== 'ready' ? (
             <FocusableButton
               data-onboarding-primary
-              onClick={() => setPage(PAGE_ORDER[pageIndex + 1])}
+              onClick={() => setPage(pageOrder[pageIndex + 1])}
               className="onboarding-footer-action flex items-center gap-2 px-7"
             >
               {t('onboarding.setup.next')}

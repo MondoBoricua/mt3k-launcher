@@ -4,6 +4,7 @@ import { useAutoFocus } from '@renderer/hooks/useAutoFocus'
 import { FocusableButton } from '@renderer/components/FocusableButton'
 import { useT } from '@renderer/i18n/useT'
 import { LANGUAGE_OPTIONS, usePreferencesStore } from '@renderer/state/preferencesStore'
+import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 import { OnboardingBackdrop, OrbitMark } from './OnboardingChrome'
 
 interface Props {
@@ -15,6 +16,11 @@ export function OnboardingWelcome({ onContinue }: Props): JSX.Element {
   const t = useT()
   const language = usePreferencesStore((s) => s.language)
   const setLanguage = usePreferencesStore((s) => s.setLanguage)
+  // MT3K community edition: Plus is already included, so the setup has no Plus chapter.
+  const orbitPlusIncluded = useOrbitPlusStore((s) => s.snapshot.communityEdition === true)
+  const chapters = (['libraries', 'personalize', 'plus', 'hardware', 'ready'] as const).filter(
+    (page) => !orbitPlusIncluded || page !== 'plus'
+  )
 
   return (
     <div
@@ -105,9 +111,9 @@ export function OnboardingWelcome({ onContinue }: Props): JSX.Element {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.25 }}
-        className="onboarding-welcome__footer grid grid-cols-5 gap-[clamp(0.75rem,2vw,2rem)]"
+        className={`onboarding-welcome__footer grid ${chapters.length === 4 ? 'grid-cols-4' : 'grid-cols-5'} gap-[clamp(0.75rem,2vw,2rem)]`}
       >
-        {(['libraries', 'personalize', 'plus', 'hardware', 'ready'] as const).map((page, index) => (
+        {chapters.map((page, index) => (
           <div key={page} className="onboarding-welcome__chapter">
             <div className="text-[9px] font-bold tracking-[0.2em] text-white/28">0{index + 1}</div>
             <div className="mt-1 truncate text-[10px] font-bold uppercase tracking-[0.16em] text-white/60">

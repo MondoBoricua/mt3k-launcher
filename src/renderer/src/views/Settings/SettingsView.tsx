@@ -752,6 +752,15 @@ export function SettingsView(): JSX.Element {
   const page = useSettingsNavigationStore((s) => s.page)
   const direction = useSettingsNavigationStore((s) => s.direction)
   const setPage = useSettingsNavigationStore((s) => s.setPage)
+  const hiddenPages = useSettingsNavigationStore((s) => s.hiddenPages)
+  const setHiddenPages = useSettingsNavigationStore((s) => s.setHiddenPages)
+  const orbitPlusIncluded = orbitPlusSnapshot.communityEdition === true
+  // MT3K community edition: Plus is unlocked locally, so its settings page is not offered.
+  useEffect(() => setHiddenPages(orbitPlusIncluded ? ['plus'] : []), [orbitPlusIncluded, setHiddenPages])
+  const visiblePages = useMemo(
+    () => SETTINGS_PAGES.filter((item) => !hiddenPages.includes(item.id)),
+    [hiddenPages]
+  )
   const account = useAuthStore((s) => s.account)
   const steamStatus = useAuthStore((s) => s.status)
   const startSteamLogin = useAuthStore((s) => s.startLogin)
@@ -877,8 +886,8 @@ export function SettingsView(): JSX.Element {
   const pendingUpdateCount =
     (updateSnapshot?.windowsUpdates.length ?? 0) +
     (updateSnapshot?.graphicsDriverUpdates.length ?? 0)
-  const activePage = SETTINGS_PAGES.find((item) => item.id === page) ?? SETTINGS_PAGES[0]
-  const activePageIndex = SETTINGS_PAGES.indexOf(activePage)
+  const activePage = visiblePages.find((item) => item.id === page) ?? visiblePages[0]
+  const activePageIndex = visiblePages.indexOf(activePage)
   const excludedGames = useMemo(
     () =>
       [...(librarySnapshot.excludedGames ?? [])].sort((left, right) =>
@@ -1380,7 +1389,7 @@ export function SettingsView(): JSX.Element {
             button="leftTrigger"
             className="mx-1 rounded-md border border-white/15 px-1.5 py-0.5 text-[10px] font-bold text-muted"
           />
-          {SETTINGS_PAGES.map((item) => {
+          {visiblePages.map((item) => {
             const Icon = item.icon
             const active = page === item.id
             return (
@@ -1438,7 +1447,7 @@ export function SettingsView(): JSX.Element {
               title={t(activePage.labelKey)}
               description={t(activePage.bodyKey)}
               index={activePageIndex + 1}
-              total={SETTINGS_PAGES.length}
+              total={visiblePages.length}
               highlights={pageHighlights}
               autoSaveLabel={t(
                 page === 'updates'

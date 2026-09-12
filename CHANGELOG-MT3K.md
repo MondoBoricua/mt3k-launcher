@@ -2,6 +2,22 @@
 
 Lo que este fork agrega o cambia respecto a [toonymak1993/orbit](https://github.com/toonymak1993/orbit). Las versiones siguen a las del original con el sufijo `-mt3k.N`.
 
+## 0.1.4-mt3k.5
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.4.
+
+### Xbox Mode desde el instalador
+
+- **Registro al terminar.** El instalador trae `resources\xbox-mode` con el manifiesto, la capacidad y el script de registro. Al terminar pregunta si registrar ORBIT MT3K como app de inicio de Xbox Mode. Si el modo desarrollador está apagado, abre esa página de Configuración y espera a que lo actives.
+- **Siempre al día.** Si ORBIT MT3K ya estaba registrado, cada instalación o actualización lo vuelve a registrar en silencio con la versión nueva.
+- **Desinstalar.** Quita el registro que creó el instalador y su carpeta `%LOCALAPPDATA%\ORBIT-MT3K-XboxMode`.
+- **Script.** `Register-OrbitMt3kXboxMode.ps1` funciona desde la instalación o desde el repositorio, valida todo antes de tocar un registro existente, usa la versión de la build y escribe un log con `-LogPath`.
+
+### Arreglos
+
+- **"Iniciar con Windows".** Electron no encuentra la entrada de inicio cuando la ruta de ORBIT tiene espacios, y al leerla descarta el argumento `--orbit-background`. ORBIT daba el error *Windows could not change ORBIT startup* aunque la entrada sí se guardaba. Ahora la busca con la ruta entre comillas y compara los argumentos que Electron sí devuelve.
+- **ORBIT Plus.** La pestaña de Plus ya no aparece en Configuración ni en la configuración inicial, porque en esta edición todo viene incluido.
+
 ## 0.1.4-mt3k.4
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.3.

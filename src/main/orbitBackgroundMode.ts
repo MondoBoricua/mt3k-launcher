@@ -8,6 +8,7 @@ import { OrbitBackgroundServiceManager } from './orbitBackgroundServiceManager'
 import { getOrbitBackgroundServiceLoginItemInstallation } from './orbitBackgroundServiceLoginItem'
 import { orbitServicePipeNames, requestOrbitPipe } from './orbitServiceProtocol'
 import { orbitStartsThroughXboxMode } from './xboxModeStartup'
+import { startupLoginItemIsActive, windowsLoginItemLookupPath } from './windowsStartupLoginItem'
 
 export const BACKGROUND_ARGUMENT = '--orbit-background'
 const LOGIN_NAME = 'ORBIT'
@@ -120,9 +121,8 @@ export class OrbitBackgroundMode {
   }
   private refreshLoginItem(): void {
     const args = app.isPackaged ? [BACKGROUND_ARGUMENT] : [app.getAppPath(), BACKGROUND_ARGUMENT]
-    const actual = app.getLoginItemSettings({ path: process.execPath, args })
-    this.startsWithWindows = actual.launchItems.some((item) => item.name === LOGIN_NAME && item.enabled &&
-      item.path.toLowerCase() === process.execPath.toLowerCase() && JSON.stringify(item.args) === JSON.stringify(args))
+    const actual = app.getLoginItemSettings({ path: windowsLoginItemLookupPath(process.execPath), args })
+    this.startsWithWindows = startupLoginItemIsActive(actual.launchItems, { name: LOGIN_NAME, path: process.execPath, args })
   }
   async prepareForAppUpdate(_transactionId?: string): Promise<void> {
     await this.startup

@@ -3,8 +3,9 @@
 # Same packaging as the upstream electron-builder.yml minus the Certum code
 # signing (the private key belongs to the upstream author) and with a release
 # manifest that keeps this build from auto-updating itself onto the official
-# signed release. Xbox Mode (AppX) is not produced here because it must be
-# signed. Build with:
+# signed release. The signed Xbox Mode AppX is not produced here; instead the
+# installer ships resources/xbox-mode and offers a Developer Mode registration
+# when setup finishes (see build/installer.nsh). Build with:
 #   npx electron-builder --win nsis --x64 --config electron-builder.mt3k.yml --publish never
 appId: com.orbit.launcher
 productName: ORBIT
@@ -42,6 +43,14 @@ extraResources:
     to: discord-social-sdk
   - from: resources/wallpapers
     to: wallpapers
+  - from: build/xbox/AppxManifest.xml
+    to: xbox-mode/AppxManifest.xml
+  - from: build/xbox/CustomCapability.SCCD
+    to: xbox-mode/CustomCapability.SCCD
+  - from: build/appx
+    to: xbox-mode/appx
+  - from: scripts/windows/Register-OrbitMt3kXboxMode.ps1
+    to: xbox-mode/Register-OrbitMt3kXboxMode.ps1
 
 asar: true
 asarUnpack:

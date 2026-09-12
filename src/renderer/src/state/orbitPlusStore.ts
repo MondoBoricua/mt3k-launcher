@@ -16,6 +16,8 @@ import { useSettingsNavigationStore } from './settingsNavigationStore'
 import { useNavigationStore } from './navigationStore'
 
 export function openOrbitPlusSettings(): void {
+  // The community edition unlocks everything locally and has no Plus page to open.
+  if (useOrbitPlusStore.getState().snapshot.communityEdition) return
   useSettingsNavigationStore.getState().setPage('plus')
   useNavigationStore.getState().setMainView('settings')
 }

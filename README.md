@@ -33,6 +33,8 @@ No es un producto aparte ni compite con ORBIT. Es ORBIT con parches, compilado s
 | Sincronización diaria con el upstream vía pull request `main → mt3k` | 0.1.4-mt3k.1 | Solo en el fork |
 | **ORBIT Plus incluido**: temas, layout Cuadro, movimiento del fondo, música y sonidos propios, selector de próximo juego, guías de logros y cloud gaming, sin cuenta ni licencia. | 0.1.4-mt3k.4 | Solo en el fork |
 | **Actualizaciones dentro de la app**: cuando sale una release nueva del fork, ORBIT muestra una pantalla para actualizar, verifica la descarga y se reinicia solo. También en Xbox Mode. | 0.1.4-mt3k.4 | Solo en el fork |
+| **Xbox Mode desde el instalador**: al terminar la instalación ORBIT ofrece registrarse como app de inicio de Xbox Mode, abre el modo desarrollador si hace falta y actualiza el registro en cada versión nueva. | 0.1.4-mt3k.5 | Solo en el fork |
+| **"Iniciar con Windows" arreglado**: ya no da error cuando ORBIT está instalado en una ruta con espacios, y el interruptor refleja el estado real. | 0.1.4-mt3k.5 | Bug también en el upstream |
 
 El detalle por versión está en [CHANGELOG-MT3K.md](CHANGELOG-MT3K.md).
 
@@ -49,27 +51,36 @@ Requisitos: Windows 11 x64. Mando recomendado, teclado y ratón soportados.
 
 ### Diferencias con el instalador oficial
 
-- **Xbox Mode, experimental.** El instalador no registra ORBIT como "Gaming Home", porque el paquete oficial va firmado con la clave del autor original. Puedes registrarlo tú con el modo desarrollador de Windows: mira [Xbox Mode](#xbox-mode-experimental) más abajo.
+- **Xbox Mode, experimental.** El paquete oficial va firmado con la clave del autor original, así que este fork registra ORBIT como "Gaming Home" con el modo desarrollador de Windows. El instalador lo ofrece al terminar: mira [Xbox Mode](#xbox-mode-experimental) más abajo.
 - **Actualizaciones del fork, no del original.** ORBIT busca releases nuevas en este repositorio y te pregunta antes de actualizar. La descarga se verifica con el SHA-256 que GitHub publica para cada archivo; no hay firma de código. Nunca se reemplaza por la release oficial firmada.
 - **Sin Discord Social SDK.** El binario de Discord es propietario y no está en el repositorio; la presencia de Discord queda desactivada. Todo lo demás (Steam, Epic, Xbox, GOG, EA, Ubisoft, retro, amigos de Steam/Epic) funciona igual.
 - Se instala en `%LOCALAPPDATA%\Programs\ORBIT` con su propio perfil, aparte del paquete Xbox Mode oficial.
 
-**ORBIT Plus.** En el proyecto original, Plus es una membresía de pago con la que su autor financia ORBIT. Esta edición comunitaria activa sus funciones en local, sin contactar Patreon, Gumroad ni el servidor oficial, aprovechando la licencia GPL-3.0. Si ORBIT te gusta, apoya al autor original desde el [sitio oficial](https://www.getorbitlauncher.com/).
+**ORBIT Plus.** En el proyecto original, Plus es una membresía de pago con la que su autor financia ORBIT. Esta edición comunitaria activa sus funciones en local, sin contactar Patreon, Gumroad ni el servidor oficial, aprovechando la licencia GPL-3.0. Como no hay nada que activar, la pestaña de Plus no aparece en Configuración ni en la configuración inicial. Si ORBIT te gusta, apoya al autor original desde el [sitio oficial](https://www.getorbitlauncher.com/).
 
 ## Xbox Mode (experimental)
 
-Windows solo ofrece en *Configuración → Gaming → Xbox mode → Choose home app* las apps empaquetadas que se declaran como "Gaming Home". Esta edición trae un script que registra tu ORBIT MT3K instalado con esa declaración, bajo su propia identidad "ORBIT MT3K" y sin firma.
+Windows solo ofrece en *Configuración → Gaming → Xbox mode → Choose home app* las apps empaquetadas que se declaran como "Gaming Home". Esta edición registra tu ORBIT MT3K instalado con esa declaración, bajo su propia identidad "ORBIT MT3K" y sin firma.
 
-Requisitos: Windows 11 24H2 o más nuevo, **modo desarrollador activado** (*Configuración → Sistema → Para desarrolladores*) y ORBIT MT3K instalado.
+Requisitos: Windows 11 24H2 o más nuevo y **modo desarrollador activado** (*Configuración → Sistema → Para desarrolladores*).
 
-1. Descarga este repositorio (*Code → Download ZIP*) y descomprímelo.
-2. Abre PowerShell en esa carpeta, en el propio equipo, y ejecuta:
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File scripts\windows\Register-OrbitMt3kXboxMode.ps1
-   ```
+**Opción 1, desde el instalador (0.1.4-mt3k.5 o más nuevo).**
+
+1. Instala `ORBIT-MT3K-Setup`. Al terminar pregunta si quieres registrar ORBIT MT3K en Xbox Mode: di que sí.
+2. Si el modo desarrollador está apagado, el instalador abre esa página de Configuración. Actívalo y pulsa *OK*.
 3. En *Choose home app* elige **ORBIT MT3K**.
 
-Para quitarlo, ejecuta el mismo script con `-Remove`. Cuando instales una versión nueva del fork, vuelve a ejecutar el script para que Xbox Mode use la nueva. La app registrada puede pedir el onboarding de nuevo porque Windows le da su propia carpeta de datos.
+Las versiones nuevas, ya sea con el instalador o con la actualización dentro de la app, mantienen el registro al día sin preguntar. Si algo falla, el detalle queda en `%TEMP%\orbit-mt3k-xbox-mode.log`.
+
+**Opción 2, con un comando.** Si el instalador no pudo registrarlo, o tienes una versión anterior, abre PowerShell en el propio equipo, con ORBIT cerrado, y pega:
+
+```powershell
+$ProgressPreference='SilentlyContinue'; $d="$env:TEMP\orbit-mt3k"; Invoke-WebRequest https://github.com/MondoBoricua/orbit/archive/refs/heads/mt3k.zip -OutFile "$d.zip"; Expand-Archive "$d.zip" $d -Force; powershell -ExecutionPolicy Bypass -File "$d\orbit-mt3k\scripts\windows\Register-OrbitMt3kXboxMode.ps1"
+```
+
+Luego elige **ORBIT MT3K** en *Choose home app*.
+
+Para quitarlo, desinstala ORBIT o ejecuta el script con `-Remove`. La app registrada puede pedir el onboarding de nuevo porque Windows le da su propia carpeta de datos.
 
 ## Cómo está organizado el repositorio
 
@@ -130,4 +141,4 @@ ORBIT es software libre bajo la [GNU GPL v3](LICENSE), con la [excepción para e
 
 ---
 
-**English.** This is the MT3K Edition of [ORBIT](https://github.com/toonymak1993/orbit), a controller-first game launcher for Windows by Luis Garcia. The fork adds ultrawide / 32:9 support for the Home screen (sent upstream as [PR #13](https://github.com/toonymak1993/orbit/pull/13)), Steam removable-drive fixes from upstream PRs #11 and #12, unsigned NSIS builds from GitHub Actions and a daily upstream sync. Xbox Mode works through an experimental Developer Mode registration script. MT3K builds include ORBIT Plus as a community edition and update themselves from this fork's releases after asking, verifying each download against GitHub's SHA-256 digest. Same GPL-3.0 license as upstream; no Discord SDK in these builds. If you enjoy ORBIT, support the original author at getorbitlauncher.com. See [CHANGELOG-MT3K.md](CHANGELOG-MT3K.md).
+**English.** This is the MT3K Edition of [ORBIT](https://github.com/toonymak1993/orbit), a controller-first game launcher for Windows by Luis Garcia. The fork adds ultrawide / 32:9 support for the Home screen (sent upstream as [PR #13](https://github.com/toonymak1993/orbit/pull/13)), Steam removable-drive fixes from upstream PRs #11 and #12, unsigned NSIS builds from GitHub Actions and a daily upstream sync. Xbox Mode works through an experimental Developer Mode registration that the installer offers when setup finishes, with a one-line PowerShell fallback. MT3K builds include ORBIT Plus as a community edition and update themselves from this fork's releases after asking, verifying each download against GitHub's SHA-256 digest. Same GPL-3.0 license as upstream; no Discord SDK in these builds. If you enjoy ORBIT, support the original author at getorbitlauncher.com. See [CHANGELOG-MT3K.md](CHANGELOG-MT3K.md).
