@@ -2,6 +2,22 @@
 
 Lo que este fork agrega o cambia respecto a [toonymak1993/orbit](https://github.com/toonymak1993/orbit). Las versiones siguen a las del original con el sufijo `-mt3k.N`.
 
+## 0.1.4-mt3k.4
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.3.
+
+### ORBIT Plus incluido
+
+- **Edición comunitaria.** El instalador de la MT3K Edition trae `orbit-plus.mt3k.json` con `communityEdition` activo. Las seis funciones de Plus quedan disponibles en local y para siempre: sonidos y música propios, cloud gaming con GeForce NOW, movimiento del fondo, temas y layout Cuadro, selector de próximo juego y guías de logros. En ese modo ORBIT no contacta Patreon, Gumroad ni el servidor oficial.
+- **Panel de Plus.** Muestra "Incluido" y un enlace al sitio oficial de ORBIT en lugar de las opciones de compra.
+
+### Actualizaciones dentro de la app
+
+- **Pantalla de actualización.** Cuando aparece una release nueva del fork, ORBIT muestra una pantalla con *Update now* y *Later*, el progreso de la descarga y las novedades.
+- **Verificación.** Cada descarga se comprueba contra el tamaño y el SHA-256 que GitHub publica para el archivo. Las builds del fork no llevan firma de código.
+- **Instalación.** En una instalación normal se abre el instalador descargado. En Xbox Mode, un ayudante espera a que ORBIT se cierre, cambia la carpeta de la app guardando la anterior hasta confirmar el cambio y vuelve a abrir ORBIT.
+- **Versiones.** Las releases se etiquetan `vX.Y.Z-mt3k.N`; GitHub Actions estampa esa versión en la build y publica también `ORBIT-MT3K-App-<versión>-x64.zip` para Xbox Mode.
+
 ## 0.1.4-mt3k.3
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.2.

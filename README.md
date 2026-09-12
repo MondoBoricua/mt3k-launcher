@@ -31,6 +31,8 @@ No es un producto aparte ni compite con ORBIT. Es ORBIT con parches, compilado s
 | **Arte de Steam para juegos recientes**: la búsqueda sin API key ya encuentra portada, fondo y cabecera guardadas en las rutas nuevas de Steam. | 0.1.4-mt3k.2 | Solo en el fork |
 | Build NSIS sin firma desde GitHub Actions, con release automática al etiquetar | 0.1.4-mt3k.1 | Solo en el fork |
 | Sincronización diaria con el upstream vía pull request `main → mt3k` | 0.1.4-mt3k.1 | Solo en el fork |
+| **ORBIT Plus incluido**: temas, layout Cuadro, movimiento del fondo, música y sonidos propios, selector de próximo juego, guías de logros y cloud gaming, sin cuenta ni licencia. | 0.1.4-mt3k.4 | Solo en el fork |
+| **Actualizaciones dentro de la app**: cuando sale una release nueva del fork, ORBIT muestra una pantalla para actualizar, verifica la descarga y se reinicia solo. También en Xbox Mode. | 0.1.4-mt3k.4 | Solo en el fork |
 
 El detalle por versión está en [CHANGELOG-MT3K.md](CHANGELOG-MT3K.md).
 
@@ -48,11 +50,11 @@ Requisitos: Windows 11 x64. Mando recomendado, teclado y ratón soportados.
 ### Diferencias con el instalador oficial
 
 - **Xbox Mode, experimental.** El instalador no registra ORBIT como "Gaming Home", porque el paquete oficial va firmado con la clave del autor original. Puedes registrarlo tú con el modo desarrollador de Windows: mira [Xbox Mode](#xbox-mode-experimental) más abajo.
-- **Sin auto-actualización.** Esta build no busca actualizaciones, para no reemplazarse sola por la release oficial firmada. Las novedades del fork salen como releases nuevas aquí.
+- **Actualizaciones del fork, no del original.** ORBIT busca releases nuevas en este repositorio y te pregunta antes de actualizar. La descarga se verifica con el SHA-256 que GitHub publica para cada archivo; no hay firma de código. Nunca se reemplaza por la release oficial firmada.
 - **Sin Discord Social SDK.** El binario de Discord es propietario y no está en el repositorio; la presencia de Discord queda desactivada. Todo lo demás (Steam, Epic, Xbox, GOG, EA, Ubisoft, retro, amigos de Steam/Epic) funciona igual.
 - Se instala en `%LOCALAPPDATA%\Programs\ORBIT` con su propio perfil, aparte del paquete Xbox Mode oficial.
 
-ORBIT Plus (la membresía opcional del proyecto original) es del autor original. Este fork no la modifica, no la incluye ni la redistribuye.
+**ORBIT Plus.** En el proyecto original, Plus es una membresía de pago con la que su autor financia ORBIT. Esta edición comunitaria activa sus funciones en local, sin contactar Patreon, Gumroad ni el servidor oficial, aprovechando la licencia GPL-3.0. Si ORBIT te gusta, apoya al autor original desde el [sitio oficial](https://www.getorbitlauncher.com/).
 
 ## Xbox Mode (experimental)
 
@@ -128,4 +130,4 @@ ORBIT es software libre bajo la [GNU GPL v3](LICENSE), con la [excepción para e
 
 ---
 
-**English.** This is the MT3K Edition of [ORBIT](https://github.com/toonymak1993/orbit), a controller-first game launcher for Windows by Luis Garcia. The fork adds ultrawide / 32:9 support for the Home screen (sent upstream as [PR #13](https://github.com/toonymak1993/orbit/pull/13)), Steam removable-drive fixes from upstream PRs #11 and #12, unsigned NSIS builds from GitHub Actions and a daily upstream sync. Xbox Mode works through an experimental Developer Mode registration script. Same GPL-3.0 license as upstream; no auto-update and no Discord SDK in these builds. See [CHANGELOG-MT3K.md](CHANGELOG-MT3K.md).
+**English.** This is the MT3K Edition of [ORBIT](https://github.com/toonymak1993/orbit), a controller-first game launcher for Windows by Luis Garcia. The fork adds ultrawide / 32:9 support for the Home screen (sent upstream as [PR #13](https://github.com/toonymak1993/orbit/pull/13)), Steam removable-drive fixes from upstream PRs #11 and #12, unsigned NSIS builds from GitHub Actions and a daily upstream sync. Xbox Mode works through an experimental Developer Mode registration script. MT3K builds include ORBIT Plus as a community edition and update themselves from this fork's releases after asking, verifying each download against GitHub's SHA-256 digest. Same GPL-3.0 license as upstream; no Discord SDK in these builds. If you enjoy ORBIT, support the original author at getorbitlauncher.com. See [CHANGELOG-MT3K.md](CHANGELOG-MT3K.md).
