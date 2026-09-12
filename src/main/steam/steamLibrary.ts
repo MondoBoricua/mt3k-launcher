@@ -289,7 +289,7 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
         steamLanguage(settingsStore.get('language'))
       )
     }
-    if (installedSnapshot.complete) syncCoordinator.complete('library', 'steam-local', 'steam')
+    if (!installedSnapshot.hasReadErrors) syncCoordinator.complete('library', 'steam-local', 'steam')
     else syncCoordinator.fail('library', 'steam-local', 'steam')
     if (changedInstalled.length > 0) this.emitSnapshot()
     return this.getSnapshot()
@@ -601,7 +601,7 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
       pendingMetadataCount: this.pendingMetadataIds.size,
       ownedResponseWasEmpty,
       supplementalSourcesComplete,
-      localLibraryComplete: installedSnapshot.complete
+      localLibraryComplete: !installedSnapshot.hasReadErrors
     })
     this.setProviderStatus({
       state: health.state,
@@ -702,7 +702,7 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
         artworkService.syncProvider(gameRepository.getGamesByProvider('steam'), 'steam')
         this.emitSnapshot()
       }
-      if (!installedSnapshot.complete && this.providerStatus.state !== 'scanning') {
+      if (installedSnapshot.hasReadErrors && this.providerStatus.state !== 'scanning') {
         this.setProviderStatus({
           state: 'partial',
           connection: this.providerStatus.connection,
