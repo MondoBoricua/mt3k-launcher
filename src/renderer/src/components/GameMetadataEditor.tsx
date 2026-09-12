@@ -38,6 +38,7 @@ import type {
 import { safeExternalHttpsUrl } from '@shared/externalUrl'
 import { youtubeVideoIdFromUrl } from '@shared/gameTitleMusic'
 import { patchesGameMetadataField } from '@shared/gameMetadataOverrides'
+import { storeListToEditorText } from '@shared/gameMetadataSearch'
 import { useBackHandler } from '@renderer/hooks/useBackHandler'
 import { focusElement } from '@renderer/lib/spatialNavigation'
 import { useT, type TFunction } from '@renderer/i18n/useT'
@@ -441,10 +442,10 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
       name: candidate.name || current.name,
       summary: metadata.summary ?? current.summary,
       description: metadata.description ?? current.description,
-      genres: metadata.genres ? list(metadata.genres) : current.genres,
-      features: metadata.features ? list(metadata.features) : current.features,
-      developers: metadata.developers ? list(metadata.developers) : current.developers,
-      publishers: metadata.publishers ? list(metadata.publishers) : current.publishers,
+      genres: storeListToEditorText(metadata.genres) ?? current.genres,
+      features: storeListToEditorText(metadata.features) ?? current.features,
+      developers: storeListToEditorText(metadata.developers) ?? current.developers,
+      publishers: storeListToEditorText(metadata.publishers) ?? current.publishers,
       releaseDateText: metadata.releaseDateText ?? current.releaseDateText,
       comingSoon:
         metadata.comingSoon === undefined
@@ -458,7 +459,7 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
       requiredAge: metadata.requiredAge === undefined ? current.requiredAge : number(metadata.requiredAge),
       website: metadata.website ?? current.website,
       storeUrl: metadata.storeUrl ?? current.storeUrl,
-      languages: metadata.languages ? list(metadata.languages) : current.languages,
+      languages: storeListToEditorText(metadata.languages) ?? current.languages,
       controllerSupport: metadata.controllerSupport ?? current.controllerSupport,
       platforms: metadata.platforms ? list(metadata.platforms) : current.platforms,
       achievementCount:

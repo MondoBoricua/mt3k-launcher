@@ -75,6 +75,19 @@ export function normalizeMetadataSearchQuery(value: unknown): string | undefined
     : undefined
 }
 
+/**
+ * The metadata editor shows list fields as comma-separated text and splits on
+ * commas when saving. Store names often contain commas ("ARC SYSTEM WORKS CO., LTD"),
+ * which would otherwise turn one entry into several, so inner commas become spaces.
+ */
+export function storeListToEditorText(values: readonly string[] | undefined): string | undefined {
+  if (!values) return undefined
+  const items = values
+    .map((value) => value.replace(/\s*,\s*/gu, ' ').replace(/\s+/gu, ' ').trim())
+    .filter(Boolean)
+  return items.length > 0 ? [...new Set(items)].join(', ') : undefined
+}
+
 export function isSteamAppId(value: unknown): value is number {
   return (
     typeof value === 'number' &&

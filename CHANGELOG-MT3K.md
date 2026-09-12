@@ -2,6 +2,14 @@
 
 Lo que este fork agrega o cambia respecto a [toonymak1993/orbit](https://github.com/toonymak1993/orbit). Las versiones siguen a las del original con el sufijo `-mt3k.N`.
 
+## 0.1.4-mt3k.3
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.2.
+
+### Corrección
+
+- **Nombres con coma al usar "Search metadata".** El editor guarda las listas separando por comas, así que un desarrollador como "ARC SYSTEM WORKS CO., LTD" se partía en dos entradas al guardar. Ahora las comas internas de cada nombre que llega de Steam se convierten en espacios antes de rellenar el campo.
+
 ## 0.1.4-mt3k.2
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.1.

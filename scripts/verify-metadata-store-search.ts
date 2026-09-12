@@ -4,7 +4,8 @@ import {
   isSteamAppId,
   normalizeMetadataSearchQuery,
   parseMetadataSearchItems,
-  steamStoreImageUrl
+  steamStoreImageUrl,
+  storeListToEditorText
 } from '../src/shared/gameMetadataSearch.ts'
 import {
   isPublicSteamArtworkUrl,
@@ -24,6 +25,20 @@ assert.equal(normalizeMetadataSearchQuery('x'), undefined)
 assert.equal(normalizeMetadataSearchQuery('a'.repeat(121)), undefined)
 assert.equal(normalizeMetadataSearchQuery(`bad${NUL}query`), undefined)
 assert.equal(normalizeMetadataSearchQuery(42), undefined)
+
+// Store list values must survive the editor's comma-separated text round trip
+assert.equal(
+  storeListToEditorText(['ARC SYSTEM WORKS CO., LTD', 'PlayStation Publishing LLC']),
+  'ARC SYSTEM WORKS CO. LTD, PlayStation Publishing LLC'
+)
+assert.equal(storeListToEditorText(['Warner Bros. Games ,  Inc.', 'Warner Bros. Games Inc.']), 'Warner Bros. Games Inc.')
+assert.equal(storeListToEditorText([' , ', '']), undefined)
+assert.equal(storeListToEditorText(undefined), undefined)
+const roundTrip = storeListToEditorText(['ARC SYSTEM WORKS CO., LTD', 'Marvel Games'])!
+  .split(/[,\n]/u)
+  .map((item) => item.trim())
+  .filter(Boolean)
+assert.deepEqual(roundTrip, ['ARC SYSTEM WORKS CO. LTD', 'Marvel Games'], 'one store entry stays one editor entry')
 
 // App IDs arrive from the renderer and must be real positive integers
 assert.equal(isSteamAppId(3787240), true)
