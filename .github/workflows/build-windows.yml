@@ -80,7 +80,7 @@ jobs:
 
             **This installer is not code-signed.** Windows SmartScreen will warn once: click *More info* → *Run anyway*. Verify the download against `SHA256SUMS.txt` before installing.
 
-            Includes ORBIT Plus (community edition) and in-app updates: ORBIT shows a prompt when a newer MT3K release is published and verifies the download against GitHub's SHA-256 digest. Xbox Mode users update through `ORBIT-MT3K-App-*.zip`. Not included: the signed Xbox Mode AppX and the Discord Social SDK.
+            Includes ORBIT Plus (community edition) and in-app updates: ORBIT shows a prompt when a newer MT3K release is published and verifies the download against GitHub's SHA-256 digest. When setup finishes, the installer offers to register ORBIT MT3K as the Xbox Mode home app through Windows Developer Mode; Xbox Mode copies update through `ORBIT-MT3K-App-*.zip`. What changed in each version is in `CHANGELOG-MT3K.md`. Not included: the signed Xbox Mode AppX and the Discord Social SDK.
           files: |
             release/*.exe
             release/*.zip

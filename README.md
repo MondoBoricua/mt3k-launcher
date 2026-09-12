@@ -25,7 +25,7 @@ No es un producto aparte ni compite con ORBIT. Es ORBIT con parches, compilado s
 
 | Cambio | Desde | Estado en el upstream |
 |---|---|---|
-| **Soporte ultrawide y super-ultrawide en el Home** (2560×1080, 3440×1440, 5120×1440, también con escalado 125–150 %). La fila de juegos ya no se corta y muestra 8 a 12 juegos a la vez. | 0.1.4-mt3k.1 | [PR #13](https://github.com/toonymak1993/orbit/pull/13) abierto |
+| **Soporte ultrawide y super-ultrawide en el Home** (2560×1080, 3440×1440, 5120×1440, también con escalado 125–150 %). La fila de juegos ya no se corta y muestra 8 a 12 juegos a la vez. | 0.1.4-mt3k.1 | [PR #13](https://github.com/toonymak1993/orbit/pull/13) aceptado |
 | **Bibliotecas de Steam en discos externos**: sin avisos falsos cuando el disco no está, y reescaneo automático al conectarlo o quitarlo. Aportado por nerdytyphanie. | 0.1.4-mt3k.1 | PRs [#11](https://github.com/toonymak1993/orbit/pull/11) y [#12](https://github.com/toonymak1993/orbit/pull/12) abiertos |
 | **Buscar metadatos por título** en el editor del juego: elige el resultado de Steam y rellena descripción, géneros, desarrollador, fecha y más. Ideal para juegos custom. | 0.1.4-mt3k.2 | Solo en el fork |
 | **Arte de Steam para juegos recientes**: la búsqueda sin API key ya encuentra portada, fondo y cabecera guardadas en las rutas nuevas de Steam. | 0.1.4-mt3k.2 | Solo en el fork |
@@ -108,7 +108,7 @@ npx electron .
 npx electron-builder --win nsis --x64 --config electron-builder.mt3k.yml --publish never
 ```
 
-El instalador queda en `release/`. En GitHub Actions, cada push a `mt3k` deja el `.exe` como artefacto del workflow [`build-windows`](.github/workflows/build-windows.yml); una etiqueta con el formato `v0.1.4-mt3k.1` publica una release con el instalador, `latest.yml` y `SHA256SUMS.txt`.
+El instalador queda en `release/`. En GitHub Actions, cada push a `mt3k` deja el `.exe` como artefacto del workflow [`build-windows`](.github/workflows/build-windows.yml); una etiqueta con el formato `v0.1.4-mt3k.1` publica una release con el instalador, el zip de la app para Xbox Mode (`ORBIT-MT3K-App-*.zip`), `latest.yml` y `SHA256SUMS.txt`.
 
 ### Verificar el Home en distintos tamaños
 
@@ -141,4 +141,4 @@ ORBIT es software libre bajo la [GNU GPL v3](LICENSE), con la [excepción para e
 
 ---
 
-**English.** This is the MT3K Edition of [ORBIT](https://github.com/toonymak1993/orbit), a controller-first game launcher for Windows by Luis Garcia. The fork adds ultrawide / 32:9 support for the Home screen (sent upstream as [PR #13](https://github.com/toonymak1993/orbit/pull/13)), Steam removable-drive fixes from upstream PRs #11 and #12, unsigned NSIS builds from GitHub Actions and a daily upstream sync. Xbox Mode works through an experimental Developer Mode registration that the installer offers when setup finishes, with a one-line PowerShell fallback. MT3K builds include ORBIT Plus as a community edition and update themselves from this fork's releases after asking, verifying each download against GitHub's SHA-256 digest. Same GPL-3.0 license as upstream; no Discord SDK in these builds. If you enjoy ORBIT, support the original author at getorbitlauncher.com. See [CHANGELOG-MT3K.md](CHANGELOG-MT3K.md).
+**English.** This is the MT3K Edition of [ORBIT](https://github.com/toonymak1993/orbit), a controller-first game launcher for Windows by Luis Garcia. The fork adds ultrawide / 32:9 support for the Home screen (merged upstream as [PR #13](https://github.com/toonymak1993/orbit/pull/13)), Steam removable-drive fixes from upstream PRs #11 and #12, unsigned NSIS builds from GitHub Actions and a daily upstream sync. Xbox Mode works through an experimental Developer Mode registration that the installer offers when setup finishes, with a one-line PowerShell fallback. MT3K builds include ORBIT Plus as a community edition and update themselves from this fork's releases after asking, verifying each download against GitHub's SHA-256 digest. Same GPL-3.0 license as upstream; no Discord SDK in these builds. If you enjoy ORBIT, support the original author at getorbitlauncher.com. See [CHANGELOG-MT3K.md](CHANGELOG-MT3K.md).
