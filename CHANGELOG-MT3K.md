@@ -23,6 +23,10 @@ Probado en el ROG Xbox Ally: un disco ausente se detecta en menos de 1 ms y las 
 
 - El chequeo en vivo `verify-settings-navigation.cjs --orbit-home` captura y valida además 3413×960, 2560×1080, 3440×1440 y 5120×1440.
 
+### Xbox Mode
+
+- `scripts/windows/Register-OrbitMt3kXboxMode.ps1` registra el ORBIT MT3K instalado como home app de Xbox Mode con el modo desarrollador de Windows, bajo la identidad "ORBIT MT3K". Probado en el ROG Xbox Ally.
+
 ### Empaquetado
 
 - `electron-builder.mt3k.yml`: instalador NSIS x64 sin firma de código, con manifiesto propio (`resources/release-manifest.mt3k.json`) que desactiva la auto-actualización para no pisarse con la release oficial firmada.
