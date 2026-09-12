@@ -439,7 +439,56 @@ async function main() {
     await window.webContents.capturePage().then((image) =>
       fs.writeFile(path.join(output, 'orbit-home-banners-1920x1080-de.png'), image.toPNG())
     )
-    console.log('ORBIT Home: stable two-card banner focus, row-to-banner jump-back, banner-to-top navigation, and 1280×720/1920×1080 bounds passed.')
+
+    // Ultrawide and super-ultrawide desktops. 3413×960 is a 5120×1440 panel at
+    // 150 % Windows scaling (ROG Xbox Ally docked); the others run at 100 %.
+    const assertRowBounds = async (label) => {
+      const geometry = await js(`(() => {
+        const scroller = document.querySelector('[data-home-game-row=true]')?.parentElement
+        const tiles = [...document.querySelectorAll('[data-home-game-row=true] .home-game-tile')]
+        const rects = tiles.map(tile => tile.getBoundingClientRect())
+        const visible = rects.filter(rect => rect.left < innerWidth)
+        return {
+          tiles: tiles.length,
+          visibleTiles: visible.length,
+          tileWidth: Math.round(rects[0]?.width ?? 0),
+          tileBottom: Math.round(Math.max(0, ...visible.map(rect => rect.bottom))),
+          innerHeight,
+          scrollerHeight: scroller?.clientHeight ?? 0,
+          scrollTop: scroller?.scrollTop ?? 0,
+          rowInsideViewport: visible.every(rect => rect.top >= 0 && rect.bottom <= innerHeight),
+          verticalOverflow: scroller ? scroller.scrollHeight > scroller.clientHeight + 1 : true,
+          horizontalOverflow: document.documentElement.scrollWidth > innerWidth
+        }
+      })()`)
+      assert.equal(geometry.scrollTop, 0, `${label}: the Home page is measured unscrolled (${JSON.stringify(geometry)})`)
+      assert.equal(geometry.rowInsideViewport, true, `${label}: every visible Home tile stays inside the viewport (${JSON.stringify(geometry)})`)
+      assert.equal(geometry.verticalOverflow, false, `${label}: the Home page does not scroll vertically (${JSON.stringify(geometry)})`)
+      assert.equal(geometry.horizontalOverflow, false, `${label}: no page-level horizontal overflow`)
+      assert.ok(geometry.visibleTiles >= 5, `${label}: at least five tiles are visible (${JSON.stringify(geometry)})`)
+      return geometry
+    }
+    const ultrawide = [[3413, 960, 'ally-5120x1440-150'], [2560, 1080, '2560x1080'], [3440, 1440, '3440x1440'], [5120, 1440, '5120x1440']]
+    for (const [width, height, name] of ultrawide) {
+      for (const cardSize of ['standard', 'large', 'compact']) {
+        window.setContentSize(width, height)
+        await js(`settingsQA.setCardSize("${cardSize}")`)
+        await settle()
+        await js('settingsQA.focus("[data-home-game-row=true] [data-home-game-card=true]")')
+        await waitFor('settingsQA.state().homeStageMode === "game-focus"')
+        await key('ArrowUp')
+        await waitFor('settingsQA.state().focusedHomeJumpBack === "true"')
+        await assertBannerBounds()
+        const geometry = await assertRowBounds(`${name} ${cardSize}`)
+        console.log(`ORBIT Home ultrawide ${name} ${cardSize}: ${geometry.visibleTiles} visible tiles, ${geometry.tileWidth}px wide, row bottom ${geometry.tileBottom}/${geometry.innerHeight}px.`)
+        await window.webContents.capturePage().then((image) =>
+          fs.writeFile(path.join(output, `orbit-home-ultrawide-${name}-${cardSize}.png`), image.toPNG())
+        )
+      }
+    }
+    await js('settingsQA.setCardSize("standard")')
+    assert.deepEqual(await js('settingsQA.errors'), [])
+    console.log('ORBIT Home: stable two-card banner focus, row-to-banner jump-back, banner-to-top navigation, and 1280×720/1920×1080 and ultrawide 2560×1080/3413×960/3440×1440/5120×1440 bounds passed.')
     window.destroy()
     return
   }

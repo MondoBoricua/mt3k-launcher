@@ -2819,3 +2819,50 @@ html[data-orbit-performance='game'] *::after {
   }
 
 }
+
+/* Ultrawide and super-ultrawide desktops: 21:9 and 32:9 panels such as
+   2560×1080, 3440×1440 and 5120×1440, including 125–150 % Windows scaling.
+   The default ORBIT Home sizes tiles by viewport width and the banner stage by
+   viewport height. On a viewport at least twice as wide as it is tall that
+   pushes the game row below the fold. Here the stage keeps a height budget and
+   each tile is capped by the vertical space that remains, so the row stays fully
+   visible and shows more games at once. FLOAT already caps its cards by height. */
+@media (orientation: landscape) and (min-aspect-ratio: 2/1) {
+  .home-layout[data-home-layout='orbit'] {
+    --home-ultrawide-stage-height: clamp(13rem, 45vh, 32rem);
+    --home-ultrawide-row-gap: clamp(1rem, 3vh, 2rem);
+    /* 6.75rem page top padding + 1.5rem row top padding + 2rem row bottom
+       padding + 2.5rem page bottom padding + 0.5rem focus-ring headroom.
+       Home cards use a 1:1.08 aspect ratio. */
+    --home-ultrawide-tile-width: calc(
+      (100vh - var(--home-ultrawide-stage-height) - var(--home-ultrawide-row-gap) - 13.25rem) / 1.08
+    );
+  }
+
+  .home-layout[data-home-layout='orbit'] .home-stage,
+  [data-card-size='large'] .home-layout[data-home-layout='orbit'] .home-stage {
+    height: var(--home-ultrawide-stage-height);
+  }
+
+  .home-layout[data-home-layout='orbit'] .home-game-row,
+  [data-card-size='large'] .home-layout[data-home-layout='orbit'] .home-game-row {
+    margin-top: var(--home-ultrawide-row-gap);
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
+  }
+
+  .home-layout[data-home-layout='orbit'] .home-game-tile,
+  [data-card-size='large'] .home-layout[data-home-layout='orbit'] .home-game-tile {
+    flex-basis: min(
+      calc((100% - 4rem - 4 * var(--tile-gap)) / 5),
+      var(--home-ultrawide-tile-width)
+    );
+  }
+
+  [data-card-size='compact'] .home-layout[data-home-layout='orbit'] .home-game-tile {
+    flex-basis: min(
+      clamp(8rem, calc((100% - 5rem - 5 * var(--tile-gap)) / 6), 10.5rem),
+      var(--home-ultrawide-tile-width)
+    );
+  }
+}
