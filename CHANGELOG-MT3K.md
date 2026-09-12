@@ -2,6 +2,15 @@
 
 Lo que este fork agrega o cambia respecto a [toonymak1993/orbit](https://github.com/toonymak1993/orbit). Las versiones siguen a las del original con el sufijo `-mt3k.N`.
 
+## 0.1.4-mt3k.2
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.1.
+
+### Metadatos
+
+- **Botón "Search metadata" en el editor de metadatos.** Busca el juego por título en la tienda de Steam, muestra los resultados con su miniatura para distinguir el juego base de sus DLC, y al elegir uno rellena título, resumen, descripción, géneros, características, desarrollador, editor, fecha, edad, idiomas, plataformas, requisitos y enlaces. Solo rellena el borrador: nada se guarda hasta pulsar *Save & sync game*. Pensado para juegos custom que no vienen de ninguna tienda.
+- **Arte de Steam para juegos nuevos.** Steam guarda la portada, el fondo y la cabecera de los juegos recientes en carpetas con hash, y ORBIT solo probaba las rutas clásicas, así que la búsqueda de arte sin API key encontraba una sola imagen. Ahora consulta la API pública de tienda de Steam, prueba primero las rutas con hash y mantiene las clásicas como respaldo.
+
 ## 0.1.4-mt3k.1
 
 Base: ORBIT 0.1.4 (commit `03ccdc3`).

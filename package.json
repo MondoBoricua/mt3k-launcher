@@ -19,6 +19,7 @@
     "verify:title-music": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-title-music.ts",
     "verify:game-metadata": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-game-metadata.ts",
     "verify:media-links": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-media-link-search.ts",
+    "verify:metadata-search": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-metadata-store-search.ts",
     "verify:ui-audio": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-ui-audio.ts",
     "verify:ui-audio:storage": "electron scripts/verify-ui-audio-storage.cjs",
     "verify:steam-install": "node --experimental-strip-types scripts/verify-steam-install-request.ts",

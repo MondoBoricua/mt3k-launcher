@@ -32,7 +32,8 @@ import type {
   ImageOrientation,
   ImageUpdate,
   LibraryGame,
-  LibrarySnapshot
+  LibrarySnapshot,
+  MetadataSearchCandidate
 } from '@shared/ipc'
 import { safeExternalHttpsUrl } from '@shared/externalUrl'
 import { youtubeVideoIdFromUrl } from '@shared/gameTitleMusic'
@@ -44,6 +45,7 @@ import { useLibraryStore } from '@renderer/state/libraryStore'
 import { GameImage } from './GameImage'
 import { ArtworkPicker } from './ArtworkPicker'
 import { MediaLinkSearchDialog } from './MediaLinkSearchDialog'
+import { MetadataSearchDialog } from './MetadataSearchDialog'
 
 type SectionId = 'overview' | 'media' | 'facts' | 'system' | 'advanced'
 type EditorState = 'idle' | 'saving' | 'syncing' | 'saved' | 'saved-sync-error' | 'error'
@@ -392,6 +394,8 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
   const [confirmReset, setConfirmReset] = useState(false)
   const [artworkPicker, setArtworkPicker] = useState<ImageOrientation | null>(null)
   const [mediaSearchKind, setMediaSearchKind] = useState<GameMediaLinkKind | null>(null)
+  const [metadataSearchOpen, setMetadataSearchOpen] = useState(false)
+  const [storeFillName, setStoreFillName] = useState<string | null>(null)
   const [mediaPasteBusy, setMediaPasteBusy] = useState<GameMediaLinkKind | null>(null)
   const [mediaFeedback, setMediaFeedback] = useState<{
     kind: GameMediaLinkKind
@@ -427,6 +431,48 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
     set(kind === 'trailer' ? 'trailerUrl' : 'titleMusicUrl', url)
     setMediaFeedback({ kind, state: feedback })
     setMediaSearchKind(null)
+  }
+
+  /** Fills every field the store provides; empty store values keep the current draft. */
+  const applyStoreMetadata = (candidate: MetadataSearchCandidate): void => {
+    const metadata = candidate.metadata
+    setDraft((current) => ({
+      ...current,
+      name: candidate.name || current.name,
+      summary: metadata.summary ?? current.summary,
+      description: metadata.description ?? current.description,
+      genres: metadata.genres ? list(metadata.genres) : current.genres,
+      features: metadata.features ? list(metadata.features) : current.features,
+      developers: metadata.developers ? list(metadata.developers) : current.developers,
+      publishers: metadata.publishers ? list(metadata.publishers) : current.publishers,
+      releaseDateText: metadata.releaseDateText ?? current.releaseDateText,
+      comingSoon:
+        metadata.comingSoon === undefined
+          ? current.comingSoon
+          : (String(metadata.comingSoon) as 'true' | 'false'),
+      criticScore: metadata.criticScore === undefined ? current.criticScore : number(metadata.criticScore),
+      recommendationCount:
+        metadata.recommendationCount === undefined
+          ? current.recommendationCount
+          : number(metadata.recommendationCount),
+      requiredAge: metadata.requiredAge === undefined ? current.requiredAge : number(metadata.requiredAge),
+      website: metadata.website ?? current.website,
+      storeUrl: metadata.storeUrl ?? current.storeUrl,
+      languages: metadata.languages ? list(metadata.languages) : current.languages,
+      controllerSupport: metadata.controllerSupport ?? current.controllerSupport,
+      platforms: metadata.platforms ? list(metadata.platforms) : current.platforms,
+      achievementCount:
+        metadata.achievementCount === undefined ? current.achievementCount : number(metadata.achievementCount),
+      contentDescriptorNotes: metadata.contentDescriptorNotes ?? current.contentDescriptorNotes,
+      minimumRequirements: metadata.systemRequirements?.minimum ?? current.minimumRequirements,
+      recommendedRequirements: metadata.systemRequirements?.recommended ?? current.recommendedRequirements
+    }))
+    setState('idle')
+    setSyncResult(null)
+    setConfirmClose(false)
+    setStoreFillName(candidate.name)
+    setMetadataSearchOpen(false)
+    setSection('overview')
   }
 
   const pasteMediaLink = async (kind: GameMediaLinkKind): Promise<void> => {
@@ -471,10 +517,10 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
   useEffect(() => {
     const root = rootRef.current
     if (!root) return
-    if (artworkPicker || mediaSearchKind) root.setAttribute('inert', '')
+    if (artworkPicker || mediaSearchKind || metadataSearchOpen) root.setAttribute('inert', '')
     else root.removeAttribute('inert')
     return () => root.removeAttribute('inert')
-  }, [artworkPicker, mediaSearchKind])
+  }, [artworkPicker, mediaSearchKind, metadataSearchOpen])
 
   useEffect(() => {
     let active = true
@@ -666,6 +712,26 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
           <main className="scrollbar-none min-h-0 overflow-y-auto overscroll-contain px-[clamp(1rem,2.2vw,2.25rem)] py-[clamp(1rem,2vh,1.75rem)]">
             {section === 'overview' && (
               <Section title={t('metadata.section.overview')} description={t('metadata.section.overviewBody')}>
+                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-accent/20 bg-accent/[0.06] px-4 py-3">
+                  <p className="min-w-0 flex-1 text-sm leading-relaxed text-white/60">{t('metadata.storeSearch.hint')}</p>
+                  <button
+                    data-focusable
+                    data-metadata-store-search-open="true"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setMetadataSearchOpen(true)}
+                    className="flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-sm font-bold text-black disabled:opacity-45 data-[focused=true]:shadow-[0_0_0_3px_rgb(var(--color-accent)/0.25)]"
+                  >
+                    <Search size={16} />
+                    {t('metadata.storeSearch.open')}
+                  </button>
+                </div>
+                {storeFillName && (
+                  <p role="status" aria-live="polite" className="flex items-center gap-2 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.08] px-3.5 py-3 text-sm text-emerald-100">
+                    <CheckCircle2 size={16} className="shrink-0" />
+                    {t('metadata.storeSearch.filled', { name: storeFillName })}
+                  </p>
+                )}
                 <Field label={t('metadata.name')} manual={Boolean(game.nameOverride)}>
                   <input data-focusable data-metadata-field="name" aria-invalid={invalid('name')} autoComplete="off" maxLength={160} value={draft.name} onChange={(event) => set('name', event.target.value)} className={inputClass('name')} />
                 </Field>
@@ -906,6 +972,14 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
           kind={mediaSearchKind}
           onSelect={(url) => applyMediaLink(mediaSearchKind, url, 'selected')}
           onClose={() => setMediaSearchKind(null)}
+        />
+      )}
+      {metadataSearchOpen && (
+        <MetadataSearchDialog
+          gameId={game.id}
+          gameName={draft.name || game.name}
+          onApply={applyStoreMetadata}
+          onClose={() => setMetadataSearchOpen(false)}
         />
       )}
     </>,

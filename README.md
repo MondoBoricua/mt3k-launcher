@@ -27,6 +27,8 @@ No es un producto aparte ni compite con ORBIT. Es ORBIT con parches, compilado s
 |---|---|---|
 | **Soporte ultrawide y super-ultrawide en el Home** (2560×1080, 3440×1440, 5120×1440, también con escalado 125–150 %). La fila de juegos ya no se corta y muestra 8 a 12 juegos a la vez. | 0.1.4-mt3k.1 | [PR #13](https://github.com/toonymak1993/orbit/pull/13) abierto |
 | **Bibliotecas de Steam en discos externos**: sin avisos falsos cuando el disco no está, y reescaneo automático al conectarlo o quitarlo. Aportado por nerdytyphanie. | 0.1.4-mt3k.1 | PRs [#11](https://github.com/toonymak1993/orbit/pull/11) y [#12](https://github.com/toonymak1993/orbit/pull/12) abiertos |
+| **Buscar metadatos por título** en el editor del juego: elige el resultado de Steam y rellena descripción, géneros, desarrollador, fecha y más. Ideal para juegos custom. | 0.1.4-mt3k.2 | Solo en el fork |
+| **Arte de Steam para juegos recientes**: la búsqueda sin API key ya encuentra portada, fondo y cabecera guardadas en las rutas nuevas de Steam. | 0.1.4-mt3k.2 | Solo en el fork |
 | Build NSIS sin firma desde GitHub Actions, con release automática al etiquetar | 0.1.4-mt3k.1 | Solo en el fork |
 | Sincronización diaria con el upstream vía pull request `main → mt3k` | 0.1.4-mt3k.1 | Solo en el fork |
 

@@ -85,6 +85,8 @@ import {
   type SystemStatusSnapshot,
   type XboxLoginStatus
 } from '@shared/ipc'
+import { isSteamAppId, normalizeMetadataSearchQuery } from '@shared/gameMetadataSearch'
+import { lookupSteamStoreMetadata, searchSteamStoreMetadata } from './metadataSearchService'
 import { publicSettingsSnapshot, settingsStore } from './settingsStore'
 import { steamAuthManager } from './steam/steamAuth'
 import { steamWebApiCredentials } from './steam/steamWebApiCredentials'
@@ -1398,6 +1400,29 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.libraryGameMetadataMediaPaste, (_e, kindValue: unknown) => {
     if (!isGameMediaLinkKind(kindValue)) throw new Error('Invalid metadata media kind')
     return normalizePastedMediaLink(clipboard.readText(), kindValue)
+  })
+
+  ipcMain.handle(IPC.libraryGameMetadataStoreSearch, (
+    _e,
+    gameIdValue: unknown,
+    queryValue: unknown
+  ) => {
+    const gameId = validatedShortString(gameIdValue, 'metadata store search game ID')
+    if (!libraryService.getGame(gameId)) throw new Error('Game is not available')
+    const query = normalizeMetadataSearchQuery(queryValue)
+    if (!query) throw new Error('Invalid metadata store search query')
+    return searchSteamStoreMetadata(query)
+  })
+
+  ipcMain.handle(IPC.libraryGameMetadataStoreLookup, (
+    _e,
+    gameIdValue: unknown,
+    appIdValue: unknown
+  ) => {
+    const gameId = validatedShortString(gameIdValue, 'metadata store lookup game ID')
+    if (!libraryService.getGame(gameId)) throw new Error('Game is not available')
+    if (!isSteamAppId(appIdValue)) throw new Error('Invalid Steam app ID')
+    return lookupSteamStoreMetadata(appIdValue)
   })
 
   ipcMain.handle(IPC.xboxGetConnection, () => xboxAuthManager.restoreSession())

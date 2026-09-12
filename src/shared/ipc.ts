@@ -8,6 +8,12 @@ export type {
   MediaLinkSearchOption,
   MediaLinkSearchResult
 } from './mediaLinkSearch'
+export type {
+  MetadataLookupResult,
+  MetadataSearchCandidate,
+  MetadataSearchOption,
+  MetadataSearchResult
+} from './gameMetadataSearch'
 export type { AchievementGuideResult } from './achievementGuide'
 
 export const FREE_THEME_IDS = [
@@ -1814,6 +1820,8 @@ export const IPC = {
   libraryGameMetadataSync: 'library:game:metadata:sync',
   libraryGameMetadataMediaSearch: 'library:game:metadata:media-search',
   libraryGameMetadataMediaPaste: 'library:game:metadata:media-paste',
+  libraryGameMetadataStoreSearch: 'library:game:metadata:store-search',
+  libraryGameMetadataStoreLookup: 'library:game:metadata:store-lookup',
   geforceNowCatalogGet: 'geforce-now:catalog:get',
   geforceNowCatalogRefresh: 'geforce-now:catalog:refresh',
   geforceNowCatalogUpdated: 'geforce-now:catalog:updated',

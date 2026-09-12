@@ -276,6 +276,17 @@ async function fetchMetadata(appId: number, language: string): Promise<CachedMet
   }
 }
 
+/** One uncached store lookup for the metadata search dialog. Rate limits propagate. */
+export async function fetchSteamStoreMetadata(
+  appId: number,
+  language: string
+): Promise<SteamAppMetadata | null> {
+  const result = await fetchMetadata(appId, language)
+  if (!result) return null
+  const { metadataSchemaVersion: _schemaVersion, ...metadata } = result
+  return metadata
+}
+
 /** One throttled, persistent metadata queue shared by every screen. */
 export class SteamMetadataService extends EventEmitter {
   private queue: QueueItem[] = []

@@ -6,9 +6,11 @@ import { localizedStoreRegion } from './store/storeRegions'
 import {
   isPublicSteamArtworkUrl,
   parsePublicSteamSearchItems,
+  parseSteamStoreBrowseAssets,
   publicSteamArtworkUrls,
   type PublicArtworkOrientation,
-  type PublicSteamArtworkCandidate
+  type PublicSteamArtworkCandidate,
+  type SteamStoreLibraryAssets
 } from './publicArtworkSearchPolicy'
 
 const SEARCH_TIMEOUT_MS = 8_000
@@ -18,11 +20,12 @@ const MAX_SEARCH_ITEMS = 12
 const MAX_CANDIDATES = 18
 const MAX_IMAGE_CHECK_CONCURRENCY = 4
 
-async function discardResponse(response: Response): Promise<void> {
+export async function discardResponse(response: Response): Promise<void> {
   await response.body?.cancel().catch(() => undefined)
 }
 
-async function readTextLimited(response: Response): Promise<string | null> {
+/** Streams a response body and gives up as soon as it exceeds the byte cap. */
+export async function readTextLimited(response: Response): Promise<string | null> {
   const announcedSize = Number(response.headers.get('content-length'))
   if (Number.isFinite(announcedSize) && announcedSize > MAX_RESPONSE_BYTES) {
     await discardResponse(response)
@@ -95,6 +98,38 @@ async function mapWithConcurrency<T, R>(
   return results
 }
 
+/** Resolves content-hashed library artwork names for many apps in one request. */
+async function fetchSteamStoreLibraryAssets(
+  appIds: number[],
+  language: string,
+  countryCode: string
+): Promise<Map<number, SteamStoreLibraryAssets>> {
+  if (appIds.length === 0) return new Map()
+  try {
+    const url = new URL('https://api.steampowered.com/IStoreBrowseService/GetItems/v1/')
+    url.searchParams.set(
+      'input_json',
+      JSON.stringify({
+        ids: appIds.map((appid) => ({ appid })),
+        context: { language, country_code: countryCode },
+        data_request: { include_assets: true }
+      })
+    )
+    const response = await fetchWithElectronNet(url, {
+      signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS)
+    })
+    if (!response.ok) {
+      await discardResponse(response)
+      return new Map()
+    }
+    const text = await readTextLimited(response)
+    return text ? parseSteamStoreBrowseAssets(JSON.parse(text)) : new Map()
+  } catch {
+    // Classic fixed paths remain the fallback when the browse API is unavailable.
+    return new Map()
+  }
+}
+
 export async function searchPublicSteamArtwork(
   query: string,
   orientation: PublicArtworkOrientation
@@ -123,11 +158,16 @@ export async function searchPublicSteamArtwork(
         return { state: 'missing' }
       }
       const items = parsePublicSteamSearchItems(parsed).slice(0, MAX_SEARCH_ITEMS)
+      const assets = await fetchSteamStoreLibraryAssets(
+        items.map((item) => item.id),
+        region.steamLanguage,
+        region.countryCode
+      )
       const perGame = await mapWithConcurrency(
         items,
         MAX_IMAGE_CHECK_CONCURRENCY,
         async (item): Promise<PublicSteamArtworkCandidate[]> => {
-          const groups = publicSteamArtworkUrls(item.id, orientation)
+          const groups = publicSteamArtworkUrls(item.id, orientation, assets.get(item.id))
           const urls: Array<string | undefined> = []
           for (const group of groups) urls.push(await firstAvailableUrl(group))
           return urls

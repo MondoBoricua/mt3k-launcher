@@ -32,6 +32,8 @@ import {
   type GameMediaLinkKind,
   type MediaLinkPasteResult,
   type MediaLinkSearchResult,
+  type MetadataLookupResult,
+  type MetadataSearchResult,
   type GeForceNowCatalogSnapshot,
   type HardwareControlStatus,
   type NativeControllerInputSnapshot,
@@ -375,7 +377,11 @@ const orbitApi = {
       ): Promise<MediaLinkSearchResult> =>
         ipcRenderer.invoke(IPC.libraryGameMetadataMediaSearch, gameId, kind, query),
       pasteMediaLink: (kind: GameMediaLinkKind): Promise<MediaLinkPasteResult> =>
-        ipcRenderer.invoke(IPC.libraryGameMetadataMediaPaste, kind)
+        ipcRenderer.invoke(IPC.libraryGameMetadataMediaPaste, kind),
+      searchStore: (gameId: string, query: string): Promise<MetadataSearchResult> =>
+        ipcRenderer.invoke(IPC.libraryGameMetadataStoreSearch, gameId, query),
+      lookupStore: (gameId: string, appId: number): Promise<MetadataLookupResult> =>
+        ipcRenderer.invoke(IPC.libraryGameMetadataStoreLookup, gameId, appId)
     },
     custom: {
       beginImport: (source: CustomGameImportSource): Promise<CustomGameDraft | null> =>
