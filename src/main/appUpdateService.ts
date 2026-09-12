@@ -146,11 +146,13 @@ $previous = Join-Path $PackageRoot 'app.previous'
 $staging = Join-Path $PackageRoot 'app.update'
 try {
   Write-UpdateLog "waiting for ORBIT $ProcessId to exit"
+  # Match only processes inside the app folder itself, never a sibling such as app2.
+  $appPrefix = [System.IO.Path]::GetFullPath($AppDir).TrimEnd('\') + '\'
   $deadline = (Get-Date).AddSeconds(90)
   do {
     Start-Sleep -Milliseconds 500
     $running = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-      $_.Path -and $_.Path.StartsWith($AppDir, [StringComparison]::OrdinalIgnoreCase)
+      $_.Path -and $_.Path.StartsWith($appPrefix, [StringComparison]::OrdinalIgnoreCase)
     })
   } while ($running.Count -gt 0 -and (Get-Date) -lt $deadline)
   if ($running.Count -gt 0) {
@@ -160,6 +162,22 @@ try {
   }
   foreach ($path in $staging, $previous) {
     if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
+  }
+  Write-UpdateLog 'validating update archive entries'
+  # Windows PowerShell 5.1 Expand-Archive does not reject entries that escape the
+  # destination (..\ or absolute paths), so every entry is checked first.
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $stagingPrefix = [System.IO.Path]::GetFullPath($staging).TrimEnd('\') + '\'
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+  try {
+    foreach ($entry in $archive.Entries) {
+      $target = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($staging, $entry.FullName))
+      if (-not $target.StartsWith($stagingPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "unsafe archive entry: $($entry.FullName)"
+      }
+    }
+  } finally {
+    $archive.Dispose()
   }
   Write-UpdateLog 'extracting update archive'
   Expand-Archive -LiteralPath $ZipPath -DestinationPath $staging -Force
@@ -171,6 +189,9 @@ try {
     if (-not $inner) { throw 'ORBIT.exe is missing from the update archive' }
     $newRoot = $inner.FullName
   }
+  if (-not (Test-Path -LiteralPath (Join-Path $newRoot 'resources\app.asar'))) {
+    throw 'resources\app.asar is missing from the update archive'
+  }
   Write-UpdateLog 'swapping app folders'
   Rename-Item -LiteralPath $AppDir -NewName 'app.previous'
   try {
@@ -180,7 +201,11 @@ try {
     throw
   }
   if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
-  Remove-Item -LiteralPath $previous -Recurse -Force -ErrorAction SilentlyContinue
+  try {
+    Remove-Item -LiteralPath $previous -Recurse -Force
+  } catch {
+    Write-UpdateLog ('previous app folder could not be removed: ' + $_.Exception.Message)
+  }
   Write-UpdateLog 'update applied'
 } catch {
   Write-UpdateLog ('update failed: ' + $_.Exception.Message)
@@ -201,6 +226,7 @@ try {
   } catch {
     Write-UpdateLog ('relaunch failed: ' + $_.Exception.Message)
   }
+  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
 }
 `
 
@@ -1445,7 +1471,8 @@ export class AppUpdateService {
     let executablePath: string
     let child: ChildProcess
     if (this.communityPackage) {
-      const helperPath = this.updatePath('orbit-mt3k-package-update.ps1')
+      // A per-run name that the helper deletes when it finishes, so no reusable script stays on disk.
+      const helperPath = this.updatePath(`orbit-mt3k-package-update-${randomUUID()}.ps1`)
       const logPath = this.updatePath('orbit-mt3k-package-update.log')
       await writeFile(helperPath, `\ufeff${COMMUNITY_PACKAGE_UPDATE_SCRIPT}`, 'utf8')
       executablePath = powershellExecutable()
