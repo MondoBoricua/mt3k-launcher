@@ -17,7 +17,7 @@
 
 ## Qué es esto
 
-ORBIT junta tu biblioteca de PC (Steam, Epic, GOG, Xbox, EA, Ubisoft, retro, juegos locales) en una pantalla de inicio estilo consola, pensada para mando, handhelds y TV. Este repositorio es la **MT3K Edition**: el fork donde Josue "Mondo" Diaz prueba ORBIT en su hardware, le agrega mejoras y documenta el proceso para el canal MT3K. Lo que tiene sentido para todo el mundo se envía de vuelta al proyecto original como pull request.
+ORBIT junta tu biblioteca de PC (Steam, Epic, GOG, Xbox, EA, Ubisoft, retro, juegos locales) en una pantalla de inicio estilo consola, pensada para mando, handhelds y TV. Este repositorio es la **MT3K Edition**: el fork donde MT3K prueba ORBIT en su hardware, le agrega mejoras y documenta el proceso para el canal. Lo que tiene sentido para todo el mundo se envía de vuelta al proyecto original como pull request.
 
 No es un producto aparte ni compite con ORBIT. Es ORBIT con parches, compilado sin firma, para gente que quiere probar cambios antes de que lleguen a la release oficial o que necesita algo que el original todavía no tiene.
 
@@ -106,7 +106,7 @@ Si tienes una idea o un bug en tu hardware, abre un [issue](https://github.com/M
 ORBIT es software libre bajo la [GNU GPL v3](LICENSE), con la [excepción para el Discord Social SDK](LICENSE_EXCEPTION.md) del autor original. Este fork conserva la misma licencia: puedes usarlo, estudiarlo, modificarlo y redistribuirlo bajo los mismos términos, y el código fuente de cada build está en este repositorio.
 
 - ORBIT: © Luis Garcia, [toonymak1993/orbit](https://github.com/toonymak1993/orbit). [Sitio oficial](https://www.getorbitlauncher.com/).
-- Cambios de la MT3K Edition: © Josue Diaz.
+- Cambios de la MT3K Edition: © MT3K.
 - Avisos de terceros: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---

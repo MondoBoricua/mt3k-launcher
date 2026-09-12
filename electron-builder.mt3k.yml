@@ -10,7 +10,7 @@ appId: com.orbit.launcher
 productName: ORBIT
 buildVersion: 0.1.4.0
 artifactName: ORBIT-MT3K-Setup-${version}-${arch}.${ext}
-copyright: Copyright © 2026 Luis Garcia. MT3K Edition changes © 2026 Josue Diaz. GPL-3.0.
+copyright: Copyright © 2026 Luis Garcia. MT3K Edition changes © 2026 MT3K. GPL-3.0.
 forceCodeSigning: false
 npmRebuild: false
 
