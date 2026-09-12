@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { join, parse } from 'node:path'
 import { getVdfValue, parseVdf, vdfObject, vdfString } from './vdf'
 import { parseSteamAppManifest } from './steamManifest'
 
@@ -20,8 +20,12 @@ export interface SteamLocalAppActivity {
 
 export interface InstalledSteamSnapshot {
   games: Map<number, InstalledSteamApp>
-  /** False means at least one configured library or manifest was unreadable. */
+  /** False means at least one configured library was offline or unreadable. */
   complete: boolean
+  /** Health reporting must use this, not complete: offline volumes are normal,
+   * but still prevent authoritative reconciliation from clearing cached installs. */
+  hasReadErrors: boolean
+  offlineVolumeRoots: string[]
 }
 
 interface SteamLibraryFoldersSnapshot {
@@ -77,10 +81,14 @@ function getLibraryFolders(steamPath: string): SteamLibraryFoldersSnapshot {
   }
 }
 
-export function getSteamAppsDirectories(): string[] {
+export function getSteamLibraryPaths(): string[] {
   const steamPath = getSteamInstallPath()
   if (!steamPath) return []
   return getLibraryFolders(steamPath).paths
+}
+
+export function getSteamAppsDirectories(): string[] {
+  return getSteamLibraryPaths()
     .map((libraryPath) => join(libraryPath, 'steamapps'))
     .filter((steamappsDir) => existsSync(steamappsDir))
 }
@@ -141,6 +149,29 @@ export function scanSteamLocalActivity(steamId?: string): Map<number, SteamLocal
   return steamPath ? getLocalAppActivity(steamPath, steamId) : new Map()
 }
 
+function steamLibraryVolumeIsAbsent(libraryPath: string): boolean {
+  const root = parse(libraryPath).root
+  if (!/^[a-z]:[\\/]$/i.test(root)) return false
+  try {
+    statSync(root)
+    return false
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    return code === 'ENOENT' || code === 'ENODEV' || code === 'ENXIO'
+  }
+}
+
+/** Probe only configured locations, without launching registry queries or scanning
+ * manifests on each tick. Directory readiness also changes while a drive mounts. */
+export function steamLibraryAvailabilityFingerprint(libraryPaths: readonly string[]): string {
+  return libraryPaths.map((libraryPath) => {
+    const state = steamLibraryVolumeIsAbsent(libraryPath)
+      ? 'offline'
+      : existsSync(join(libraryPath, 'steamapps')) ? 'ready' : 'pending'
+    return `${libraryPath}:${state}`
+  }).join('\n')
+}
+
 /**
  * Reads Steam's own libraryfolders.vdf and appmanifest files. As in Playnite,
  * only records with the FullyInstalled state and an existing install directory
@@ -149,15 +180,25 @@ export function scanSteamLocalActivity(steamId?: string): Map<number, SteamLocal
 export function scanInstalledSteamAppsSnapshot(steamId?: string): InstalledSteamSnapshot {
   const result = new Map<number, InstalledSteamApp>()
   const steamPath = getSteamInstallPath()
-  if (!steamPath) return { games: result, complete: false }
+  if (!steamPath) {
+    return { games: result, complete: false, hasReadErrors: true, offlineVolumeRoots: [] }
+  }
 
   const localActivity = getLocalAppActivity(steamPath, steamId)
   const libraries = getLibraryFolders(steamPath)
   let complete = libraries.complete
+  let hasReadErrors = !libraries.complete
+  const offlineVolumeRoots = new Set<string>()
   for (const libraryPath of libraries.paths) {
+    if (steamLibraryVolumeIsAbsent(libraryPath)) {
+      complete = false
+      offlineVolumeRoots.add(parse(libraryPath).root.toLocaleLowerCase('en'))
+      continue
+    }
     const steamappsDir = join(libraryPath, 'steamapps')
     if (!existsSync(steamappsDir)) {
       complete = false
+      hasReadErrors = true
       continue
     }
 
@@ -166,6 +207,7 @@ export function scanInstalledSteamAppsSnapshot(steamId?: string): InstalledSteam
       files = readdirSync(steamappsDir)
     } catch {
       complete = false
+      hasReadErrors = true
       continue
     }
 
@@ -191,6 +233,7 @@ export function scanInstalledSteamAppsSnapshot(steamId?: string): InstalledSteam
         const installDir = join(steamappsDir, 'common', installDirName)
         if (!existsSync(installDir)) {
           complete = false
+          hasReadErrors = true
           continue
         }
         const hasPendingDownload =
@@ -211,11 +254,12 @@ export function scanInstalledSteamAppsSnapshot(steamId?: string): InstalledSteam
       } catch {
         // Keep scanning, but do not let a partial result clear cached installs.
         complete = false
+        hasReadErrors = true
       }
     }
   }
 
-  return { games: result, complete }
+  return { games: result, complete, hasReadErrors, offlineVolumeRoots: [...offlineVolumeRoots] }
 }
 
 export function scanInstalledSteamApps(steamId?: string): Map<number, InstalledSteamApp> {

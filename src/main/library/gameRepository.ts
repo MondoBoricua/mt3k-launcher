@@ -1,5 +1,6 @@
 import Store from 'electron-store'
 import { app } from 'electron'
+import { win32 } from 'node:path'
 import type {
   GameMetadata,
   GameMetadataUpdateInput,
@@ -401,6 +402,7 @@ export class GameRepository {
   private profileOpen = false
   private account: AccountLibrary = emptyAccount()
   private metadataLoadingProviders = new Set<string>()
+  private unavailableSteamInstalls = new Set<string>()
 
   openProfile(legacySteamId?: string): void {
     if (this.profileOpen) return
@@ -434,7 +436,7 @@ export class GameRepository {
     this.ensureOpen()
     const visibleRecords = projectVisibleLibraryRecords(Object.values(this.account.games))
 
-    const games = visibleRecords.map(toPublicGame)
+    const games = visibleRecords.map((game) => this.publicGame(game))
     // Both public projections intentionally contain the same records today. Reuse the
     // immutable snapshot array so Electron's structured clone only has to carry one
     // object graph across IPC. Consumers treat both arrays as read-only.
@@ -477,6 +479,35 @@ export class GameRepository {
     const key = loading === undefined ? 'system' : provider
     if (active) this.metadataLoadingProviders.add(key)
     else this.metadataLoadingProviders.delete(key)
+  }
+
+  /** Availability is a runtime projection, not an uninstall. Keep the durable
+   * install path/history intact and use the same projection for rows and counts. */
+  applySteamVolumeAvailability(roots: readonly string[], confirmedAppIds: Iterable<number>): boolean {
+    this.ensureOpen()
+    const offlineRoots = new Set(roots.map((root) => win32.parse(root).root.toLocaleLowerCase('en')))
+    const next = new Set(this.unavailableSteamInstalls)
+    for (const game of Object.values(this.account.games)) {
+      if (game.provider === 'steam' && game.installDir &&
+          offlineRoots.has(win32.parse(game.installDir).root.toLocaleLowerCase('en'))) {
+        next.add(game.id)
+      }
+    }
+    // A returning drive root alone is not proof that an installation is ready.
+    // Restore availability only after its manifest and game directory were read.
+    for (const appId of confirmedAppIds) next.delete(providerGameId(STEAM_PROVIDER, String(appId)))
+    if (next.size === this.unavailableSteamInstalls.size &&
+        [...next].every((id) => this.unavailableSteamInstalls.has(id))) return false
+    this.unavailableSteamInstalls = next
+    return true
+  }
+
+  private installIsAvailable(game: StoredGame): boolean {
+    return game.installed && !this.unavailableSteamInstalls.has(game.id)
+  }
+
+  private publicGame(game: StoredGame): LibraryGame {
+    return { ...toPublicGame(game), installed: this.installIsAvailable(game) }
   }
 
   /** Local state is authoritative only for one provider's installation status. */
@@ -1306,7 +1337,7 @@ export class GameRepository {
     this.ensureOpen()
     const game = this.account.games[id]
     if (!game) return undefined
-    return toPublicGame(game)
+    return this.publicGame(game)
   }
 
   getGamesByProvider(provider: GameProvider): LibraryGame[] {
@@ -1324,8 +1355,8 @@ export class GameRepository {
     )
     return {
       gameCount: games.length,
-      installedCount: games.filter((game) => game.installed).length,
-      installableCount: games.filter((game) => game.owned && !game.installed).length
+      installedCount: games.filter((game) => this.installIsAvailable(game)).length,
+      installableCount: games.filter((game) => game.owned && !this.installIsAvailable(game)).length
     }
   }
 

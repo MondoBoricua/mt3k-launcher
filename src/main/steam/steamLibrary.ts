@@ -8,7 +8,11 @@ import type {
   LibraryProviderStatus,
   LibrarySnapshot
 } from '@shared/ipc'
-import { canPruneSteamOwnedRecords, decideSteamSyncHealth } from '@shared/steamSyncPolicy'
+import {
+  canPruneSteamOwnedRecords,
+  decideSteamSyncHealth,
+  type SteamSyncHealthInput
+} from '@shared/steamSyncPolicy'
 import { classifySteamSessionAccess } from '@shared/steamLibraryAccess'
 import { isConfirmedNonGameSteamAppType } from '@shared/libraryContentPolicy'
 import { steamLanguage } from '@shared/language'
@@ -18,8 +22,10 @@ import { steamWebApiCredentials } from './steamWebApiCredentials'
 import { gameRepository } from '../library/gameRepository'
 import {
   getSteamAppsDirectories,
+  getSteamLibraryPaths,
   scanInstalledSteamAppsSnapshot,
   scanSteamLocalActivity,
+  steamLibraryAvailabilityFingerprint,
   type InstalledSteamApp
 } from './steamInstall'
 import {
@@ -42,6 +48,7 @@ import type { LibraryProviderAdapter } from '../library/libraryProvider'
 import { completionTimesService } from '../completionTimes'
 
 const LOCAL_MANIFEST_SETTLE_MS = 900
+const LOCAL_VOLUME_CHECK_MS = 1_000
 
 type SteamSyncSource =
   | 'store-token'
@@ -90,6 +97,10 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
   private pendingMetadataIds = new Set<number>()
   private localManifestWatchers: FSWatcher[] = []
   private localManifestTimer: ReturnType<typeof setTimeout> | undefined
+  private localVolumeTimer: ReturnType<typeof setInterval> | undefined
+  private localMonitorGeneration = 0
+  private restartLocalWatchers = false
+  private syncHealthInput?: SteamSyncHealthInput
   private localInstallState = ''
   private watchedSteamId?: string
   private providerStatus: LibraryProviderStatus = {
@@ -242,6 +253,8 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
   async refreshInstalledGames(providerGameIds?: readonly string[]): Promise<LibrarySnapshot> {
     const activeRefresh = this.refreshInFlight
     if (activeRefresh) await activeRefresh.catch(() => undefined)
+    // Cache-first startup can skip the full online refresh entirely.
+    if (!this.localVolumeTimer) this.startLocalInstallMonitor(this.watchedSteamId)
 
     const requestedAppIds = providerGameIds
       ? new Set(
@@ -252,6 +265,9 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
       : undefined
     syncCoordinator.begin('library', 1, 0, 'steam-local', 'steam')
     const installedSnapshot = scanInstalledSteamAppsSnapshot(this.watchedSteamId)
+    const availabilityChanged = gameRepository.applySteamVolumeAvailability(
+      installedSnapshot.offlineVolumeRoots, installedSnapshot.games.keys()
+    )
     const installed = [...installedSnapshot.games.values()].filter(
       (game) => !requestedAppIds || requestedAppIds.has(game.appId)
     )
@@ -289,9 +305,9 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
         steamLanguage(settingsStore.get('language'))
       )
     }
-    if (installedSnapshot.complete) syncCoordinator.complete('library', 'steam-local', 'steam')
+    if (!installedSnapshot.hasReadErrors) syncCoordinator.complete('library', 'steam-local', 'steam')
     else syncCoordinator.fail('library', 'steam-local', 'steam')
-    if (changedInstalled.length > 0) this.emitSnapshot()
+    if (changedInstalled.length > 0 || availabilityChanged) this.emitSnapshot()
     return this.getSnapshot()
   }
 
@@ -311,6 +327,7 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
 
     gameRepository.openProfile(account?.steamId)
     this.pendingMetadataIds.clear()
+    this.syncHealthInput = undefined
     this.setProviderStatus({
       state: 'scanning',
       connection: account ? 'connected' : 'not-connected',
@@ -319,6 +336,9 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
 
     // Local state is fast, private and authoritative for installation status.
     const installedSnapshot = scanInstalledSteamAppsSnapshot(account?.steamId)
+    gameRepository.applySteamVolumeAvailability(
+      installedSnapshot.offlineVolumeRoots, installedSnapshot.games.keys()
+    )
     const installed = installedSnapshot.games
     const localActivity = [...scanSteamLocalActivity(account?.steamId)].map(
       ([appId, activity]) => ({
@@ -593,7 +613,7 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
         return !game?.name?.trim()
       })
     ])
-    const health = decideSteamSyncHealth({
+    this.syncHealthInput = {
       primaryLibraryAvailable,
       fallbackLibraryAvailable: supplementalOwned.size > 0 || dynamicOwnedIds.length > 0,
       completeFallbackLibraryAvailable: dynamicSourceAvailable && dynamicOwnedIds.length > 0,
@@ -601,8 +621,9 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
       pendingMetadataCount: this.pendingMetadataIds.size,
       ownedResponseWasEmpty,
       supplementalSourcesComplete,
-      localLibraryComplete: installedSnapshot.complete
-    })
+      localLibraryComplete: !installedSnapshot.hasReadErrors
+    }
+    const health = decideSteamSyncHealth(this.syncHealthInput)
     this.setProviderStatus({
       state: health.state,
       connection: 'connected',
@@ -639,8 +660,12 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
   }
 
   dispose(): void {
+    this.localMonitorGeneration++
+    this.restartLocalWatchers = false
     if (this.localManifestTimer) clearTimeout(this.localManifestTimer)
     this.localManifestTimer = undefined
+    if (this.localVolumeTimer) clearInterval(this.localVolumeTimer)
+    this.localVolumeTimer = undefined
     for (const watcher of this.localManifestWatchers) watcher.close()
     this.localManifestWatchers = []
   }
@@ -652,6 +677,18 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
   private startLocalInstallMonitor(steamId?: string): void {
     this.dispose()
     this.watchedSteamId = steamId
+    // An absent volume has no fs.watch handle, and unplugging can close an
+    // existing handle permanently. Probe cached locations; only transitions
+    // trigger a debounced local scan and watcher rebuild, never account sync.
+    const libraryPaths = getSteamLibraryPaths()
+    let volumeState = steamLibraryAvailabilityFingerprint(libraryPaths)
+    this.localVolumeTimer = setInterval(() => {
+      const next = steamLibraryAvailabilityFingerprint(libraryPaths)
+      if (next === volumeState) return
+      volumeState = next
+      this.scheduleLocalInstallRefresh(true)
+    }, LOCAL_VOLUME_CHECK_MS)
+    this.localVolumeTimer.unref()
     for (const steamappsDir of getSteamAppsDirectories()) {
       try {
         const watcher = watch(steamappsDir, { persistent: false }, (_event, filename) => {
@@ -666,7 +703,10 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
           }
           this.scheduleLocalInstallRefresh(librariesChanged)
         })
-        watcher.on('error', () => watcher.close())
+        watcher.on('error', () => {
+          watcher.close()
+          this.scheduleLocalInstallRefresh(true)
+        })
         this.localManifestWatchers.push(watcher)
       } catch {
         // A missing or temporarily locked Steam library simply remains on the last good snapshot.
@@ -675,10 +715,26 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
   }
 
   private scheduleLocalInstallRefresh(restartWatchers: boolean): void {
+    this.restartLocalWatchers ||= restartWatchers
     if (this.localManifestTimer) clearTimeout(this.localManifestTimer)
     this.localManifestTimer = setTimeout(() => {
       this.localManifestTimer = undefined
+      if (this.refreshInFlight) {
+        const generation = this.localMonitorGeneration
+        const resume = (): void => {
+          if (generation === this.localMonitorGeneration) {
+            this.scheduleLocalInstallRefresh(false)
+          }
+        }
+        void this.refreshInFlight.then(resume, resume)
+        return
+      }
+      const rebuildWatchers = this.restartLocalWatchers
+      this.restartLocalWatchers = false
       const installedSnapshot = scanInstalledSteamAppsSnapshot(this.watchedSteamId)
+      const availabilityChanged = gameRepository.applySteamVolumeAvailability(
+        installedSnapshot.offlineVolumeRoots, installedSnapshot.games.keys()
+      )
       const installed = installedSnapshot.games
       const fingerprint = localInstallFingerprint(installed.values())
       if (fingerprint !== this.localInstallState) {
@@ -701,8 +757,21 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
         }
         artworkService.syncProvider(gameRepository.getGamesByProvider('steam'), 'steam')
         this.emitSnapshot()
+      } else if (availabilityChanged) {
+        this.emitSnapshot()
       }
-      if (!installedSnapshot.complete && this.providerStatus.state !== 'scanning') {
+      if (this.syncHealthInput && this.providerStatus.state !== 'scanning') {
+        this.syncHealthInput.localLibraryComplete = !installedSnapshot.hasReadErrors
+        const health = decideSteamSyncHealth(this.syncHealthInput)
+        if (health.state !== this.providerStatus.state || health.issue !== this.providerStatus.issue) {
+          this.setProviderStatus({
+            ...health,
+            connection: this.providerStatus.connection,
+            methods: this.providerStatus.methods,
+            lastCheckedAt: Date.now()
+          })
+        }
+      } else if (installedSnapshot.hasReadErrors && this.providerStatus.state !== 'scanning') {
         this.setProviderStatus({
           state: 'partial',
           connection: this.providerStatus.connection,
@@ -711,7 +780,7 @@ export class SteamLibraryService extends EventEmitter implements LibraryProvider
           lastCheckedAt: Date.now()
         })
       }
-      if (restartWatchers) this.startLocalInstallMonitor(this.watchedSteamId)
+      if (rebuildWatchers) this.startLocalInstallMonitor(this.watchedSteamId)
     }, LOCAL_MANIFEST_SETTLE_MS)
     this.localManifestTimer.unref()
   }
