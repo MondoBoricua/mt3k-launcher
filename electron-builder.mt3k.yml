@@ -1,0 +1,83 @@
+# ORBIT MT3K Edition — unsigned community build.
+#
+# Same packaging as the upstream electron-builder.yml minus the Certum code
+# signing (the private key belongs to the upstream author) and with a release
+# manifest that keeps this build from auto-updating itself onto the official
+# signed release. Xbox Mode (AppX) is not produced here because it must be
+# signed. Build with:
+#   npx electron-builder --win nsis --x64 --config electron-builder.mt3k.yml --publish never
+appId: com.orbit.launcher
+productName: ORBIT
+buildVersion: 0.1.4.0
+artifactName: ORBIT-MT3K-Setup-${version}-${arch}.${ext}
+copyright: Copyright © 2026 Luis Garcia. MT3K Edition changes © 2026 Josue Diaz. GPL-3.0.
+forceCodeSigning: false
+npmRebuild: false
+
+publish:
+  - provider: github
+    owner: MondoBoricua
+    repo: orbit
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - out/**/*
+  - package.json
+
+extraResources:
+  - from: resources/release-manifest.mt3k.json
+    to: release-manifest.json
+  - from: resources/orbit-plus.json
+    to: orbit-plus.json
+  - from: LICENSE
+    to: LICENSE
+  - from: LICENSE_EXCEPTION.md
+    to: LICENSE_EXCEPTION.md
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
+  - from: resources/discord-social-sdk
+    to: discord-social-sdk
+  - from: resources/wallpapers
+    to: wallpapers
+
+asar: true
+asarUnpack:
+  - node_modules/7zip-bin/**/*
+  - node_modules/koffi/**/*
+  - node_modules/@koromix/koffi-win32-x64/**/*
+compression: normal
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+  executableName: ORBIT
+  requestedExecutionLevel: asInvoker
+  legalTrademarks: ORBIT is a gaming launcher project.
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  installerLanguages:
+    - en_US
+  displayLanguageSelector: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: ORBIT
+  runAfterFinish: true
+  packElevateHelper: false
+  differentialPackage: false
+  uninstallDisplayName: ORBIT MT3K Edition 0.1.4
+  installerIcon: build/installerIcon.ico
+  uninstallerIcon: build/uninstallerIcon.ico
+  installerHeader: build/installerHeader.bmp
+  installerSidebar: build/installerSidebar.bmp
+  uninstallerSidebar: build/uninstallerSidebar.bmp
+  include: build/installer.nsh

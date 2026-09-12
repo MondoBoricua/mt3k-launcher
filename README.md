@@ -1,109 +1,113 @@
 <p align="center">
-  <img src="docs/images/orbit-handheld.webp" alt="ORBIT running on a gaming handheld" width="100%" />
+  <img src="docs/images/mt3k-ultrawide-5120x1440.jpg" alt="ORBIT MT3K Edition en un monitor 5120×1440" width="100%" />
 </p>
 
-<h1 align="center">ORBIT</h1>
+<h1 align="center">ORBIT · MT3K Edition</h1>
 
 <p align="center">
-  A controller-first gaming launcher that brings your PC library together in one console-style home.
+  Fork comunitario de <a href="https://github.com/toonymak1993/orbit">ORBIT</a>, el launcher de juegos <em>controller-first</em> para Windows creado por Luis Garcia (<a href="https://github.com/toonymak1993">toonymak1993</a>).
 </p>
 
 <p align="center">
-  <a href="https://github.com/toonymak1993/orbit/releases/latest"><img alt="Download the latest release" src="https://img.shields.io/badge/download-latest%20release-22d3ee?style=for-the-badge&logo=windows11&logoColor=05070c" /></a>
-  <img alt="Windows 11" src="https://img.shields.io/badge/Windows-11-111827?style=for-the-badge&logo=windows11&logoColor=white" />
-  <img alt="Controller first" src="https://img.shields.io/badge/input-controller%20first-111827?style=for-the-badge" />
+  <a href="https://github.com/MondoBoricua/orbit/releases/latest"><img alt="Descargar la última build" src="https://img.shields.io/github/v/release/MondoBoricua/orbit?label=descargar&style=for-the-badge&logo=windows11&logoColor=white&color=22d3ee" /></a>
+  <a href="https://github.com/MondoBoricua/orbit/actions/workflows/build-windows.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/MondoBoricua/orbit/build-windows.yml?branch=mt3k&style=for-the-badge&label=build" /></a>
+  <a href="https://github.com/toonymak1993/orbit"><img alt="Upstream" src="https://img.shields.io/badge/upstream-toonymak1993%2Forbit-111827?style=for-the-badge&logo=github" /></a>
+  <a href="LICENSE"><img alt="GPL-3.0" src="https://img.shields.io/badge/licencia-GPL--3.0-111827?style=for-the-badge" /></a>
 </p>
 
-## One home for your games
+## Qué es esto
 
-ORBIT is an Electron-based Windows launcher designed for handhelds, TVs and desktop PCs. It combines a focused game library with a living home screen, store offers and upcoming releases — all built around controller and keyboard navigation.
+ORBIT junta tu biblioteca de PC (Steam, Epic, GOG, Xbox, EA, Ubisoft, retro, juegos locales) en una pantalla de inicio estilo consola, pensada para mando, handhelds y TV. Este repositorio es la **MT3K Edition**: el fork donde Josue "Mondo" Diaz prueba ORBIT en su hardware, le agrega mejoras y documenta el proceso para el canal MT3K. Lo que tiene sentido para todo el mundo se envía de vuelta al proyecto original como pull request.
 
-- Steam, Epic Games, GOG, Xbox / Microsoft Store, PlayStation, EA app, Ubisoft Connect, retro systems and custom local games
-- Console-style spatial navigation with visible focus and gamepad support
-- Six Home layouts, including the Xbox-inspired XMODE, CoreSense recommendations and the ORBIT Plus-exclusive Cuadro TV Launcher
-- Friends Hub with Steam, Epic and optional Discord presence, conversations and notifications
-- Favorites, custom collections and adjustable 4–8-column library layouts
-- Live Steam, Epic Games and Xbox download/update activity
-- Release calendar, wishlist offers and regional store prices
-- Update badges for pending Steam game updates
-- Session history, activity summaries and second-accurate local playtime
-- Game trailers, optional title music, editable metadata and clear running-game indicators
-- Artwork Studio for covers, backgrounds and icons, plus profile avatars, local save backups, notifications and themes
-- Safe per-game launch options and adaptive Xbox/PlayStation controller hints
-- Quick Settings and a compact system HUD for battery, network and Bluetooth status
-- Read-only Windows Update and graphics-driver checks
-- English, German, Spanish and Russian interfaces with adjustable text size
-- Optional Xbox Mode and background Hardware Control
-- Optional ORBIT Plus membership for cloud gaming and premium personalization
+No es un producto aparte ni compite con ORBIT. Es ORBIT con parches, compilado sin firma, para gente que quiere probar cambios antes de que lleguen a la release oficial o que necesita algo que el original todavía no tiene.
 
-## A closer look
+## Qué cambia respecto al original
 
-![ORBIT Home](docs/images/orbit-home.webp)
+| Cambio | Desde | Estado en el upstream |
+|---|---|---|
+| **Soporte ultrawide y super-ultrawide en el Home** (2560×1080, 3440×1440, 5120×1440, también con escalado 125–150 %). La fila de juegos ya no se corta y muestra 8 a 12 juegos a la vez. | 0.1.4-mt3k.1 | [PR #13](https://github.com/toonymak1993/orbit/pull/13) abierto |
+| Build NSIS sin firma desde GitHub Actions, con release automática al etiquetar | 0.1.4-mt3k.1 | Solo en el fork |
+| Sincronización diaria con el upstream vía pull request `main → mt3k` | 0.1.4-mt3k.1 | Solo en el fork |
 
-![ORBIT release calendar](docs/images/orbit-releases.webp)
+El detalle por versión está en [CHANGELOG-MT3K.md](CHANGELOG-MT3K.md).
 
-## Download
+## Descargar e instalar
 
-ORBIT `0.1.4` is the current stable release. Download **`ORBIT-XboxMode-Setup-0.1.4-x64.exe`** from the [latest GitHub Release](https://github.com/toonymak1993/orbit/releases/latest). This is the only file required: the setup contains ORBIT, the signed Xbox Mode AppX, the public ORBIT certificate and the verified English installation flow.
+1. Baja `ORBIT-MT3K-Setup-<versión>-x64.exe` de la [última release](https://github.com/MondoBoricua/orbit/releases/latest).
+2. Comprueba el hash contra `SHA256SUMS.txt` de la misma release:
+   ```powershell
+   Get-FileHash .\ORBIT-MT3K-Setup-0.1.4-x64.exe -Algorithm SHA256
+   ```
+3. Ejecuta el instalador. **No está firmado con certificado**, así que SmartScreen avisará una vez: *Más información → Ejecutar de todas formas*.
 
-Run the setup from the Windows account that should own ORBIT and approve the administrator prompt. After installation, Windows opens **Settings > Gaming > Xbox mode** so ORBIT can be selected as the home app.
+Requisitos: Windows 11 x64. Mando recomendado, teclado y ratón soportados.
 
-> ORBIT `0.1.4` is signed with the publicly trusted Certum Open Source Code Signing certificate. ORBIT never installs this public certificate into a Windows trust store. During the one-time transition from old self-signed builds, setup keeps the legacy package and its development certificate in place because Windows scopes its data to the old package family. SmartScreen may still warn while a new certificate or binary builds reputation; always verify the SHA-256 and signer published in the release notes.
+### Diferencias con el instalador oficial
 
-### Previous stable release
+- **Sin Xbox Mode.** El paquete AppX que Windows acepta como "Gaming Home" tiene que ir firmado, y la clave es del autor original. Para Xbox Mode usa la [release oficial](https://github.com/toonymak1993/orbit/releases/latest).
+- **Sin auto-actualización.** Esta build no busca actualizaciones, para no reemplazarse sola por la release oficial firmada. Las novedades del fork salen como releases nuevas aquí.
+- **Sin Discord Social SDK.** El binario de Discord es propietario y no está en el repositorio; la presencia de Discord queda desactivada. Todo lo demás (Steam, Epic, Xbox, GOG, EA, Ubisoft, retro, amigos de Steam/Epic) funciona igual.
+- Se instala en `%LOCALAPPDATA%\Programs\ORBIT` con su propio perfil, aparte del paquete Xbox Mode oficial.
 
-ORBIT `0.1.3` remains available on its [release page](https://github.com/toonymak1993/orbit/releases/tag/v0.1.3). New users should install the current all-in-one setup above. Existing Certum-signed installations can update on the same trusted publisher line.
+ORBIT Plus (la membresía opcional del proyecto original) es del autor original. Este fork no la modifica, no la incluye ni la redistribuye.
 
-### Requirements
+## Cómo está organizado el repositorio
 
-- Windows 11 x64
-- A controller is recommended, but keyboard and mouse are supported
-- Xbox Mode requires Windows 11 24H2 or newer
+| Rama | Para qué | Quién la toca |
+|---|---|---|
+| `main` | Espejo exacto de `toonymak1993/orbit` `main`. | Solo el workflow de sincronización. No hagas commits aquí. |
+| `mt3k` | La edición: `main` + los cambios del fork. De aquí salen las builds y las releases. | Desarrollo diario. |
+| `feat/*` | Cambios listos para enviar al upstream, cortados desde `main` para que el PR salga limpio. | Uno por PR. |
 
-Xbox Mode visibility still depends on Microsoft's supported markets, device policy and phased Windows rollout. Keep Windows, the Xbox app and Game Bar current.
+Cada día el workflow [`sync-upstream`](.github/workflows/sync-upstream.yml) compara `main` con el upstream. Si hay commits nuevos, actualiza `main` y abre (o refresca) un pull request `main → mt3k` con la lista de commits. Al mezclarlo, la edición queda al día. Si hay conflicto, se resuelve en una rama cortada desde `mt3k`.
 
-## What's new in 0.1.4
+Para proponer algo al proyecto original: rama `feat/lo-que-sea` desde `main`, PR contra `toonymak1993/orbit`, y el mismo cambio se mezcla en `mt3k` para que salga en la próxima build del fork.
 
-- The first complete ORBIT Plus release adds secure Patreon membership verification plus annual and lifetime license-key activation, all mapped to the same provider-neutral entitlement
-- Plus gains the Next Game Picker, controller-ready achievement video guides, the exclusive Cuadro TV Launcher, GeForce NOW cloud launching and session tracking, dynamic Home motion, premium themes, corner styles and custom launcher/UI audio
-- The free launcher gains Russian, a controller-ready Download Center, Steam wishlist and Family-library improvements, PS3/Xbox 360 retro support, a device Power menu and broader install/uninstall actions
-- Game details now provide a complete metadata workspace with artwork quality guidance and safe YouTube search for trailers and title music
-- ORBIT remains navigable while a game runs; stronger multi-signal process/window tracking handles launch, playtime, manual stop and automatic return more reliably
-- Played GeForce NOW titles participate in local Home history and can continue back into GeForce NOW, while cloud catalog discovery and direct matched-game launching remain ORBIT Plus features
-- The single English Xbox Mode setup still contains the complete app and is signed with ORBIT's official Certum certificate
+## Compilar
 
-See the complete [0.1.4 release notes](docs/releases/0.1.4.md) for details. The ORBIT Plus security and entitlement model is documented separately in [ORBIT_PLUS.md](docs/ORBIT_PLUS.md).
+Necesitas Node.js 22 o más nuevo y Windows para el instalador (el renderer y los chequeos corren también en macOS y Linux).
 
-## ORBIT Plus
-
-ORBIT remains a complete controller-first launcher without Plus. ORBIT Plus is an optional layer for cloud gaming, guided discovery and premium personalization. Access can be verified through Patreon or an annual/lifetime license key; the launcher keeps only encrypted ORBIT sessions and license credentials in Windows secure storage. Payment details, Patreon passwords, provider credentials and private signing material never enter the renderer or repository. GeForce NOW accounts, games and third-party subscriptions remain separate. Visit the [official ORBIT website](https://www.getorbitlauncher.com/) for product information and future downloads.
-
-## Build from source
-
-```powershell
-git clone https://github.com/toonymak1993/orbit.git
-cd orbit
+```bash
 npm ci
 npm run typecheck
-npm run verify:steam
-npm run verify:downloads
-npm run verify:launch-arguments
-npm run verify:updates
-npm run dev
+npm run build
+# Correr sin empaquetar:
+npx electron .
+# Instalador NSIS sin firma:
+npx electron-builder --win nsis --x64 --config electron-builder.mt3k.yml --publish never
 ```
 
-Create a production build with `npm run build`. Windows installer and Xbox Mode packaging details are documented in [PACKAGING.md](PACKAGING.md).
+El instalador queda en `release/`. En GitHub Actions, cada push a `mt3k` deja el `.exe` como artefacto del workflow [`build-windows`](.github/workflows/build-windows.yml); una etiqueta con el formato `v0.1.4-mt3k.1` publica una release con el instalador, `latest.yml` y `SHA256SUMS.txt`.
 
-## Project status
+### Verificar el Home en distintos tamaños
 
-ORBIT `0.1.4` is the current stable public release. `0.1.3` remains available as the previous stable build, while older beta packages are historical test material. The next development phase prioritizes measured stability, startup/navigation performance, lower resource use and reliable long-session behavior before another large feature wave.
+El proyecto trae un harness que monta el Home real con datos de prueba en una ventana Electron offscreen y saca capturas:
 
-ORBIT is an independent project and is not affiliated with Valve, Epic Games, Microsoft, Xbox or the publishers shown in screenshots.
+```bash
+npm run build
+npx electron scripts/verify-settings-navigation.cjs --orbit-home
+```
 
-## License
+Las capturas quedan en `.codex-qa/settings-navigation/`. El modo `--orbit-home` valida 1280×720, 1920×1080 y los tamaños ultrawide (3413×960, 2560×1080, 3440×1440, 5120×1440) para los tres tamaños de tarjeta.
 
-Copyright (C) 2026 Luis Garcia.
+## Ideas en cola
 
-ORBIT is free software licensed under the [GNU General Public License v3.0](LICENSE). You may use, study, modify and redistribute it under those terms. Distributed modified versions must preserve the license and make the corresponding source code available.
+Cosas que se van a probar en el canal antes de decidir si se envían al upstream:
 
-The optional Discord integration uses the separately licensed Discord Social SDK. See the [GPL linking exception](LICENSE_EXCEPTION.md) and [third-party notices](THIRD_PARTY_NOTICES.md); the Discord SDK itself is not covered by the GPL.
+- Layouts XMODE, CoreSense y Rolling en 32:9.
+- Ajustes para el ROG Xbox Ally con eGPU (perfil de resolución al conectar y desconectar el dock).
+- Más pruebas con mandos de terceros.
+
+Si tienes una idea o un bug en tu hardware, abre un [issue](https://github.com/MondoBoricua/orbit/issues) con tu resolución, escalado de Windows y layout del Home.
+
+## Licencia y créditos
+
+ORBIT es software libre bajo la [GNU GPL v3](LICENSE), con la [excepción para el Discord Social SDK](LICENSE_EXCEPTION.md) del autor original. Este fork conserva la misma licencia: puedes usarlo, estudiarlo, modificarlo y redistribuirlo bajo los mismos términos, y el código fuente de cada build está en este repositorio.
+
+- ORBIT: © Luis Garcia, [toonymak1993/orbit](https://github.com/toonymak1993/orbit). [Sitio oficial](https://www.getorbitlauncher.com/).
+- Cambios de la MT3K Edition: © Josue Diaz.
+- Avisos de terceros: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+---
+
+**English.** This is the MT3K Edition of [ORBIT](https://github.com/toonymak1993/orbit), a controller-first game launcher for Windows by Luis Garcia. The fork adds ultrawide / 32:9 support for the Home screen (sent upstream as [PR #13](https://github.com/toonymak1993/orbit/pull/13)), unsigned NSIS builds from GitHub Actions and a daily upstream sync. Same GPL-3.0 license as upstream; no Xbox Mode, no auto-update, no Discord SDK in these builds. See [CHANGELOG-MT3K.md](CHANGELOG-MT3K.md).

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "product": "ORBIT",
+  "appId": "com.orbit.launcher",
+  "channel": "stable",
+  "displayVersion": "0.1.4",
+  "packageVersion": "0.1.4",
+  "windowsFileVersion": "0.1.4.0",
+  "xboxPackageVersion": "0.1.4.0",
+  "releaseSequence": 14,
+  "platform": "windows",
+  "architecture": "x64",
+  "packageFormats": [
+    "nsis"
+  ],
+  "updateMode": "github-release",
+  "automaticUpdatesEnabled": false,
+  "updates": {
+    "owner": "MondoBoricua",
+    "repository": "orbit",
+    "startupDelaySeconds": 12,
+    "checkIntervalHours": 6,
+    "autoDownload": true,
+    "signerThumbprints": [
+      "61E90C0AACBF2F407A575903FCC197F45B61706D"
+    ]
+  },
+  "integrations": {
+    "xboxClientId": "3785b570-8c14-4c8a-acf8-2cae0220960f"
+  },
+  "publisher": "Open Source Developer Luis Antonio Garcia Roque",
+  "signingCertificate": {
+    "provider": "Certum SimplySign",
+    "subject": "CN=Open Source Developer Luis Antonio Garcia Roque, O=Open Source Developer, L=Alfdorf, S=Baden-Württemberg, C=DE",
+    "thumbprint": "61E90C0AACBF2F407A575903FCC197F45B61706D",
+    "publiclyTrusted": true
+  },
+  "minimumWindowsVersion": "10.0.22000.0",
+  "xboxMode": {
+    "enabled": true,
+    "minimumWindowsVersion": "10.0.26100.0",
+    "packageIdentity": "ORBIT.GamingHome",
+    "applicationId": "ORBIT",
+    "appExtension": "windows.gamingApp",
+    "customCapability": "Microsoft.appCategory.gamingHome_8wekyb3d8bbwe",
+    "legacyPublisher": "CN=ORBIT Development",
+    "manualPublisherMigrationRequired": true,
+    "automaticLegacyRemoval": false,
+    "legacyPackageRetentionRequired": true
+  }
+}
