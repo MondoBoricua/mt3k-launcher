@@ -10,6 +10,15 @@ Base: ORBIT 0.1.4 (commit `03ccdc3`).
 
 - **Soporte ultrawide y super-ultrawide (21:9 y 32:9).** En 2560×1080, 3440×1440 y 5120×1440 (también con escalado de Windows al 125–150 %) la fila de juegos del Home quedaba cortada por debajo del borde de la pantalla. Ahora el hero tiene un presupuesto de alto y cada tarjeta se limita por el espacio vertical que queda, así que la fila siempre se ve completa y muestra más juegos a la vez (8 a 12 en un 32:9). Cubre los tamaños de tarjeta standard, large y compact. 16:9 y 16:10 no cambian. Enviado al proyecto original como [PR #13](https://github.com/toonymak1993/orbit/pull/13).
 
+### Steam
+
+Integrados desde pull requests abiertos en el proyecto original, con sus commits y autoría originales (nerdytyphanie):
+
+- **Discos desconectados sin avisos falsos** ([upstream #11](https://github.com/toonymak1993/orbit/pull/11)). Si una biblioteca de Steam está en un disco que no está conectado, ORBIT ya no muestra el aviso de sincronización parcial. Los juegos de ese disco conservan su registro en caché y las bibliotecas conectadas sincronizan normal.
+- **Detección al conectar o quitar el disco** ([upstream #12](https://github.com/toonymak1993/orbit/pull/12)). ORBIT comprueba cada segundo las ubicaciones de biblioteca configuradas y, cuando un disco aparece o desaparece, reescanea los manifiestos locales sin volver a sincronizar la cuenta. Los juegos del disco quitado pasan a no disponibles sin perder ruta, metadatos ni historial, y vuelven cuando su manifiesto y carpeta se leen de nuevo. También arranca la vigilancia en el inicio rápido desde caché.
+
+Probado en el ROG Xbox Ally: un disco ausente se detecta en menos de 1 ms y las rutas de red (`\\servidor\...`) quedan fuera del sondeo.
+
 ### Verificación
 
 - El chequeo en vivo `verify-settings-navigation.cjs --orbit-home` captura y valida además 3413×960, 2560×1080, 3440×1440 y 5120×1440.
