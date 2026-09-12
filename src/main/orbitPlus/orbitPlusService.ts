@@ -32,6 +32,7 @@ import {
 } from './orbitPlusPolicy'
 import { parseGumroadCommerceConfig, type GumroadCommerceConfig } from './gumroadPolicy'
 import { GumroadLicenseService, type GumroadProviderSnapshot } from './gumroadLicenseService'
+import { orbitPlusCommunitySnapshot, parseOrbitPlusCommunityEdition } from './orbitPlusPolicy'
 
 const DEFAULT_PATREON_MEMBERSHIP_URL =
   'https://www.patreon.com/cw/GAMINGCONSOLEMODE/membership'
@@ -44,6 +45,7 @@ interface PublicOrbitPlusConfig {
   patreonMembershipUrl?: unknown
   serviceUrl?: unknown
   gumroad?: unknown
+  communityEdition?: unknown
 }
 
 interface StoredOrbitPlusSession {
@@ -90,8 +92,10 @@ function loadConfig(): {
   purchaseUrl: string
   serviceUrl?: string
   gumroad?: GumroadCommerceConfig
+  communityEdition: boolean
 } {
   const config = readPublicConfig()
+  const communityEdition = parseOrbitPlusCommunityEdition(config.communityEdition)
   let purchaseUrl = DEFAULT_PATREON_MEMBERSHIP_URL
   let serviceUrl: string | undefined
   let gumroad: GumroadCommerceConfig | undefined
@@ -115,7 +119,9 @@ function loadConfig(): {
   } catch {
     gumroad = undefined
   }
-  return { purchaseUrl, serviceUrl, gumroad }
+  // Community builds never contact the membership service or the license store.
+  if (communityEdition) return { purchaseUrl, communityEdition }
+  return { purchaseUrl, serviceUrl, gumroad, communityEdition }
 }
 
 function jsonRecord(value: unknown): Record<string, unknown> {
@@ -282,6 +288,9 @@ export class OrbitPlusService {
     issue?: OrbitPlusIssue,
     licenseSnapshot: GumroadProviderSnapshot = this.licenseService.getSnapshot()
   ): OrbitPlusSnapshot {
+    if (this.config.communityEdition) {
+      return orbitPlusCommunitySnapshot(this.dependencies.now(), this.config.purchaseUrl)
+    }
     const now = this.dependencies.now()
     const session = this.loadSession()
     const ownerDisabled = session?.ownerTestAccess?.enabled === false
@@ -548,6 +557,7 @@ export class OrbitPlusService {
 
   async refresh(forceValue: unknown = false): Promise<OrbitPlusSnapshot> {
     if (typeof forceValue !== 'boolean') throw new Error('Invalid ORBIT Plus refresh mode')
+    if (this.config.communityEdition) return this.snapshot()
     const licenseSnapshot = await this.licenseService.refresh(forceValue)
     const patreonSnapshot = await this.refreshPatreon(forceValue)
     return this.snapshot(patreonSnapshot.issue ?? licenseSnapshot.issue, licenseSnapshot)
@@ -556,6 +566,11 @@ export class OrbitPlusService {
   async startPatreonConnection(
     sendStatus: (status: OrbitPlusConnectionStatus) => void
   ): Promise<OrbitPlusSnapshot> {
+    if (this.config.communityEdition) {
+      const snapshot = this.snapshot()
+      sendStatus({ state: 'success', snapshot })
+      return snapshot
+    }
     if (this.connectionRunning) {
       const snapshot = this.snapshot()
       sendStatus({ state: 'waiting-for-browser', snapshot })
@@ -687,21 +702,25 @@ export class OrbitPlusService {
   }
 
   async openCheckout(plan: unknown): Promise<void> {
+    if (this.config.communityEdition) return
     await this.licenseService.openCheckout(plan)
   }
 
   async activateLicense(key: unknown): Promise<OrbitPlusSnapshot> {
+    if (this.config.communityEdition) return this.snapshot()
     const licenseSnapshot = await this.licenseService.activate(key)
     return this.snapshot(licenseSnapshot.issue, licenseSnapshot)
   }
 
   async deactivateLicense(): Promise<OrbitPlusSnapshot> {
+    if (this.config.communityEdition) return this.snapshot()
     const licenseSnapshot = await this.licenseService.deactivate()
     return this.snapshot(licenseSnapshot.issue, licenseSnapshot)
   }
 
   async setOwnerTestAccess(enabled: unknown): Promise<OrbitPlusSnapshot> {
     if (typeof enabled !== 'boolean') throw new Error('Invalid owner test access state')
+    if (this.config.communityEdition) return this.snapshot()
     if (this.connectionRunning) return this.snapshot()
     const session = this.loadSession()
     if (!session || !session.ownerTestAccess?.available) {
@@ -771,6 +790,7 @@ export class OrbitPlusService {
   }
 
   async disconnect(): Promise<OrbitPlusSnapshot> {
+    if (this.config.communityEdition) return this.snapshot()
     const session = this.loadSession()
     this.cancelPatreonConnection()
     this.clearSession()

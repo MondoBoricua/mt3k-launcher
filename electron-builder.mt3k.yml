@@ -30,7 +30,7 @@ files:
 extraResources:
   - from: resources/release-manifest.mt3k.json
     to: release-manifest.json
-  - from: resources/orbit-plus.json
+  - from: resources/orbit-plus.mt3k.json
     to: orbit-plus.json
   - from: LICENSE
     to: LICENSE

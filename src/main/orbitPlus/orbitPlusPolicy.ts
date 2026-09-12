@@ -5,8 +5,37 @@ import {
   type OrbitPlusFeature,
   type OrbitPlusMembershipDecision,
   type OrbitPlusOwnerTestAccess,
-  type OrbitPlusPlan
+  type OrbitPlusPlan,
+  type OrbitPlusSnapshot
 } from '../../shared/ipc'
+
+/** Only a literal `true` in the packaged config enables the community edition. */
+export function parseOrbitPlusCommunityEdition(value: unknown): boolean {
+  return value === true
+}
+
+/**
+ * Snapshot for community builds (MT3K Edition): every ORBIT Plus feature is
+ * available locally, permanently, with no membership, license or service call.
+ */
+export function orbitPlusCommunitySnapshot(now: number, purchaseUrl: string): OrbitPlusSnapshot {
+  return {
+    access: 'active',
+    connected: false,
+    serviceAvailable: false,
+    secureStorageAvailable: true,
+    purchaseUrl,
+    offers: [],
+    activeSources: [],
+    communityEdition: true,
+    entitlement: {
+      source: 'lifetime-key',
+      plan: 'lifetime',
+      features: [...ORBIT_PLUS_FEATURES],
+      verifiedAt: now
+    }
+  }
+}
 
 const ACCESS_SOURCES: readonly OrbitPlusAccessSource[] = [
   'patreon',

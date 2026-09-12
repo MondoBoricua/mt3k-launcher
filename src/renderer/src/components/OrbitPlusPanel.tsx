@@ -161,6 +161,73 @@ export function OrbitPlusPanel({ context = 'settings' }: { context?: 'onboarding
     }
   }
 
+  if (snapshot.communityEdition) {
+    return (
+      <section
+        data-orbit-plus-community="true"
+        className="relative overflow-hidden rounded-[1.75rem] border border-amber-200/15 bg-[linear-gradient(135deg,rgba(251,191,36,0.12),rgba(0,0,0,0.3)_42%,rgba(255,255,255,0.035))] shadow-card"
+      >
+        <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-amber-300/[0.08] blur-3xl" />
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-px bg-gradient-to-b from-transparent via-amber-200/80 to-transparent" />
+        <div className="relative p-[clamp(1.25rem,3vw,2.25rem)]">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-amber-200/25 bg-amber-300/10 text-amber-200 shadow-[0_0_24px_rgba(251,191,36,0.12)]">
+              <Crown size={21} />
+            </span>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-200">
+                  {t('orbitPlus.eyebrow')}
+                </p>
+                <span className="rounded-full border border-emerald-300/25 bg-emerald-300/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.14em] text-emerald-200">
+                  {t('orbitPlus.status.community')}
+                </span>
+              </div>
+              <h2 className="mt-1 text-[clamp(1.65rem,3vw,2.7rem)] font-black leading-none tracking-[-0.04em] text-white">
+                ORBIT <span className="text-amber-200">PLUS</span>
+              </h2>
+            </div>
+          </div>
+
+          <h3 className="mt-5 text-lg font-bold text-white">{t('orbitPlus.community.title')}</h3>
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-white/58">
+            {t('orbitPlus.community.body')}
+          </p>
+
+          <div className="mt-5">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-200/85">
+              {t('orbitPlus.featuresTitle')}
+            </h3>
+            <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {FEATURE_KEYS.map((key) => (
+                <li
+                  key={key}
+                  data-orbit-plus-feature={key}
+                  className="flex items-start gap-2 rounded-xl border border-emerald-300/10 bg-emerald-300/[0.035] px-3 py-2.5 text-xs leading-relaxed text-white/70"
+                >
+                  <Check size={14} strokeWidth={2.6} className="mt-0.5 shrink-0 text-emerald-200" />
+                  <span>{t(key)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="mt-6 flex flex-wrap gap-2">
+            <FocusableButton
+              variant="ghost"
+              onClick={() => void window.api.app.openExternal('https://www.getorbitlauncher.com/')}
+            >
+              <span className="flex items-center gap-2">
+                <ExternalLink size={14} />
+                {t('orbitPlus.community.website')}
+              </span>
+            </FocusableButton>
+          </div>
+        </div>
+      </section>
+    )
+  }
+
   return (
     <section className="relative overflow-hidden rounded-[1.75rem] border border-amber-200/15 bg-[linear-gradient(135deg,rgba(251,191,36,0.12),rgba(0,0,0,0.3)_42%,rgba(255,255,255,0.035))] shadow-card">
       <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-amber-300/[0.08] blur-3xl" />

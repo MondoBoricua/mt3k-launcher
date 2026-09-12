@@ -10,7 +10,9 @@ import {
   parseOrbitPlusPollResponse,
   parseOrbitPlusStartResponse,
   validatedOrbitPlusServiceUrl,
-  validatedPatreonMembershipUrl
+  validatedPatreonMembershipUrl,
+  orbitPlusCommunitySnapshot,
+  parseOrbitPlusCommunityEdition
 } from '../src/main/orbitPlus/orbitPlusPolicy.ts'
 import {
   gumroadLicenseIssue,
@@ -605,5 +607,25 @@ assert.equal(
   }),
   undefined
 )
+
+// Community edition (MT3K): every feature unlocked locally, permanently, with no refresh traffic
+const communitySnapshot = orbitPlusCommunitySnapshot(
+  now,
+  'https://www.patreon.com/cw/GAMINGCONSOLEMODE/membership'
+)
+const tenYearsLater = now + 10 * 365 * 24 * 60 * 60_000
+for (const feature of ORBIT_PLUS_FEATURES) {
+  assert.equal(orbitPlusHasFeature(communitySnapshot, feature, tenYearsLater), true, feature)
+}
+assert.equal(communitySnapshot.communityEdition, true)
+assert.equal(communitySnapshot.connected, false)
+assert.equal(communitySnapshot.serviceAvailable, false)
+assert.deepEqual(communitySnapshot.offers, [])
+assert.deepEqual(communitySnapshot.activeSources, [])
+assert.equal(orbitPlusBackgroundRefreshIsDue(communitySnapshot, tenYearsLater), false)
+assert.equal(parseOrbitPlusCommunityEdition(true), true)
+for (const value of [false, 'true', 1, null, undefined, {}]) {
+  assert.equal(parseOrbitPlusCommunityEdition(value), false, String(value))
+}
 
 console.log('ORBIT Plus policy checks passed')

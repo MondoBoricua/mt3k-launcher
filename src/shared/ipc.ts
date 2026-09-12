@@ -770,6 +770,8 @@ export interface OrbitPlusSnapshot {
   ownerTestAccess?: OrbitPlusOwnerTestAccess
   checkedAt?: number
   issue?: OrbitPlusIssue
+  /** Community build: every feature is included locally, with no membership or license. */
+  communityEdition?: boolean
 }
 
 export type OrbitPlusConnectionStatus =
