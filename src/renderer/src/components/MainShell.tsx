@@ -24,6 +24,7 @@ import { useStoreStore } from '@renderer/state/storeStore'
 import { GameLaunchSplash } from './GameLaunchSplash'
 import { SessionSummaryToast } from './SessionSummaryToast'
 import { AppUpdateBanner } from './AppUpdateBanner'
+import { AppUpdatePrompt } from './AppUpdatePrompt'
 import { useAppUpdateStore } from '@renderer/state/appUpdateStore'
 import { BottomStatusHud } from './BottomStatusHud'
 import type { GameLaunchStatus } from '@shared/ipc'
@@ -99,6 +100,7 @@ export function MainShell(): JSX.Element {
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const updateStage = useAppUpdateStore((state) => state.snapshot.stage)
   const updateBannerVisible = useAppUpdateStore((state) => state.bannerVisible)
+  const updatePromptVisible = useAppUpdateStore((state) => state.promptVisible)
   const pendingSessionSummaryRef = useRef<GameLaunchStatus | null>(null)
   const shellRef = useRef<HTMLDivElement>(null)
   const runningGameId = launchStatus.phase === 'running' ? launchStatus.gameId : undefined
@@ -386,6 +388,9 @@ export function MainShell(): JSX.Element {
               (updateStage === 'ready' && launchStatus.phase === 'idle')) && (
               <AppUpdateBanner key="app-update" />
             )}
+          {updatePromptVisible && launchStatus.phase === 'idle' && updateStage !== 'installing' && (
+            <AppUpdatePrompt key="app-update-prompt" />
+          )}
         </AnimatePresence>
       </div>
     </RunningGameProvider>

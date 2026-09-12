@@ -1,7 +1,7 @@
 import { app, autoUpdater as electronAutoUpdater, net, type BrowserWindow } from 'electron'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { createReadStream, existsSync } from 'node:fs'
 import {
   mkdir,
   open,
@@ -14,21 +14,24 @@ import {
   type FileHandle
 } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import electronUpdater, { type AppUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
 import {
   IPC,
   type AppUpdateError,
   type AppUpdateInstallMode,
   type AppUpdateSnapshot,
+  type AppUpdateVerification,
   type GameLaunchPhase
 } from '@shared/ipc'
 import {
   appUpdateDownloadRetryDelay,
   canRetryAppUpdateDownload,
   compareAppVersions,
+  compareCommunityVersions,
   isAllowedAppUpdateDownloadUrl,
   isValidAppUpdateContentRange,
+  parseCommunityAppUpdateRelease,
   parseGitHubAppUpdateRelease,
   selectLatestBetaRelease,
   type AppUpdateReleaseCandidate
@@ -98,6 +101,108 @@ function installMode(): AppUpdateInstallMode {
   if (process.platform !== 'win32') return 'unsupported'
   return process.windowsStore ? 'appx' : 'nsis'
 }
+
+function powershellExecutable(): string {
+  return join(
+    process.env.SystemRoot ?? 'C:\\Windows',
+    'System32',
+    'WindowsPowerShell',
+    'v1.0',
+    'powershell.exe'
+  )
+}
+
+/** Loose Developer Mode registration used by the MT3K Edition's Xbox Mode script:
+ * <root>\AppxManifest.xml with the Electron app in <root>\app. Store installs under
+ * WindowsApps are read-only and never qualify. */
+function looseCommunityPackageLayout(): { appDirectory: string; packageRoot: string } | undefined {
+  if (process.platform !== 'win32' || !process.windowsStore) return undefined
+  const appDirectory = dirname(process.execPath)
+  const packageRoot = dirname(appDirectory)
+  if (basename(appDirectory).toLowerCase() !== 'app') return undefined
+  if (packageRoot.toLowerCase().includes('\\windowsapps\\')) return undefined
+  if (!existsSync(join(packageRoot, 'AppxManifest.xml'))) return undefined
+  return { appDirectory, packageRoot }
+}
+
+/**
+ * Runs detached after ORBIT quits. Waits for every ORBIT process from the app
+ * folder to exit, extracts the verified archive next to it, swaps the folders
+ * keeping the previous build until the swap succeeds, then relaunches the
+ * registered package. Any failure keeps or restores the previous app folder.
+ */
+const COMMUNITY_PACKAGE_UPDATE_SCRIPT = String.raw`param(
+  [int]$ProcessId,
+  [string]$ZipPath,
+  [string]$AppDir,
+  [string]$PackageRoot,
+  [string]$LogPath
+)
+$ErrorActionPreference = 'Stop'
+function Write-UpdateLog([string]$Message) {
+  Add-Content -LiteralPath $LogPath -Value ('{0:o} {1}' -f (Get-Date), $Message)
+}
+$previous = Join-Path $PackageRoot 'app.previous'
+$staging = Join-Path $PackageRoot 'app.update'
+try {
+  Write-UpdateLog "waiting for ORBIT $ProcessId to exit"
+  $deadline = (Get-Date).AddSeconds(90)
+  do {
+    Start-Sleep -Milliseconds 500
+    $running = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+      $_.Path -and $_.Path.StartsWith($AppDir, [StringComparison]::OrdinalIgnoreCase)
+    })
+  } while ($running.Count -gt 0 -and (Get-Date) -lt $deadline)
+  if ($running.Count -gt 0) {
+    Write-UpdateLog 'forcing remaining ORBIT processes to exit'
+    $running | Stop-Process -Force
+    Start-Sleep -Seconds 2
+  }
+  foreach ($path in $staging, $previous) {
+    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
+  }
+  Write-UpdateLog 'extracting update archive'
+  Expand-Archive -LiteralPath $ZipPath -DestinationPath $staging -Force
+  $newRoot = $staging
+  if (-not (Test-Path -LiteralPath (Join-Path $newRoot 'ORBIT.exe'))) {
+    $inner = Get-ChildItem -LiteralPath $staging -Directory |
+      Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'ORBIT.exe') } |
+      Select-Object -First 1
+    if (-not $inner) { throw 'ORBIT.exe is missing from the update archive' }
+    $newRoot = $inner.FullName
+  }
+  Write-UpdateLog 'swapping app folders'
+  Rename-Item -LiteralPath $AppDir -NewName 'app.previous'
+  try {
+    Move-Item -LiteralPath $newRoot -Destination $AppDir
+  } catch {
+    Rename-Item -LiteralPath $previous -NewName (Split-Path -Leaf $AppDir)
+    throw
+  }
+  if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+  Remove-Item -LiteralPath $previous -Recurse -Force -ErrorAction SilentlyContinue
+  Write-UpdateLog 'update applied'
+} catch {
+  Write-UpdateLog ('update failed: ' + $_.Exception.Message)
+  if (-not (Test-Path -LiteralPath $AppDir) -and (Test-Path -LiteralPath $previous)) {
+    Rename-Item -LiteralPath $previous -NewName (Split-Path -Leaf $AppDir)
+    Write-UpdateLog 'previous app folder restored'
+  }
+} finally {
+  try {
+    [xml]$manifest = Get-Content -LiteralPath (Join-Path $PackageRoot 'AppxManifest.xml') -Raw
+    $name = $manifest.Package.Identity.Name
+    $applicationId = @($manifest.Package.Applications.Application)[0].Id
+    $family = (Get-AppxPackage -Name $name | Select-Object -First 1).PackageFamilyName
+    if ($family) {
+      Write-UpdateLog "relaunching $family!$applicationId"
+      Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$family!$applicationId"
+    }
+  } catch {
+    Write-UpdateLog ('relaunch failed: ' + $_.Exception.Message)
+  }
+}
+`
 
 function safeReleaseNotes(value: unknown): string | undefined {
   const source = Array.isArray(value)
@@ -206,6 +311,9 @@ function wait(milliseconds: number): Promise<void> {
 export class AppUpdateService {
   private readonly manifest: ReleaseManifest = getReleaseManifest()
   private readonly mode = installMode()
+  private readonly community = this.manifest.updates.community
+  private readonly communityPackage =
+    this.community && this.mode === 'appx' ? looseCommunityPackageLayout() : undefined
   private readonly updatesDirectory = join(app.getPath('userData'), 'app-updates')
   private readonly pendingInstallPath = join(this.updatesDirectory, 'pending-install.json')
   private readonly pendingInstallTempPath = `${this.pendingInstallPath}.tmp`
@@ -240,8 +348,10 @@ export class AppUpdateService {
     const supported =
       this.manifest.automaticUpdatesEnabled &&
       this.manifest.updateMode === 'github-release' &&
-      (this.mode === 'appx' || this.mode === 'nsis') &&
-      (this.mode !== 'appx' || this.manifest.updates.signerThumbprints.length > 0)
+      (this.community
+        ? this.mode === 'nsis' || this.communityPackage !== undefined
+        : (this.mode === 'appx' || this.mode === 'nsis') &&
+          (this.mode !== 'appx' || this.manifest.updates.signerThumbprints.length > 0))
     this.snapshot = {
       stage: supported ? 'idle' : 'unsupported',
       installMode: this.mode,
@@ -250,7 +360,7 @@ export class AppUpdateService {
       automaticChecksEnabled: supported,
       autoDownloadEnabled: supported && this.isAutoDownloadEnabled(),
       checkIntervalHours: this.manifest.updates.checkIntervalHours,
-      verification: this.mode === 'nsis' ? 'installer-managed' : 'pending',
+      verification: this.defaultVerification(),
       canInstall: false,
       installScheduled: false
     }
@@ -258,7 +368,7 @@ export class AppUpdateService {
 
   start(): Promise<void> {
     if (this.snapshot.stage === 'unsupported') return Promise.resolve()
-    if (this.mode === 'nsis') this.configureNsisUpdater()
+    if (this.mode === 'nsis' && !this.community) this.configureNsisUpdater()
     return this.initialize()
   }
 
@@ -306,7 +416,7 @@ export class AppUpdateService {
     ) {
       return this.getSnapshot()
     }
-    if (this.mode === 'appx') {
+    if (this.mode === 'appx' || this.community) {
       if (!this.release) {
         this.setError('release-invalid')
         return this.getSnapshot()
@@ -345,7 +455,7 @@ export class AppUpdateService {
   refreshBlockers(): void {
     this.publish()
     if (
-      this.mode === 'appx' &&
+      (this.mode === 'appx' || this.community) &&
       this.snapshot.stage === 'downloading' &&
       this.isDownloadBlocked() &&
       this.downloadAbortController &&
@@ -356,6 +466,7 @@ export class AppUpdateService {
     }
     if (
       this.mode === 'nsis' &&
+      !this.community &&
       this.snapshot.stage === 'downloading' &&
       (this.options.getGameLaunchPhase() !== 'idle' || this.options.hasActiveLauncherDownload()) &&
       this.nsisDownloadToken &&
@@ -531,7 +642,7 @@ export class AppUpdateService {
       return
     }
 
-    const comparison = compareAppVersions(this.snapshot.currentVersion, pending.targetVersion)
+    const comparison = this.compareVersions(this.snapshot.currentVersion, pending.targetVersion)
     if (comparison !== null && comparison >= 0) {
       this.setSnapshot({
         stage: 'up-to-date',
@@ -653,7 +764,7 @@ export class AppUpdateService {
     const previous = this.getSnapshot()
     this.setSnapshot({
       stage: 'checking',
-      verification: this.mode === 'nsis' ? 'installer-managed' : 'pending',
+      verification: this.defaultVerification(),
       error: undefined
     })
     try {
@@ -668,15 +779,16 @@ export class AppUpdateService {
       })
       if (!response.ok) throw new Error(`GitHub release request failed (${response.status})`)
       const payload = (await response.json()) as unknown
-      const release =
-        this.manifest.channel === 'beta'
+      const release = this.community
+        ? parseCommunityAppUpdateRelease(payload, this.communityPackage ? 'package' : 'installer')
+        : this.manifest.channel === 'beta'
           ? selectLatestBetaRelease(payload)
           : parseGitHubAppUpdateRelease(payload, 'stable')
       if (!release) {
         this.setError('release-invalid')
         return this.getSnapshot()
       }
-      const comparison = compareAppVersions(release.version, this.snapshot.currentVersion)
+      const comparison = this.compareVersions(release.version, this.snapshot.currentVersion)
       if (comparison === null) {
         this.setError('release-invalid')
         return this.getSnapshot()
@@ -694,14 +806,14 @@ export class AppUpdateService {
           totalBytes: undefined,
           percent: undefined,
           bytesPerSecond: undefined,
-          verification: this.mode === 'nsis' ? 'installer-managed' : 'pending',
+          verification: this.defaultVerification(),
           checkedAt: Date.now(),
           error: undefined
         })
         return this.getSnapshot()
       }
 
-      if (this.mode === 'nsis') {
+      if (this.mode === 'nsis' && !this.community) {
         this.expectedNsisVersion = release.version
         await this.updater?.checkForUpdates()
         return this.getSnapshot()
@@ -1062,6 +1174,8 @@ export class AppUpdateService {
   }
 
   private async verifyWindowsSignature(path: string): Promise<boolean> {
+    // Community builds are unsigned; callers have already verified size and GitHub's SHA-256 digest.
+    if (this.community) return true
     const thumbprints = this.manifest.updates.signerThumbprints
       .map((thumbprint) => thumbprint.replace(/\s/g, '').toUpperCase())
       .filter((thumbprint) => /^[A-F0-9]{40}$/.test(thumbprint))
@@ -1159,8 +1273,8 @@ export class AppUpdateService {
     })
     try {
       await mkdir(this.updatesDirectory, { recursive: true })
-      if (this.mode === 'appx') {
-        if (!this.release) throw new Error('Missing AppX update release')
+      if (this.mode === 'appx' || this.community) {
+        if (!this.release) throw new Error('Missing update release')
         const setupPath = this.updatePath(this.release.asset.name)
         if (
           (await fileSize(setupPath)) !== this.release.asset.size ||
@@ -1205,7 +1319,7 @@ export class AppUpdateService {
         transactionId,
         phase: 'launching'
       })
-      if (this.mode === 'nsis') {
+      if (this.mode === 'nsis' && !this.community) {
         // electron-updater 6.8.x quits immediately after scheduling its own
         // asynchronous spawn. Use its verified download metadata, but own the
         // spawn so a launch error can fully recover before ORBIT ever quits.
@@ -1247,6 +1361,10 @@ export class AppUpdateService {
           )
         }
         app.quit()
+        return
+      }
+      if (this.community) {
+        await this.launchCommunityInstall(transactionId)
         return
       }
       if (!this.release) throw new Error('Missing AppX update release')
@@ -1310,6 +1428,77 @@ export class AppUpdateService {
     }
   }
 
+  private defaultVerification(): AppUpdateVerification {
+    return this.mode === 'nsis' && !this.community ? 'installer-managed' : 'pending'
+  }
+
+  private compareVersions(left: string, right: string): number | null {
+    return this.community ? compareCommunityVersions(left, right) : compareAppVersions(left, right)
+  }
+
+  /** Hands a verified community update to its installer (desktop) or to the
+   * package swap helper (Xbox Mode loose registration), then quits ORBIT. */
+  private async launchCommunityInstall(transactionId: string): Promise<void> {
+    if (!this.release) throw new Error('Missing update release')
+    const updateFile = this.updatePath(this.release.asset.name)
+    const startedAt = Date.now()
+    let executablePath: string
+    let child: ChildProcess
+    if (this.communityPackage) {
+      const helperPath = this.updatePath('orbit-mt3k-package-update.ps1')
+      const logPath = this.updatePath('orbit-mt3k-package-update.log')
+      await writeFile(helperPath, `\ufeff${COMMUNITY_PACKAGE_UPDATE_SCRIPT}`, 'utf8')
+      executablePath = powershellExecutable()
+      child = spawn(
+        executablePath,
+        [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-WindowStyle',
+          'Hidden',
+          '-File',
+          helperPath,
+          '-ProcessId',
+          String(process.pid),
+          '-ZipPath',
+          updateFile,
+          '-AppDir',
+          this.communityPackage.appDirectory,
+          '-PackageRoot',
+          this.communityPackage.packageRoot,
+          '-LogPath',
+          logPath
+        ],
+        { detached: true, stdio: 'ignore', windowsHide: true }
+      )
+    } else {
+      executablePath = updateFile
+      child = spawn(updateFile, [], { detached: true, stdio: 'ignore' })
+    }
+    await new Promise<void>((resolvePromise, reject) => {
+      child.once('error', reject)
+      child.once('spawn', resolvePromise)
+    })
+    if (!child.pid) throw new Error('Update helper did not report a process ID')
+    this.installerLaunchConfirmed = true
+    await this.writePendingInstallConfirmation({
+      transactionId,
+      installerPath: executablePath,
+      processId: child.pid,
+      startedAt
+    }).catch((error) => {
+      console.warn(
+        '[app-update] community launch confirmation could not be persisted:',
+        error instanceof Error ? error.message : error
+      )
+    })
+    child.unref()
+    app.quit()
+  }
+
   private githubReleaseEndpoint(): string {
     const { owner, repository } = this.manifest.updates
     const base = `https://api.github.com/repos/${owner}/${repository}/releases`
@@ -1337,7 +1526,7 @@ export class AppUpdateService {
           if (
             !entry.isFile() ||
             keepNames.has(entry.name) ||
-            !/^ORBIT(?:-Beta)?-XboxMode-Setup-[a-zA-Z0-9.-]+-x64\.exe(?:\.part)?$/.test(
+            !/^(?:ORBIT(?:-Beta)?-XboxMode-Setup-[a-zA-Z0-9.-]+-x64\.exe|ORBIT-MT3K-(?:App-[a-zA-Z0-9.-]+-x64\.zip|Setup-[a-zA-Z0-9.-]+-x64\.exe))(?:\.part)?$/.test(
               entry.name
             )
           ) {
@@ -1359,7 +1548,7 @@ export class AppUpdateService {
       installCountdownEndsAt: undefined,
       transferredBytes: undefined,
       bytesPerSecond: undefined,
-      verification: this.mode === 'nsis' ? 'installer-managed' : 'pending'
+      verification: this.defaultVerification()
     })
   }
 

@@ -141,8 +141,15 @@ export function parseGitHubAppUpdateRelease(
   if (channel === 'stable' && parsed.prerelease.length > 0) return null
   if (channel === 'beta' && parsed.prerelease.length === 0) return null
 
+  return buildReleaseCandidate(release, version, expectedAssetName(version, channel))
+}
+
+function buildReleaseCandidate(
+  release: GitHubReleasePayload,
+  version: string,
+  assetName: string
+): AppUpdateReleaseCandidate | null {
   if (!Array.isArray(release.assets)) return null
-  const assetName = expectedAssetName(version, channel)
   const assetValue = release.assets.find(
     (candidate) =>
       candidate &&
@@ -189,6 +196,51 @@ export function parseGitHubAppUpdateRelease(
       downloadUrl
     }
   }
+}
+
+/**
+ * MT3K community edition releases are tagged vX.Y.Z-mt3k.N on the fork and are
+ * published as normal (non-prerelease) GitHub releases. A build without the
+ * -mt3k suffix counts as revision 0, so any community release supersedes it.
+ */
+const COMMUNITY_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-mt3k\.(0|[1-9]\d*))?$/
+
+export type CommunityUpdateAssetKind = 'package' | 'installer'
+
+export function communityUpdateAssetName(version: string, kind: CommunityUpdateAssetKind): string {
+  return kind === 'package'
+    ? `ORBIT-MT3K-App-${version}-x64.zip`
+    : `ORBIT-MT3K-Setup-${version}-x64.exe`
+}
+
+function communityVersionParts(value: string): number[] | null {
+  const match = COMMUNITY_VERSION_PATTERN.exec(value.trim())
+  if (!match) return null
+  const parts = [match[1], match[2], match[3], match[4] ?? '0'].map(Number)
+  return parts.every((part) => Number.isSafeInteger(part)) ? parts : null
+}
+
+export function compareCommunityVersions(leftValue: string, rightValue: string): number | null {
+  const left = communityVersionParts(leftValue)
+  const right = communityVersionParts(rightValue)
+  if (!left || !right) return null
+  for (let index = 0; index < 4; index++) {
+    if (left[index] !== right[index]) return left[index] - right[index]
+  }
+  return 0
+}
+
+export function parseCommunityAppUpdateRelease(
+  value: unknown,
+  kind: CommunityUpdateAssetKind
+): AppUpdateReleaseCandidate | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const release = value as GitHubReleasePayload
+  if (release.draft === true || release.prerelease === true) return null
+  const tag = typeof release.tag_name === 'string' ? release.tag_name.trim() : ''
+  const version = tag.startsWith('v') ? tag.slice(1) : tag
+  if (!version.includes('-mt3k.') || !communityVersionParts(version)) return null
+  return buildReleaseCandidate(release, version, communityUpdateAssetName(version, kind))
 }
 
 export function selectLatestBetaRelease(value: unknown): AppUpdateReleaseCandidate | null {

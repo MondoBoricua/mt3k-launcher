@@ -11,19 +11,19 @@
   "platform": "windows",
   "architecture": "x64",
   "packageFormats": [
-    "nsis"
+    "nsis",
+    "xbox-mode-archive"
   ],
   "updateMode": "github-release",
-  "automaticUpdatesEnabled": false,
+  "automaticUpdatesEnabled": true,
   "updates": {
     "owner": "MondoBoricua",
     "repository": "orbit",
     "startupDelaySeconds": 12,
     "checkIntervalHours": 6,
-    "autoDownload": true,
-    "signerThumbprints": [
-      "61E90C0AACBF2F407A575903FCC197F45B61706D"
-    ]
+    "autoDownload": false,
+    "signerThumbprints": [],
+    "community": true
   },
   "integrations": {
     "xboxClientId": "3785b570-8c14-4c8a-acf8-2cae0220960f"

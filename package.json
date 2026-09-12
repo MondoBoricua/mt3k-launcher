@@ -71,6 +71,7 @@
     "verify:store-catalog": "node --experimental-strip-types scripts/verify-store-catalog.ts",
     "verify:steam-wishlist": "node --experimental-strip-types scripts/verify-steam-wishlist.ts",
     "verify:updates": "node --experimental-strip-types scripts/verify-app-updates.ts",
+    "verify:community-updates": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-community-updates.ts",
     "verify:xbox-installer-script": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/Verify-OrbitXboxInstallerScript.ps1",
     "build:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/Build-OrbitInstaller.ps1",
     "build:xbox": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/Build-OrbitXboxPackage.ps1",

@@ -18,6 +18,8 @@ const initialSnapshot: AppUpdateSnapshot = {
 interface AppUpdateState {
   snapshot: AppUpdateSnapshot
   bannerVisible: boolean
+  /** Full-screen prompt for a found update when downloads wait for the user. */
+  promptVisible: boolean
   init: () => Promise<void>
   check: () => Promise<void>
   download: () => Promise<void>
@@ -25,12 +27,16 @@ interface AppUpdateState {
   defer: () => Promise<void>
   showBanner: () => void
   hideBanner: () => void
+  acceptPrompt: () => Promise<void>
+  dismissPrompt: () => void
 }
 
 let listening = false
 let initialized = false
 let previousSnapshot = initialSnapshot
 let dismissedVersion: string | undefined
+let dismissedPromptVersion: string | undefined
+let installWhenReady = false
 
 function announce(next: AppUpdateSnapshot): void {
   if (next.installedVersion && next.installedVersion !== previousSnapshot.installedVersion) {
@@ -91,8 +97,18 @@ function announce(next: AppUpdateSnapshot): void {
 export const useAppUpdateStore = create<AppUpdateState>((set, get) => {
   const applySnapshot = (snapshot: AppUpdateSnapshot): void => {
     announce(snapshot)
+    if (snapshot.stage === 'error' || snapshot.stage === 'up-to-date') installWhenReady = false
     set((state) => ({
       snapshot,
+      promptVisible:
+        (snapshot.stage === 'available' &&
+          !snapshot.autoDownloadEnabled &&
+          dismissedPromptVersion !== snapshot.targetVersion) ||
+        (installWhenReady &&
+          state.promptVisible &&
+          (snapshot.stage === 'available' ||
+            snapshot.stage === 'downloading' ||
+            snapshot.stage === 'verifying')),
       bannerVisible:
         snapshot.stage === 'ready' &&
         (snapshot.installScheduled || dismissedVersion !== snapshot.targetVersion)
@@ -101,11 +117,16 @@ export const useAppUpdateStore = create<AppUpdateState>((set, get) => {
             ? true
             : state.bannerVisible && snapshot.stage === 'ready'
     }))
+    if (installWhenReady && snapshot.stage === 'ready' && snapshot.canInstall) {
+      installWhenReady = false
+      void window.api.app.updates.install().then(applySnapshot).catch(() => undefined)
+    }
   }
 
   return {
     snapshot: initialSnapshot,
     bannerVisible: false,
+    promptVisible: false,
     init: async () => {
       if (!listening) {
         listening = true
@@ -140,6 +161,15 @@ export const useAppUpdateStore = create<AppUpdateState>((set, get) => {
     hideBanner: () => {
       dismissedVersion = get().snapshot.targetVersion
       set({ bannerVisible: false })
+    },
+    acceptPrompt: async () => {
+      installWhenReady = true
+      applySnapshot(await window.api.app.updates.download())
+    },
+    dismissPrompt: () => {
+      dismissedPromptVersion = get().snapshot.targetVersion
+      installWhenReady = false
+      set({ promptVisible: false })
     }
   }
 })

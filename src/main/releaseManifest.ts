@@ -15,6 +15,8 @@ export interface ReleaseManifest {
     checkIntervalHours: number
     autoDownload: boolean
     signerThumbprints: string[]
+    /** MT3K community edition: unsigned fork releases verified by GitHub's SHA-256 digest. */
+    community: boolean
   }
   integrations: {
     /** Public native-app identifier. This is configuration, never a client secret. */
@@ -34,7 +36,8 @@ const fallbackManifest: ReleaseManifest = {
     startupDelaySeconds: 12,
     checkIntervalHours: 6,
     autoDownload: true,
-    signerThumbprints: []
+    signerThumbprints: [],
+    community: false
   },
   integrations: {}
 }
@@ -88,7 +91,8 @@ export function getReleaseManifest(): ReleaseManifest {
               )
               .map((thumbprint) => thumbprint.toUpperCase())
               .slice(0, 4)
-          : []
+          : [],
+        community: (updates as { community?: unknown } | undefined)?.community === true
       },
       integrations: {
         xboxClientId:
