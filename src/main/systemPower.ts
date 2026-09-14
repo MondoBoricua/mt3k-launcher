@@ -13,7 +13,7 @@ function requestNativeWindowsSleep(): Promise<void> {
   }
 
   const worker = utilityProcess.fork(workerPath, [], {
-    serviceName: 'ORBIT System Sleep',
+    serviceName: 'MT3K Launcher System Sleep',
     stdio: 'ignore'
   })
 

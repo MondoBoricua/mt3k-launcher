@@ -212,7 +212,7 @@ class HomeWallpaperService {
 
   async select(mainWindow: BrowserWindow): Promise<HomeWallpaperAsset | null> {
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: t("ORBIT · Select Home wallpaper"),
+      title: t("MT3K Launcher · Select Home wallpaper"),
       buttonLabel: t("Use wallpaper"),
       properties: ['openFile'],
       filters: [

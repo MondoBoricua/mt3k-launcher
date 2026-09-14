@@ -9,7 +9,7 @@ interface XboxStartupConfiguration {
 export function isOrbitXboxStartupSelected(configuration: XboxStartupConfiguration): boolean {
   return configuration.startupToGamingHome === 1 &&
     !configuration.disabledByPolicy &&
-    /^ORBIT\.GamingHome_[a-z0-9]{13}!ORBIT$/i.test(configuration.gamingHomeApp?.trim() ?? '')
+    /^(?:ORBIT\.GamingHome|MT3K\.OrbitGamingHome)_[a-z0-9]{13}!ORBIT$/i.test(configuration.gamingHomeApp?.trim() ?? '')
 }
 
 const configurationKey = 'Software\\Microsoft\\Windows\\CurrentVersion\\GamingConfiguration'

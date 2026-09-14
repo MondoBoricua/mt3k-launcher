@@ -224,10 +224,10 @@ class CustomArtworkService {
     orientation: CustomArtworkOrientation = 'vertical'
   ): Promise<ResolvedImage | null> {
     const labels = {
-      vertical: [t('ORBIT · Select cover'), t('Use cover')],
-      horizontal: [t('ORBIT · Select background'), t('Use background')],
-      logo: [t('ORBIT · Select logo'), t('Use logo')],
-      icon: [t('ORBIT · Select icon'), t('Use icon')]
+      vertical: [t('MT3K Launcher · Select cover'), t('Use cover')],
+      horizontal: [t('MT3K Launcher · Select background'), t('Use background')],
+      logo: [t('MT3K Launcher · Select logo'), t('Use logo')],
+      icon: [t('MT3K Launcher · Select icon'), t('Use icon')]
     }
     const result = await dialog.showOpenDialog(mainWindow, {
       title: labels[orientation][0],

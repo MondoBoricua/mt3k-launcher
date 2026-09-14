@@ -1,24 +1,26 @@
-# ORBIT MT3K Edition — unsigned community build.
+# MT3K Launcher: unsigned build of the controller-first launcher based on ORBIT.
 #
-# Same packaging as the upstream electron-builder.yml minus the Certum code
-# signing (the private key belongs to the upstream author) and with a release
-# manifest that keeps this build from auto-updating itself onto the official
-# signed release. The signed Xbox Mode AppX is not produced here; instead the
-# installer ships resources/xbox-mode and offers a Developer Mode registration
-# when setup finishes (see build/installer.nsh). Build with:
+# Same packaging as ORBIT's electron-builder.yml minus the Certum code signing
+# (that key belongs to ORBIT's author). The signed Xbox Mode AppX is not produced
+# here; the installer ships resources/xbox-mode and offers a Developer Mode
+# registration when setup finishes (see build/installer.nsh).
+#
+# Compatibility with installs from before the rename is deliberate:
+# appId, executableName (ORBIT.exe) and the data folder (%APPDATA%\ORBIT, pinned
+# in src/main/legacyUserDataPath.ts) keep their ORBIT-era values.
 #   npx electron-builder --win nsis --x64 --config electron-builder.mt3k.yml --publish never
 appId: com.orbit.launcher
-productName: ORBIT
+productName: MT3K Launcher
 buildVersion: 0.1.4.0
-artifactName: ORBIT-MT3K-Setup-${version}-${arch}.${ext}
-copyright: Copyright © 2026 Luis Garcia. MT3K Edition changes © 2026 MT3K. GPL-3.0.
+artifactName: MT3K-Launcher-Setup-${version}-${arch}.${ext}
+copyright: Copyright © 2026 MT3K. Based on ORBIT, © 2026 Luis Garcia. GPL-3.0.
 forceCodeSigning: false
 npmRebuild: false
 
 publish:
   - provider: github
     owner: MondoBoricua
-    repo: orbit
+    repo: mt3k-launcher
 
 directories:
   buildResources: build
@@ -49,8 +51,8 @@ extraResources:
     to: xbox-mode/CustomCapability.SCCD
   - from: build/appx
     to: xbox-mode/appx
-  - from: scripts/windows/Register-OrbitMt3kXboxMode.ps1
-    to: xbox-mode/Register-OrbitMt3kXboxMode.ps1
+  - from: scripts/windows/Register-Mt3kLauncherXboxMode.ps1
+    to: xbox-mode/Register-Mt3kLauncherXboxMode.ps1
 
 asar: true
 asarUnpack:
@@ -65,9 +67,10 @@ win:
       arch:
         - x64
   icon: build/icon.ico
+  # Kept as ORBIT.exe: earlier builds, their update helper and the Xbox Mode manifest launch this name.
   executableName: ORBIT
   requestedExecutionLevel: asInvoker
-  legalTrademarks: ORBIT is a gaming launcher project.
+  legalTrademarks: MT3K Launcher is a community gaming launcher based on ORBIT.
 
 nsis:
   oneClick: false
@@ -79,11 +82,11 @@ nsis:
   displayLanguageSelector: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: ORBIT
+  shortcutName: MT3K Launcher
   runAfterFinish: true
   packElevateHelper: false
   differentialPackage: false
-  uninstallDisplayName: ORBIT MT3K Edition 0.1.4
+  uninstallDisplayName: MT3K Launcher 0.1.4
   installerIcon: build/installerIcon.ico
   uninstallerIcon: build/uninstallerIcon.ico
   installerHeader: build/installerHeader.bmp

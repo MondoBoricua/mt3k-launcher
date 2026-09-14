@@ -268,7 +268,7 @@ export class XboxAuthManager {
   ): Promise<void> {
     const clientId = configuredClientId()
     if (!clientId || !safeStorage.isEncryptionAvailable()) {
-      throw new Error('Xbox sign-in is not configured for this ORBIT build')
+      throw new Error('Xbox sign-in is not configured for this MT3K Launcher build')
     }
     if (this.loginWindow && !this.loginWindow.isDestroyed()) {
       this.loginWindow.show()

@@ -184,7 +184,7 @@ function buildReleaseCandidate(
 
   return {
     version,
-    name: sanitizedText(release.name, MAX_RELEASE_NAME_LENGTH) || `ORBIT ${version}`,
+    name: sanitizedText(release.name, MAX_RELEASE_NAME_LENGTH) || `MT3K Launcher ${version}`,
     notes: sanitizedText(release.body, MAX_RELEASE_NOTES_LENGTH),
     pageUrl,
     publishedAt,
@@ -208,6 +208,17 @@ const COMMUNITY_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-
 export type CommunityUpdateAssetKind = 'package' | 'installer'
 
 export function communityUpdateAssetName(version: string, kind: CommunityUpdateAssetKind): string {
+  return kind === 'package'
+    ? `MT3K-Launcher-App-${version}-x64.zip`
+    : `MT3K-Launcher-Setup-${version}-x64.exe`
+}
+
+/** Asset names from before the MT3K Launcher rename. Releases still publish copies
+ * under these names so builds up to 0.1.4-mt3k.5 can find their update. */
+export function legacyCommunityUpdateAssetName(
+  version: string,
+  kind: CommunityUpdateAssetKind
+): string {
   return kind === 'package'
     ? `ORBIT-MT3K-App-${version}-x64.zip`
     : `ORBIT-MT3K-Setup-${version}-x64.exe`
@@ -240,7 +251,10 @@ export function parseCommunityAppUpdateRelease(
   const tag = typeof release.tag_name === 'string' ? release.tag_name.trim() : ''
   const version = tag.startsWith('v') ? tag.slice(1) : tag
   if (!version.includes('-mt3k.') || !communityVersionParts(version)) return null
-  return buildReleaseCandidate(release, version, communityUpdateAssetName(version, kind))
+  return (
+    buildReleaseCandidate(release, version, communityUpdateAssetName(version, kind)) ??
+    buildReleaseCandidate(release, version, legacyCommunityUpdateAssetName(version, kind))
+  )
 }
 
 export function selectLatestBetaRelease(value: unknown): AppUpdateReleaseCandidate | null {

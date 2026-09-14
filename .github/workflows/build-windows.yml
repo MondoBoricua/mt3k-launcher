@@ -1,4 +1,4 @@
-name: Build Windows installer (MT3K Edition)
+name: Build Windows installer (MT3K Launcher)
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Stamp MT3K release version
+      - name: Stamp release version
         if: startsWith(github.ref, 'refs/tags/')
         run: node scripts/mt3k/stamp-version.mjs "${{ github.ref_name }}"
 
@@ -47,8 +47,11 @@ jobs:
         shell: pwsh
         run: |
           $version = node -p "require('./package.json').version"
-          Compress-Archive -Path release/win-unpacked/* -DestinationPath "release/ORBIT-MT3K-App-$version-x64.zip" -CompressionLevel Optimal
-          Get-Item release/*.zip | Select-Object Name, Length
+          Compress-Archive -Path release/win-unpacked/* -DestinationPath "release/MT3K-Launcher-App-$version-x64.zip" -CompressionLevel Optimal
+          # Builds up to 0.1.4-mt3k.5 look for the ORBIT-MT3K names when they check for updates.
+          Copy-Item "release/MT3K-Launcher-App-$version-x64.zip" "release/ORBIT-MT3K-App-$version-x64.zip"
+          Copy-Item "release/MT3K-Launcher-Setup-$version-x64.exe" "release/ORBIT-MT3K-Setup-$version-x64.exe"
+          Get-Item release/*.zip, release/*.exe | Select-Object Name, Length
 
       - name: Write SHA-256 sums
         shell: pwsh
@@ -60,7 +63,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ORBIT-MT3K-windows-x64
+          name: MT3K-Launcher-windows-x64
           path: |
             release/*.exe
             release/*.zip
@@ -73,14 +76,14 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          name: ORBIT MT3K Edition ${{ github.ref_name }}
+          name: MT3K Launcher ${{ github.ref_name }}
           generate_release_notes: true
           body: |
-            Community build of ORBIT (fork of toonymak1993/orbit) with the MT3K Edition changes. See `CHANGELOG-MT3K.md` for what differs from the official release.
+            MT3K Launcher is a controller-first game launcher for Windows, based on ORBIT by Luis Garcia (GPL-3.0). See `CHANGELOG.md` for what changed in each version.
 
             **This installer is not code-signed.** Windows SmartScreen will warn once: click *More info* → *Run anyway*. Verify the download against `SHA256SUMS.txt` before installing.
 
-            Includes ORBIT Plus (community edition) and in-app updates: ORBIT shows a prompt when a newer MT3K release is published and verifies the download against GitHub's SHA-256 digest. When setup finishes, the installer offers to register ORBIT MT3K as the Xbox Mode home app through Windows Developer Mode; Xbox Mode copies update through `ORBIT-MT3K-App-*.zip`. What changed in each version is in `CHANGELOG-MT3K.md`. Not included: the signed Xbox Mode AppX and the Discord Social SDK.
+            Download `MT3K-Launcher-Setup-*.exe`. When setup finishes it offers to register MT3K Launcher as the Xbox Mode home app through Windows Developer Mode; Xbox Mode copies update through `MT3K-Launcher-App-*.zip`. The `ORBIT-MT3K-*` files are identical copies so builds from before the rename can still update. Plus features and in-app updates are included. Not included: a signed Xbox Mode AppX and the Discord Social SDK.
           files: |
             release/*.exe
             release/*.zip

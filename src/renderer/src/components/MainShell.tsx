@@ -399,7 +399,7 @@ export function MainShell(): JSX.Element {
 
 function ViewLoadingFallback(): JSX.Element {
   return (
-    <div role="status" aria-label="ORBIT" className="flex h-full items-center justify-center">
+    <div role="status" aria-label="MT3K Launcher" className="flex h-full items-center justify-center">
       <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/15 border-t-accent" />
     </div>
   )

@@ -506,7 +506,7 @@ export class DiscordSocialService extends EventEmitter {
       return Promise.reject(new Error('Discord Social SDK runtime is missing'))
     }
     const worker = utilityProcess.fork(workerPath, [sdkPath, String(process.pid)], {
-      serviceName: 'ORBIT Discord Social',
+      serviceName: 'MT3K Launcher Discord Social',
       stdio: 'ignore'
     })
     this.worker = worker
@@ -562,7 +562,7 @@ export class DiscordSocialService extends EventEmitter {
     }
     if (this.workerVersion !== SDK_VERSION) {
       this.stopWorker()
-      throw new Error('Discord Social SDK version does not match ORBIT')
+      throw new Error('Discord Social SDK version does not match MT3K Launcher')
     }
     const id = this.nextRequestId++
     const timeoutMs =

@@ -80,7 +80,7 @@ class StartupVideoService {
 
   async select(mainWindow: BrowserWindow): Promise<string | null> {
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: t("ORBIT · Select startup video"),
+      title: t("MT3K Launcher · Select startup video"),
       buttonLabel: t("Use video"),
       properties: ['openFile'],
       filters: [{ name: t('MP4 Video'), extensions: ['mp4'] }]

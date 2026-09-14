@@ -117,7 +117,7 @@ export function LaunchOptionsDialog({
         <header className="relative flex items-start justify-between gap-5 border-b border-white/[0.07] px-7 py-5">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-accent">
-              ORBIT · {context === 'retro' ? 'RETRO' : 'LOCAL'}
+              MT3K · {context === 'retro' ? 'RETRO' : 'LOCAL'}
             </p>
             <h2 id="launch-options-title" className="mt-1 text-2xl font-bold text-white">
               {t('launchOptions.title')}

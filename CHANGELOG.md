@@ -1,6 +1,22 @@
-# Cambios de la MT3K Edition
+# Cambios de MT3K Launcher
 
-Lo que este fork agrega o cambia respecto a [toonymak1993/orbit](https://github.com/toonymak1993/orbit). Las versiones siguen a las del original con el sufijo `-mt3k.N`.
+MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
+
+## 0.1.4-mt3k.6
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.5.
+
+### Nuevo nombre: MT3K Launcher
+
+- **Por qué.** El repositorio público de ORBIT desapareció de GitHub en septiembre de 2026, así que el proyecto sigue por su cuenta. Conserva la licencia GPL-3.0 y el crédito a Luis Garcia, que también aparece en *Configuración → Acerca de*.
+- **Qué cambia.** El nombre en la app, la ventana, la bandeja, el instalador, los accesos directos y Xbox Mode. Hay ícono y logos nuevos, y el repositorio pasa a `MondoBoricua/mt3k-launcher`. Los archivos de la release se llaman `MT3K-Launcher-Setup` y `MT3K-Launcher-App`, y las funciones premium aparecen como "Plus".
+- **Qué se conserva.** La carpeta de datos `%APPDATA%\ORBIT`, la biblioteca y los ajustes, la carpeta de emuladores y ROMs en `Documentos\ORBIT`, el ejecutable `ORBIT.exe`, la identidad del instalador y el paquete de Xbox Mode. Actualizar desde la MT3K Edition no borra nada.
+- **Compatibilidad.** Cada release publica también copias con los nombres `ORBIT-MT3K-*`, para que las versiones anteriores encuentren la actualización. El nombre que muestra Xbox Mode cambia la próxima vez que se registra, por ejemplo al instalar con el instalador.
+- **Sin sincronización con ORBIT.** Se quitó el workflow diario que copiaba el repositorio original.
+
+### Arreglos
+
+- **Xbox Mode detectado.** La app reconoce su propio paquete como app de inicio de Xbox Mode y oculta "Iniciar con Windows" cuando arranca desde ahí.
 
 ## 0.1.4-mt3k.5
 

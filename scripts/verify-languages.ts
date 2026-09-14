@@ -20,7 +20,7 @@ const intentionallyNonCyrillicRussianValues = new Set([
   'Steam · Epic · GOG · Xbox · Instant Gaming', 'ORBIT Core', 'Hardware Control',
   'Menu / Start', 'View / Select', 'Xbox / Guide', 'Patreon', 'ORBIT Horizon',
   'KB{ids}', 'NVIDIA', 'AMD', 'Intel', 'Shift', 'Caps Lock', 'Backspace',
-  'Orbit', 'Nova', 'Pulse', 'Drift', 'Ember', 'Pixel', 'Xbox / Microsoft Store'
+  'Orbit', 'Nova', 'Plus', 'MT3K', 'MT3K Launcher', 'MT3K Core', 'MT3K Horizon', 'MT3K Pulse', 'MT3K Ambient', 'Pulse', 'Drift', 'Ember', 'Pixel', 'Xbox / Microsoft Store'
 ])
 
 for (const dictionary of [translations, mainTranslations]) {

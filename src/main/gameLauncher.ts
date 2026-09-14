@@ -268,7 +268,7 @@ async function installSteamGame(game: LibraryGame): Promise<GameInstallRequestSt
 export async function requestGameInstall(
   game: LibraryGame
 ): Promise<GameInstallRequestState> {
-  if (!canRequestGameInstall(game)) throw new Error('Game cannot be installed through ORBIT')
+  if (!canRequestGameInstall(game)) throw new Error('Game cannot be installed through MT3K Launcher')
 
   if (game.provider === 'steam') return installSteamGame(game)
 
@@ -299,7 +299,7 @@ export async function requestGameUninstall(
   game: LibraryGame
 ): Promise<GameUninstallRequestState> {
   if (!canRequestGameUninstall(game)) {
-    throw new Error('Game cannot be uninstalled through ORBIT')
+    throw new Error('Game cannot be uninstalled through MT3K Launcher')
   }
 
   if (game.provider === 'steam') {

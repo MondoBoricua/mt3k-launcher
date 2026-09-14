@@ -160,7 +160,7 @@ export function CustomGameWizard({ onClose, onCompleted }: Props): JSX.Element {
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-accent)/0.13),transparent_35%)]" />
         <header className="relative flex items-start justify-between gap-4 border-b border-white/[0.08] px-[clamp(1.25rem,3vw,2.5rem)] py-[clamp(1rem,2.5vh,1.75rem)]">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-accent">ORBIT · LOCAL</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-accent">MT3K · LOCAL</p>
             <h1 id="custom-game-title" className="mt-1 text-[clamp(1.35rem,2.5vw,2.2rem)] font-bold text-white">
               {t('customGame.title')}
             </h1>

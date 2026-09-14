@@ -411,8 +411,8 @@ class NetflixMediaService {
       this.finishSession(false)
       throw new Error(
         error instanceof Error
-          ? `Netflix konnte nicht in ORBIT gestartet werden: ${error.message}`
-          : 'Netflix konnte nicht in ORBIT gestartet werden'
+          ? `Netflix konnte nicht in MT3K Launcher gestartet werden: ${error.message}`
+          : 'Netflix konnte nicht in MT3K Launcher gestartet werden'
       )
     }
 
@@ -675,7 +675,7 @@ class NetflixMediaService {
       skipTaskbar: true,
       autoHideMenuBar: true,
       backgroundColor: '#00000000',
-      title: 'ORBIT · Media-Tastatur',
+      title: 'MT3K Launcher · Media-Tastatur',
       webPreferences: {
         preload: bundledAssetPath('preload', 'index.mjs'),
         contextIsolation: true,

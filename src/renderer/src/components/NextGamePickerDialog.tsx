@@ -265,7 +265,7 @@ export function NextGamePickerDialog({
                 {t('library.nextGame.title')}
               </h2>
               <span className="shrink-0 rounded-full border border-amber-200/25 bg-amber-200/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.16em] text-amber-100">
-                ORBIT Plus
+                Plus
               </span>
             </div>
             <p className="mt-0.5 truncate text-xs text-white/40">

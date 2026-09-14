@@ -377,7 +377,7 @@ function AchievementSelection({
       {guideUnlocked ? (
         <div className="mt-5 border-t border-white/[0.07] pt-4">
           <p className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.15em] text-amber-200/80">
-            <Youtube size={14} /> {t('achievements.videoSolution')} · ORBIT Plus
+            <Youtube size={14} /> {t('achievements.videoSolution')} · Plus
           </p>
           {guideTrailer ? (
             <GameTrailerInlinePlayer

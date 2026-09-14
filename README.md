@@ -1,102 +1,95 @@
 <p align="center">
-  <img src="docs/images/mt3k-ultrawide-5120x1440.jpg" alt="ORBIT MT3K Edition en un monitor 5120×1440" width="100%" />
+  <img src="docs/images/mt3k-ultrawide-5120x1440.jpg" alt="MT3K Launcher en un monitor 5120×1440" width="100%" />
 </p>
 
-<h1 align="center">ORBIT · MT3K Edition</h1>
+<h1 align="center">MT3K Launcher</h1>
 
 <p align="center">
-  Fork comunitario de <a href="https://github.com/toonymak1993/orbit">ORBIT</a>, el launcher de juegos <em>controller-first</em> para Windows creado por Luis Garcia (<a href="https://github.com/toonymak1993">toonymak1993</a>).
+  Launcher de juegos <em>controller-first</em> para Windows, basado en ORBIT de Luis Garcia.
 </p>
 
 <p align="center">
-  <a href="https://github.com/MondoBoricua/orbit/releases/latest"><img alt="Descargar la última build" src="https://img.shields.io/github/v/release/MondoBoricua/orbit?label=descargar&style=for-the-badge&logo=windows11&logoColor=white&color=22d3ee" /></a>
-  <a href="https://github.com/MondoBoricua/orbit/actions/workflows/build-windows.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/MondoBoricua/orbit/build-windows.yml?branch=mt3k&style=for-the-badge&label=build" /></a>
-  <a href="https://github.com/toonymak1993/orbit"><img alt="Upstream" src="https://img.shields.io/badge/upstream-toonymak1993%2Forbit-111827?style=for-the-badge&logo=github" /></a>
+  <a href="https://github.com/MondoBoricua/mt3k-launcher/releases/latest"><img alt="Descargar la última build" src="https://img.shields.io/github/v/release/MondoBoricua/mt3k-launcher?label=descargar&style=for-the-badge&logo=windows11&logoColor=white&color=22d3ee" /></a>
+  <a href="https://github.com/MondoBoricua/mt3k-launcher/actions/workflows/build-windows.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/MondoBoricua/mt3k-launcher/build-windows.yml?branch=mt3k&style=for-the-badge&label=build" /></a>
   <a href="LICENSE"><img alt="GPL-3.0" src="https://img.shields.io/badge/licencia-GPL--3.0-111827?style=for-the-badge" /></a>
 </p>
 
 ## Qué es esto
 
-ORBIT junta tu biblioteca de PC (Steam, Epic, GOG, Xbox, EA, Ubisoft, retro, juegos locales) en una pantalla de inicio estilo consola, pensada para mando, handhelds y TV. Este repositorio es la **MT3K Edition**: el fork donde MT3K prueba ORBIT en su hardware, le agrega mejoras y documenta el proceso para el canal. Lo que tiene sentido para todo el mundo se envía de vuelta al proyecto original como pull request.
+MT3K Launcher junta tu biblioteca de PC (Steam, Epic, GOG, Xbox, EA, Ubisoft, retro y juegos locales) en una pantalla de inicio estilo consola, pensada para mando, handhelds y TV. Es el launcher que MT3K prueba en su hardware y mejora en el canal.
 
-No es un producto aparte ni compite con ORBIT. Es ORBIT con parches, compilado sin firma, para gente que quiere probar cambios antes de que lleguen a la release oficial o que necesita algo que el original todavía no tiene.
+Empezó como **ORBIT MT3K Edition**, un fork de ORBIT 0.1.4. En septiembre de 2026 el repositorio público de ORBIT desapareció de GitHub, así que el proyecto sigue por su cuenta con nombre propio. No está afiliado a ORBIT ni a su autor.
 
-## Qué cambia respecto al original
+## Qué trae
 
-| Cambio | Desde | Estado en el upstream |
-|---|---|---|
-| **Soporte ultrawide y super-ultrawide en el Home** (2560×1080, 3440×1440, 5120×1440, también con escalado 125–150 %). La fila de juegos ya no se corta y muestra 8 a 12 juegos a la vez. | 0.1.4-mt3k.1 | [PR #13](https://github.com/toonymak1993/orbit/pull/13) aceptado |
-| **Bibliotecas de Steam en discos externos**: sin avisos falsos cuando el disco no está, y reescaneo automático al conectarlo o quitarlo. Aportado por nerdytyphanie. | 0.1.4-mt3k.1 | PRs [#11](https://github.com/toonymak1993/orbit/pull/11) y [#12](https://github.com/toonymak1993/orbit/pull/12) abiertos |
-| **Buscar metadatos por título** en el editor del juego: elige el resultado de Steam y rellena descripción, géneros, desarrollador, fecha y más. Ideal para juegos custom. | 0.1.4-mt3k.2 | Solo en el fork |
-| **Arte de Steam para juegos recientes**: la búsqueda sin API key ya encuentra portada, fondo y cabecera guardadas en las rutas nuevas de Steam. | 0.1.4-mt3k.2 | Solo en el fork |
-| Build NSIS sin firma desde GitHub Actions, con release automática al etiquetar | 0.1.4-mt3k.1 | Solo en el fork |
-| Sincronización diaria con el upstream vía pull request `main → mt3k` | 0.1.4-mt3k.1 | Solo en el fork |
-| **ORBIT Plus incluido**: temas, layout Cuadro, movimiento del fondo, música y sonidos propios, selector de próximo juego, guías de logros y cloud gaming, sin cuenta ni licencia. | 0.1.4-mt3k.4 | Solo en el fork |
-| **Actualizaciones dentro de la app**: cuando sale una release nueva del fork, ORBIT muestra una pantalla para actualizar, verifica la descarga y se reinicia solo. También en Xbox Mode. | 0.1.4-mt3k.4 | Solo en el fork |
-| **Xbox Mode desde el instalador**: al terminar la instalación ORBIT ofrece registrarse como app de inicio de Xbox Mode, abre el modo desarrollador si hace falta y actualiza el registro en cada versión nueva. | 0.1.4-mt3k.5 | Solo en el fork |
-| **"Iniciar con Windows" arreglado**: ya no da error cuando ORBIT está instalado en una ruta con espacios, y el interruptor refleja el estado real. | 0.1.4-mt3k.5 | Bug también en el upstream |
+| Función | Desde |
+|---|---|
+| **Soporte ultrawide y super-ultrawide en el Home** (2560×1080, 3440×1440, 5120×1440, también con escalado 125–150 %). La fila de juegos ya no se corta y muestra 8 a 12 juegos a la vez. Se envió a ORBIT como PR #13 y fue aceptado. | 0.1.4-mt3k.1 |
+| **Bibliotecas de Steam en discos externos**: sin avisos falsos cuando el disco no está, y reescaneo automático al conectarlo o quitarlo. Aportado por nerdytyphanie. | 0.1.4-mt3k.1 |
+| **Buscar metadatos por título** en el editor del juego: elige el resultado de Steam y rellena descripción, géneros, desarrollador, fecha y más. Ideal para juegos custom. | 0.1.4-mt3k.2 |
+| **Arte de Steam para juegos recientes**: la búsqueda sin API key encuentra portada, fondo y cabecera en las rutas nuevas de Steam. | 0.1.4-mt3k.2 |
+| **Funciones Plus incluidas**: temas, layout Cuadro, movimiento del fondo, música y sonidos propios, selector de próximo juego, guías de logros y cloud gaming, sin cuenta ni licencia. | 0.1.4-mt3k.4 |
+| **Actualizaciones dentro de la app**: cuando sale una release nueva aparece una pantalla para actualizar. La descarga se verifica y la app se reinicia sola, también en Xbox Mode. | 0.1.4-mt3k.4 |
+| **Xbox Mode desde el instalador**: al terminar la instalación ofrece registrarse como app de inicio de Xbox Mode y mantiene el registro al día. | 0.1.4-mt3k.5 |
+| **"Iniciar con Windows" arreglado** en instalaciones con espacios en la ruta. | 0.1.4-mt3k.5 |
+| **Nombre e identidad propios**: MT3K Launcher, con ícono nuevo, sin perder datos al actualizar desde la MT3K Edition. | 0.1.4-mt3k.6 |
 
-El detalle por versión está en [CHANGELOG-MT3K.md](CHANGELOG-MT3K.md).
+El detalle por versión está en [CHANGELOG.md](CHANGELOG.md).
 
 ## Descargar e instalar
 
-1. Baja `ORBIT-MT3K-Setup-<versión>-x64.exe` de la [última release](https://github.com/MondoBoricua/orbit/releases/latest).
+1. Baja `MT3K-Launcher-Setup-<versión>-x64.exe` de la [última release](https://github.com/MondoBoricua/mt3k-launcher/releases/latest).
 2. Comprueba el hash contra `SHA256SUMS.txt` de la misma release:
    ```powershell
-   Get-FileHash .\ORBIT-MT3K-Setup-0.1.4-x64.exe -Algorithm SHA256
+   Get-FileHash .\MT3K-Launcher-Setup-0.1.4-mt3k.6-x64.exe -Algorithm SHA256
    ```
 3. Ejecuta el instalador. **No está firmado con certificado**, así que SmartScreen avisará una vez: *Más información → Ejecutar de todas formas*.
 
 Requisitos: Windows 11 x64. Mando recomendado, teclado y ratón soportados.
 
-### Diferencias con el instalador oficial
+**Si venías de ORBIT MT3K Edition:** actualiza desde la app o instala encima. Se conservan la biblioteca, los ajustes, la carpeta `Documentos\ORBIT` de emuladores y ROMs, y el registro de Xbox Mode. Por compatibilidad, el ejecutable sigue llamándose `ORBIT.exe` y los datos siguen en `%APPDATA%\ORBIT`. Las releases publican también copias `ORBIT-MT3K-*` de los mismos archivos para que las versiones anteriores encuentren la actualización.
 
-- **Xbox Mode, experimental.** El paquete oficial va firmado con la clave del autor original, así que este fork registra ORBIT como "Gaming Home" con el modo desarrollador de Windows. El instalador lo ofrece al terminar: mira [Xbox Mode](#xbox-mode-experimental) más abajo.
-- **Actualizaciones del fork, no del original.** ORBIT busca releases nuevas en este repositorio y te pregunta antes de actualizar. La descarga se verifica con el SHA-256 que GitHub publica para cada archivo; no hay firma de código. Nunca se reemplaza por la release oficial firmada.
-- **Sin Discord Social SDK.** El binario de Discord es propietario y no está en el repositorio; la presencia de Discord queda desactivada. Todo lo demás (Steam, Epic, Xbox, GOG, EA, Ubisoft, retro, amigos de Steam/Epic) funciona igual.
-- Se instala en `%LOCALAPPDATA%\Programs\ORBIT` con su propio perfil, aparte del paquete Xbox Mode oficial.
+**Detalles de esta build:**
 
-**ORBIT Plus.** En el proyecto original, Plus es una membresía de pago con la que su autor financia ORBIT. Esta edición comunitaria activa sus funciones en local, sin contactar Patreon, Gumroad ni el servidor oficial, aprovechando la licencia GPL-3.0. Como no hay nada que activar, la pestaña de Plus no aparece en Configuración ni en la configuración inicial. Si ORBIT te gusta, apoya al autor original desde el [sitio oficial](https://www.getorbitlauncher.com/).
+- **Sin firma de código.** Las actualizaciones se verifican con el SHA-256 que GitHub publica para cada archivo.
+- **Sin Discord Social SDK.** El binario de Discord es propietario y no está en el repositorio, así que la presencia de Discord queda desactivada.
+- **Funciones Plus.** En ORBIT, Plus es una membresía de pago. MT3K Launcher las activa en local, sin contactar Patreon, Gumroad ni ningún servidor, así que no hay pestaña de Plus ni nada que activar.
 
 ## Xbox Mode (experimental)
 
-Windows solo ofrece en *Configuración → Gaming → Xbox mode → Choose home app* las apps empaquetadas que se declaran como "Gaming Home". Esta edición registra tu ORBIT MT3K instalado con esa declaración, bajo su propia identidad "ORBIT MT3K" y sin firma.
+Windows solo ofrece en *Configuración → Gaming → Xbox mode → Choose home app* las apps empaquetadas que se declaran como "Gaming Home". MT3K Launcher se registra con esa declaración usando el modo desarrollador de Windows, sin firma.
 
 Requisitos: Windows 11 24H2 o más nuevo y **modo desarrollador activado** (*Configuración → Sistema → Para desarrolladores*).
 
-**Opción 1, desde el instalador (0.1.4-mt3k.5 o más nuevo).**
+**Opción 1, desde el instalador.**
 
-1. Instala `ORBIT-MT3K-Setup`. Al terminar pregunta si quieres registrar ORBIT MT3K en Xbox Mode: di que sí.
+1. Instala `MT3K-Launcher-Setup`. Al terminar pregunta si quieres registrarlo en Xbox Mode: di que sí.
 2. Si el modo desarrollador está apagado, el instalador abre esa página de Configuración. Actívalo y pulsa *OK*.
-3. En *Choose home app* elige **ORBIT MT3K**.
+3. En *Choose home app* elige **MT3K Launcher**.
 
-Las versiones nuevas, ya sea con el instalador o con la actualización dentro de la app, mantienen el registro al día sin preguntar. Si algo falla, el detalle queda en `%TEMP%\orbit-mt3k-xbox-mode.log`.
+Las versiones nuevas mantienen el registro al día sin preguntar. Si algo falla, el detalle queda en `%TEMP%\mt3k-launcher-xbox-mode.log`.
 
-**Opción 2, con un comando.** Si el instalador no pudo registrarlo, o tienes una versión anterior, abre PowerShell en el propio equipo, con ORBIT cerrado, y pega:
+**Opción 2, con un comando.** Si el instalador no pudo registrarlo, abre PowerShell en el propio equipo, con MT3K Launcher cerrado, y pega:
 
 ```powershell
-$ProgressPreference='SilentlyContinue'; $d="$env:TEMP\orbit-mt3k"; Invoke-WebRequest https://github.com/MondoBoricua/orbit/archive/refs/heads/mt3k.zip -OutFile "$d.zip"; Expand-Archive "$d.zip" $d -Force; powershell -ExecutionPolicy Bypass -File "$d\orbit-mt3k\scripts\windows\Register-OrbitMt3kXboxMode.ps1"
+$ProgressPreference='SilentlyContinue'; $d="$env:TEMP\mt3k-launcher"; Invoke-WebRequest https://github.com/MondoBoricua/mt3k-launcher/archive/refs/heads/mt3k.zip -OutFile "$d.zip"; Expand-Archive "$d.zip" $d -Force; powershell -ExecutionPolicy Bypass -File "$d\mt3k-launcher-mt3k\scripts\windows\Register-Mt3kLauncherXboxMode.ps1"
 ```
 
-Luego elige **ORBIT MT3K** en *Choose home app*.
+Luego elige **MT3K Launcher** en *Choose home app*.
 
-Para quitarlo, desinstala ORBIT o ejecuta el script con `-Remove`. La app registrada puede pedir el onboarding de nuevo porque Windows le da su propia carpeta de datos.
+Para quitarlo, desinstala MT3K Launcher o ejecuta el script con `-Remove`. La app registrada puede pedir el onboarding de nuevo porque Windows le da su propia carpeta de datos.
 
 ## Cómo está organizado el repositorio
 
-| Rama | Para qué | Quién la toca |
-|---|---|---|
-| `main` | Espejo exacto de `toonymak1993/orbit` `main`. | Solo el workflow de sincronización. No hagas commits aquí. |
-| `mt3k` | La edición: `main` + los cambios del fork. De aquí salen las builds y las releases. | Desarrollo diario. |
-| `feat/*` | Cambios listos para enviar al upstream, cortados desde `main` para que el PR salga limpio. | Uno por PR. |
-
-Cada día el workflow [`sync-upstream`](.github/workflows/sync-upstream.yml) compara `main` con el upstream. Si hay commits nuevos, actualiza `main` y abre (o refresca) un pull request `main → mt3k` con la lista de commits. Al mezclarlo, la edición queda al día. Si hay conflicto, se resuelve en una rama cortada desde `mt3k`.
-
-Para proponer algo al proyecto original: rama `feat/lo-que-sea` desde `main`, PR contra `toonymak1993/orbit`, y el mismo cambio se mezcla en `mt3k` para que salga en la próxima build del fork.
+| Rama | Para qué |
+|---|---|
+| `mt3k` | Rama principal. De aquí salen las builds y las releases. |
+| `main` | Código de ORBIT 0.1.4 tal como estaba antes de los cambios. Queda como referencia; no se actualiza. |
+| `feat/*` | Cambios en desarrollo, uno por rama, que se mezclan en `mt3k`. |
 
 ## Compilar
 
-Necesitas Node.js 22 o más nuevo y Windows para el instalador (el renderer y los chequeos corren también en macOS y Linux).
+Necesitas Node.js 22 o más nuevo y Windows para el instalador. El renderer y los chequeos corren también en macOS y Linux.
 
 ```bash
 npm ci
@@ -108,7 +101,7 @@ npx electron .
 npx electron-builder --win nsis --x64 --config electron-builder.mt3k.yml --publish never
 ```
 
-El instalador queda en `release/`. En GitHub Actions, cada push a `mt3k` deja el `.exe` como artefacto del workflow [`build-windows`](.github/workflows/build-windows.yml); una etiqueta con el formato `v0.1.4-mt3k.1` publica una release con el instalador, el zip de la app para Xbox Mode (`ORBIT-MT3K-App-*.zip`), `latest.yml` y `SHA256SUMS.txt`.
+El instalador queda en `release/`. En GitHub Actions, cada push a `mt3k` deja el instalador como artefacto del workflow [`build-windows`](.github/workflows/build-windows.yml). Una etiqueta con el formato `v0.1.4-mt3k.N` publica una release con el instalador, el zip de la app para Xbox Mode, `latest.yml` y `SHA256SUMS.txt`.
 
 ### Verificar el Home en distintos tamaños
 
@@ -123,22 +116,20 @@ Las capturas quedan en `.codex-qa/settings-navigation/`. El modo `--orbit-home` 
 
 ## Ideas en cola
 
-Cosas que se van a probar en el canal antes de decidir si se envían al upstream:
-
 - Layouts XMODE, CoreSense y Rolling en 32:9.
-- Ajustes para el ROG Xbox Ally con eGPU (perfil de resolución al conectar y desconectar el dock).
+- Ajustes para el ROG Xbox Ally con eGPU, como un perfil de resolución al conectar y desconectar el dock.
 - Más pruebas con mandos de terceros.
 
-Si tienes una idea o un bug en tu hardware, abre un [issue](https://github.com/MondoBoricua/orbit/issues) con tu resolución, escalado de Windows y layout del Home.
+Si tienes una idea o un bug en tu hardware, abre un [issue](https://github.com/MondoBoricua/mt3k-launcher/issues) con tu resolución, escalado de Windows y layout del Home.
 
 ## Licencia y créditos
 
-ORBIT es software libre bajo la [GNU GPL v3](LICENSE), con la [excepción para el Discord Social SDK](LICENSE_EXCEPTION.md) del autor original. Este fork conserva la misma licencia: puedes usarlo, estudiarlo, modificarlo y redistribuirlo bajo los mismos términos, y el código fuente de cada build está en este repositorio.
+MT3K Launcher es software libre bajo la [GNU GPL v3](LICENSE), con la [excepción para el Discord Social SDK](LICENSE_EXCEPTION.md) heredada de ORBIT. Puedes usarlo, estudiarlo, modificarlo y redistribuirlo bajo los mismos términos, y el código fuente de cada build está en este repositorio.
 
-- ORBIT: © Luis Garcia, [toonymak1993/orbit](https://github.com/toonymak1993/orbit). [Sitio oficial](https://www.getorbitlauncher.com/).
-- Cambios de la MT3K Edition: © MT3K.
-- Avisos de terceros: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **ORBIT**, la base de este proyecto: © Luis Garcia. [Sitio oficial](https://www.getorbitlauncher.com/).
+- **MT3K Launcher**, los cambios y el nombre nuevo: © MT3K.
+- **Terceros**: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---
 
-**English.** This is the MT3K Edition of [ORBIT](https://github.com/toonymak1993/orbit), a controller-first game launcher for Windows by Luis Garcia. The fork adds ultrawide / 32:9 support for the Home screen (merged upstream as [PR #13](https://github.com/toonymak1993/orbit/pull/13)), Steam removable-drive fixes from upstream PRs #11 and #12, unsigned NSIS builds from GitHub Actions and a daily upstream sync. Xbox Mode works through an experimental Developer Mode registration that the installer offers when setup finishes, with a one-line PowerShell fallback. MT3K builds include ORBIT Plus as a community edition and update themselves from this fork's releases after asking, verifying each download against GitHub's SHA-256 digest. Same GPL-3.0 license as upstream; no Discord SDK in these builds. If you enjoy ORBIT, support the original author at getorbitlauncher.com. See [CHANGELOG-MT3K.md](CHANGELOG-MT3K.md).
+**English.** MT3K Launcher is a controller-first game launcher for Windows based on ORBIT by Luis Garcia. It started as the ORBIT MT3K Edition fork of ORBIT 0.1.4 and continues independently since ORBIT's public repository disappeared in September 2026; it is not affiliated with ORBIT or its author. It adds ultrawide / 32:9 Home support, Steam removable-drive fixes, Steam metadata search, locally unlocked Plus features, in-app updates verified against GitHub's SHA-256 digests, and an experimental Xbox Mode registration through Windows Developer Mode that the installer offers. Updating from the MT3K Edition keeps your library, settings and Xbox Mode registration. GPL-3.0; no Discord SDK in these builds. See [CHANGELOG.md](CHANGELOG.md).

@@ -809,7 +809,7 @@ export function LibraryView(): JSX.Element {
                   data-library-source={value}
                   data-search-focus-fallback={active ? 'true' : undefined}
                   type="button"
-                  aria-label={value === 'geforce-now' && !cloudGamingUnlocked ? `${label} · ORBIT Plus` : `${label}: ${count}`}
+                  aria-label={value === 'geforce-now' && !cloudGamingUnlocked ? `${label} · Plus` : `${label}: ${count}`}
                   aria-pressed={active}
                   onClick={() => {
                     if (value === 'retro') setActiveRetroSystem(null)

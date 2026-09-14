@@ -1512,7 +1512,7 @@ export function SettingsView(): JSX.Element {
                       </div>
                       <span className="flex items-center gap-1 rounded-full border border-amber-300/25 bg-amber-300/10 px-2.5 py-1 text-[8px] font-black uppercase tracking-[0.12em] text-amber-200">
                         <Sparkles size={9} />
-                        ORBIT Plus
+                        Plus
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -2084,7 +2084,7 @@ export function SettingsView(): JSX.Element {
                           data-focusable
                           type="button"
                           aria-pressed={active}
-                          aria-label={premium ? `${option.label}, ORBIT Plus` : option.label}
+                          aria-label={premium ? `${option.label}, Plus` : option.label}
                           aria-disabled={locked || undefined}
                           onClick={() =>
                             locked ? openOrbitPlusSettings() : void setHomeLayout(option.id)
@@ -3599,6 +3599,7 @@ export function SettingsView(): JSX.Element {
                   <p className="text-sm text-muted">
                     {t('settings.about.version', { version: version || '—' })}
                   </p>
+                  <p className="mt-1 text-xs text-white/45">{t('settings.about.credit')}</p>
                 </SettingsSection>
               </div>
             )}
@@ -4224,7 +4225,7 @@ function ThemeChoiceGrid({ appearanceUnlocked }: { appearanceUnlocked: boolean }
             type="button"
             disabled={locked}
             aria-disabled={locked || undefined}
-            aria-label={premium ? `${option.label}, ORBIT Plus` : option.label}
+            aria-label={premium ? `${option.label}, Plus` : option.label}
             onClick={() => void setTheme(option.id)}
             whileHover={locked ? undefined : { y: -2, scale: 1.04 }}
             whileTap={locked ? undefined : { scale: 0.95 }}

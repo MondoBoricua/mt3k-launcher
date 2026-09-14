@@ -118,7 +118,7 @@ export function NotificationCenter(): JSX.Element {
                 </span>
               </span>
               <span className="self-start rounded-full border border-white/[0.08] bg-black/20 px-2 py-1 text-[8px] font-black uppercase tracking-[0.18em] text-white/35">
-                ORBIT
+                MT3K
               </span>
             </div>
             {current.actionLabelKey && current.onAction && (

@@ -74,7 +74,7 @@ class ProfileAvatarService {
 
   async select(mainWindow: BrowserWindow): Promise<string | null> {
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: t("ORBIT · Select avatar"),
+      title: t("MT3K Launcher · Select avatar"),
       buttonLabel: t("Use avatar"),
       properties: ['openFile'],
       filters: [

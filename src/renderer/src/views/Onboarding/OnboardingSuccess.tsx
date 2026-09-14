@@ -452,7 +452,7 @@ export function OnboardingSuccess({
           <div className="flex items-center gap-3">
             <OrbitMark />
             <div>
-              <div className="text-sm font-black tracking-[0.24em]">ORBIT</div>
+              <div className="text-sm font-black tracking-[0.24em]">MT3K</div>
               <div className="text-[10px] uppercase tracking-[0.16em] text-white/40">
                 {t('onboarding.setup.eyebrow')}
               </div>
@@ -922,8 +922,8 @@ function OnboardingThemeChoices({
             data-disabled={locked ? 'true' : undefined}
             type="button"
             disabled={locked}
-            title={premium ? `${option.label} · ORBIT Plus` : option.label}
-            aria-label={premium ? `${option.label}, ORBIT Plus` : option.label}
+            title={premium ? `${option.label} · Plus` : option.label}
+            aria-label={premium ? `${option.label}, Plus` : option.label}
             aria-disabled={locked || undefined}
             aria-pressed={active}
             onClick={() => void setTheme(option.id)}
@@ -1053,7 +1053,7 @@ function PersonalizePage({
                     disabled={locked}
                     data-disabled={locked ? 'true' : undefined}
                     aria-disabled={locked || undefined}
-                    aria-label={premium ? `${option.label}, ORBIT Plus` : option.label}
+                    aria-label={premium ? `${option.label}, Plus` : option.label}
                     aria-pressed={active}
                     onClick={() => onHomeLayout(option.id)}
                     className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${

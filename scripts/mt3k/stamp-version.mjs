@@ -1,4 +1,4 @@
-// Stamps an MT3K Edition release version (vX.Y.Z-mt3k.N) into the files the
+// Stamps an MT3K Launcher release version (vX.Y.Z-mt3k.N) into the files the
 // build reads: package.json, the MT3K release manifest and the MT3K builder config.
 import { readFileSync, writeFileSync } from 'node:fs'
 
@@ -31,7 +31,7 @@ const builderFile = 'electron-builder.mt3k.yml'
 const builder = readFileSync(builderFile, 'utf8')
 const stamped = builder
   .replace(/^buildVersion: .*$/m, `buildVersion: ${windowsVersion}`)
-  .replace(/^  uninstallDisplayName: .*$/m, `  uninstallDisplayName: ORBIT MT3K Edition ${version}`)
+  .replace(/^  uninstallDisplayName: .*$/m, `  uninstallDisplayName: MT3K Launcher ${version}`)
 if (!/^buildVersion: /m.test(stamped)) throw new Error('buildVersion missing from electron-builder.mt3k.yml')
 writeFileSync(builderFile, stamped)
 

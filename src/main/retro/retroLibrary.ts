@@ -712,7 +712,7 @@ export class RetroLibraryService {
 
   async addDirectory(mainWindow: BrowserWindow): Promise<RetroLibraryStatus | null> {
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: t("ORBIT · Select ROM folder"),
+      title: t("MT3K Launcher · Select ROM folder"),
       buttonLabel: t("Detect ROMs"),
       properties: ['openDirectory']
     })

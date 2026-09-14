@@ -22,7 +22,7 @@ export function StartupAnimation({
       className="orbit-startup"
       data-phase={phase}
       role="img"
-      aria-label="ORBIT"
+      aria-label="MT3K Launcher"
     >
       {mode === 'custom' && (
         <>
@@ -133,7 +133,7 @@ export function StartupAnimation({
         </svg>
 
         <div className="orbit-startup__wordmark">
-          <span>ORBIT</span>
+          <span>MT3K</span>
           <i />
         </div>
       </div>

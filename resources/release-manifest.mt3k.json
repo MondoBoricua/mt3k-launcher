@@ -18,7 +18,7 @@
   "automaticUpdatesEnabled": true,
   "updates": {
     "owner": "MondoBoricua",
-    "repository": "orbit",
+    "repository": "mt3k-launcher",
     "startupDelaySeconds": 12,
     "checkIntervalHours": 6,
     "autoDownload": false,

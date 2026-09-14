@@ -1,7 +1,7 @@
 {
-  "name": "orbit",
+  "name": "mt3k-launcher",
   "version": "0.1.4",
-  "description": "ORBIT — Gaming Launcher Console UI",
+  "description": "MT3K Launcher — controller-first gaming launcher for Windows, based on ORBIT",
   "main": "./out/main/index.js",
   "author": "Luis Garcia",
   "private": true,

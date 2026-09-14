@@ -754,7 +754,7 @@ export class RetroSetupService {
       const detectedAfter = await detectRetroEmulatorStatuses()
       signal.throwIfAborted()
       if (!selectedEmulatorReady(detectedAfter, emulator.id, systemId)) {
-        throw new Error('The emulator was installed but did not pass ORBIT verification')
+        throw new Error('The emulator was installed but did not pass MT3K Launcher verification')
       }
 
       const previousSelections = settingsStore.store.retroSystemEmulators ?? {}

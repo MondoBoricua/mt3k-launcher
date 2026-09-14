@@ -92,7 +92,7 @@ class LauncherMusicService {
 
   async select(mainWindow: BrowserWindow): Promise<CustomLauncherMusic | null> {
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: t("ORBIT · Select launcher music"),
+      title: t("MT3K Launcher · Select launcher music"),
       buttonLabel: t("Use music"),
       properties: ['openFile'],
       filters: [

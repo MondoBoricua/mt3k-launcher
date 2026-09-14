@@ -33,7 +33,7 @@ export function OnboardingWelcome({ onContinue }: Props): JSX.Element {
         <div className="onboarding-welcome__brand flex items-center">
           <OrbitMark />
           <div className="ml-3">
-            <div className="text-sm font-black tracking-[0.24em]">ORBIT</div>
+            <div className="text-sm font-black tracking-[0.24em]">MT3K</div>
             <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/35">
               {t('onboarding.setup.eyebrow')}
             </div>
@@ -57,8 +57,8 @@ export function OnboardingWelcome({ onContinue }: Props): JSX.Element {
             <span className="h-px w-10 bg-accent/50" />
             {t('onboarding.setup.page.libraries')}
           </div>
-          <h1 className="onboarding-welcome__title" aria-label="ORBIT">
-            OR<span>BIT</span>
+          <h1 className="onboarding-welcome__title" aria-label="MT3K Launcher">
+            MT<span>3K</span>
           </h1>
           <p className="mt-[clamp(1.5rem,4vh,3rem)] max-w-xl text-[clamp(0.95rem,1.25vw,1.2rem)] leading-relaxed text-white/55">
             {t('onboarding.welcome.subtitle')}
@@ -103,7 +103,7 @@ export function OnboardingWelcome({ onContinue }: Props): JSX.Element {
           <span className="onboarding-orbit-field__core"><Gamepad2 size={34} /></span>
           <span className="onboarding-orbit-field__node onboarding-orbit-field__node--one">{t('nav.library')}</span>
           <span className="onboarding-orbit-field__node onboarding-orbit-field__node--two">{t('nav.home')}</span>
-          <span className="onboarding-orbit-field__node onboarding-orbit-field__node--three">ORBIT</span>
+          <span className="onboarding-orbit-field__node onboarding-orbit-field__node--three">MT3K</span>
         </motion.div>
       </main>
 

@@ -404,7 +404,7 @@ function ApplicationCard({
       >
         <ApplicationIcon application={application} />
         {application.id === GEFORCE_NOW_APPLICATION_ID && (
-          <span className="absolute right-3 top-3 rounded-full border border-accent/25 bg-surface px-2 py-1 text-[0.65rem] font-black text-accent">ORBIT Plus</span>
+          <span className="absolute right-3 top-3 rounded-full border border-accent/25 bg-surface px-2 py-1 text-[0.65rem] font-black text-accent">Plus</span>
         )}
         <span className="absolute inset-x-3 bottom-3 flex min-w-0 items-center justify-center gap-2">
           <span className="truncate text-[clamp(0.9rem,1.25vw,1.1rem)] font-black text-white">
@@ -713,7 +713,7 @@ function ApplicationEditor({
         <header className="relative flex items-start justify-between gap-4 border-b border-white/[0.08] px-[clamp(1.25rem,3vw,2.5rem)] py-[clamp(1rem,2.5vh,1.75rem)]">
           <div>
             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-accent">
-              ORBIT · APP
+              MT3K · APP
             </p>
             <h1
               id="application-editor-title"

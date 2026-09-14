@@ -209,7 +209,7 @@ export const THEME_OPTIONS: { id: ThemeId; label: string; premium?: true }[] = [
 export const CORNER_STYLE_OPTIONS: CornerStyleId[] = ['theme', 'square', 'soft', 'round']
 
 export const HOME_LAYOUT_OPTIONS: { id: HomeLayoutId; label: string }[] = [
-  { id: 'orbit', label: 'ORBIT' },
+  { id: 'orbit', label: 'MT3K' },
   { id: 'rolling', label: 'Rolling' },
   { id: 'float', label: 'FLOAT' },
   { id: 'cuadro', label: 'Cuadro' },

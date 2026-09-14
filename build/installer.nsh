@@ -48,14 +48,14 @@
   Push $R8
   Push $R9
   !insertmacro orbitXboxModePowerShell
-  StrCpy $R7 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\resources\xbox-mode\Register-OrbitMt3kXboxMode.ps1" -Source "$INSTDIR" -LogPath "$TEMP\orbit-mt3k-xbox-mode.log"'
-  DetailPrint "Xbox Mode: checking ORBIT MT3K registration"
+  StrCpy $R7 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\resources\xbox-mode\Register-Mt3kLauncherXboxMode.ps1" -Source "$INSTDIR" -LogPath "$TEMP\mt3k-launcher-xbox-mode.log"'
+  DetailPrint "Xbox Mode: checking MT3K Launcher registration"
   nsExec::Exec '$R7 -OnlyIfRegistered'
   Pop $R9
   StrCmp $R9 0 orbit_xbox_mode_done
   StrCmp $R9 3 0 orbit_xbox_mode_failed
   IfSilent orbit_xbox_mode_done
-  MessageBox MB_YESNO|MB_ICONQUESTION "ORBIT MT3K puede ser la app de inicio de Xbox Mode.$\r$\nORBIT MT3K can be your Xbox Mode home app.$\r$\n$\r$\nRegistrarlo ahora? / Register it now?" IDNO orbit_xbox_mode_done
+  MessageBox MB_YESNO|MB_ICONQUESTION "MT3K Launcher puede ser la app de inicio de Xbox Mode.$\r$\nMT3K Launcher can be your Xbox Mode home app.$\r$\n$\r$\nRegistrarlo ahora? / Register it now?" IDNO orbit_xbox_mode_done
   orbit_xbox_mode_developer_mode:
     !insertmacro orbitXboxModeDeveloperMode
     StrCmp $R9 1 orbit_xbox_mode_register
@@ -63,16 +63,16 @@
     MessageBox MB_OKCANCEL|MB_ICONINFORMATION "Xbox Mode necesita el Modo de desarrollador de Windows.$\r$\nXbox Mode needs Windows Developer Mode.$\r$\n$\r$\nActivalo en la ventana que se abrio y pulsa OK.$\r$\nTurn it on in the window that opened, then press OK." IDCANCEL orbit_xbox_mode_done
     Goto orbit_xbox_mode_developer_mode
   orbit_xbox_mode_register:
-    DetailPrint "Xbox Mode: registering ORBIT MT3K"
+    DetailPrint "Xbox Mode: registering MT3K Launcher"
     nsExec::Exec '$R7'
     Pop $R9
     StrCmp $R9 0 0 orbit_xbox_mode_failed
-    MessageBox MB_OK|MB_ICONINFORMATION "Listo. En Settings > Gaming > Xbox mode > Choose home app escoge ORBIT MT3K.$\r$\nDone. In Settings > Gaming > Xbox mode > Choose home app, pick ORBIT MT3K."
+    MessageBox MB_OK|MB_ICONINFORMATION "Listo. En Settings > Gaming > Xbox mode > Choose home app escoge MT3K Launcher.$\r$\nDone. In Settings > Gaming > Xbox mode > Choose home app, pick MT3K Launcher."
     Goto orbit_xbox_mode_done
   orbit_xbox_mode_failed:
-    DetailPrint "Xbox Mode registration failed ($R9). Log: $TEMP\orbit-mt3k-xbox-mode.log"
+    DetailPrint "Xbox Mode registration failed ($R9). Log: $TEMP\mt3k-launcher-xbox-mode.log"
     IfSilent orbit_xbox_mode_done
-    MessageBox MB_OK|MB_ICONEXCLAMATION "No se pudo registrar ORBIT MT3K en Xbox Mode.$\r$\nORBIT MT3K could not be registered for Xbox Mode.$\r$\n$\r$\nLog: $TEMP\orbit-mt3k-xbox-mode.log"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "No se pudo registrar MT3K Launcher en Xbox Mode.$\r$\nMT3K Launcher could not be registered for Xbox Mode.$\r$\n$\r$\nLog: $TEMP\mt3k-launcher-xbox-mode.log"
   orbit_xbox_mode_done:
   Pop $R9
   Pop $R8

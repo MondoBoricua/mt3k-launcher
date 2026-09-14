@@ -1,3 +1,4 @@
+import './legacyUserDataPath'
 import { app, shell, protocol, net, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
@@ -196,7 +197,7 @@ function createWindow(registerIpcHandlers: (window: BrowserWindow) => void): Bro
     fullscreen: true,
     autoHideMenuBar: true,
     backgroundColor: '#05070c',
-    title: 'ORBIT',
+    title: 'MT3K Launcher',
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false

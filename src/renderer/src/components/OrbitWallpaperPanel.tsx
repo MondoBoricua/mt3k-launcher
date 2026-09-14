@@ -72,7 +72,7 @@ export function OrbitWallpaperPanel({ compact = false }: Props): JSX.Element {
         <div className="absolute inset-0 bg-[linear-gradient(180deg,transparent_42%,rgba(3,8,16,0.8)_100%)]" />
         <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full border border-white/10 bg-black/50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-white/[0.72] backdrop-blur-md">
           <ImageIcon size={12} className="text-accent" />
-          ORBIT HORIZON
+          MT3K HORIZON
         </div>
       </div>
 

@@ -483,7 +483,7 @@ export function GameTrailerPanelPlayer({
       <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-6 bg-gradient-to-b from-black/95 via-black/70 to-transparent px-[clamp(1rem,2.5vw,2.5rem)] pb-16 pt-[clamp(1rem,2.5vh,1.75rem)] text-white">
         <div className="min-w-0">
           <p className="text-[10px] font-black uppercase tracking-[0.15em] text-amber-200/80">
-            {t('achievements.videoSolution')} · ORBIT Plus
+            {t('achievements.videoSolution')} · Plus
           </p>
           <h3 className="mt-1 truncate text-[clamp(1rem,1.7vw,1.6rem)] font-bold text-white/90">
             {trailer.title}

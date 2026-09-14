@@ -180,7 +180,7 @@ class CustomUiAudioService {
       throw new Error('ORBIT Plus is required for custom interface sounds')
     }
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: t("ORBIT · Select custom sound"),
+      title: t("MT3K Launcher · Select custom sound"),
       buttonLabel: t("Use sound"),
       properties: ['openFile'],
       filters: [

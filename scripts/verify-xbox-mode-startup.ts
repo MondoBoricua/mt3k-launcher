@@ -3,6 +3,8 @@ import { isOrbitXboxStartupSelected, orbitStartsThroughXboxMode } from '../src/m
 
 const orbit = { startupToGamingHome: 1, gamingHomeApp: 'ORBIT.GamingHome_123456789abcd!ORBIT' }
 assert.equal(isOrbitXboxStartupSelected(orbit), true)
+assert.equal(isOrbitXboxStartupSelected({ ...orbit, gamingHomeApp: 'MT3K.OrbitGamingHome_zf1xqhjm405p0!ORBIT' }), true, 'MT3K Launcher Developer Mode package')
+assert.equal(isOrbitXboxStartupSelected({ ...orbit, gamingHomeApp: 'MT3K.OrbitGamingHome_zf1xqhjm405p0!Other' }), false)
 assert.equal(isOrbitXboxStartupSelected({ ...orbit, startupToGamingHome: 0 }), false)
 assert.equal(isOrbitXboxStartupSelected({ ...orbit, startupToGamingHome: undefined }), false)
 assert.equal(isOrbitXboxStartupSelected({ ...orbit, disabledByPolicy: 1 }), false)

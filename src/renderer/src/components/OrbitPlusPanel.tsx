@@ -184,7 +184,7 @@ export function OrbitPlusPanel({ context = 'settings' }: { context?: 'onboarding
                 </span>
               </div>
               <h2 className="mt-1 text-[clamp(1.65rem,3vw,2.7rem)] font-black leading-none tracking-[-0.04em] text-white">
-                ORBIT <span className="text-amber-200">PLUS</span>
+                MT3K <span className="text-amber-200">PLUS</span>
               </h2>
             </div>
           </div>
@@ -255,7 +255,7 @@ export function OrbitPlusPanel({ context = 'settings' }: { context?: 'onboarding
                 </span>
               </div>
               <h2 className="mt-1 text-[clamp(1.65rem,3vw,2.7rem)] font-black leading-none tracking-[-0.04em] text-white">
-                ORBIT <span className="text-amber-200">PLUS</span>
+                MT3K <span className="text-amber-200">PLUS</span>
               </h2>
             </div>
           </div>

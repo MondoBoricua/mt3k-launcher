@@ -722,7 +722,7 @@ export class AppUpdateService {
       this.setSnapshot({
         stage: 'available',
         targetVersion: info.version,
-        releaseName: `ORBIT ${info.version}`,
+        releaseName: `MT3K Launcher ${info.version}`,
         releaseNotes: safeReleaseNotes(info.releaseNotes),
         releasePageUrl: this.releasePageUrl(info.version),
         verification: 'installer-managed',
@@ -745,7 +745,7 @@ export class AppUpdateService {
       this.setSnapshot({
         stage: 'ready',
         targetVersion: info.version,
-        releaseName: `ORBIT ${info.version}`,
+        releaseName: `MT3K Launcher ${info.version}`,
         releaseNotes: safeReleaseNotes(info.releaseNotes),
         releasePageUrl: this.releasePageUrl(info.version),
         transferredBytes: undefined,
@@ -1553,7 +1553,7 @@ export class AppUpdateService {
           if (
             !entry.isFile() ||
             keepNames.has(entry.name) ||
-            !/^(?:ORBIT(?:-Beta)?-XboxMode-Setup-[a-zA-Z0-9.-]+-x64\.exe|ORBIT-MT3K-(?:App-[a-zA-Z0-9.-]+-x64\.zip|Setup-[a-zA-Z0-9.-]+-x64\.exe))(?:\.part)?$/.test(
+            !/^(?:ORBIT(?:-Beta)?-XboxMode-Setup-[a-zA-Z0-9.-]+-x64\.exe|(?:ORBIT-MT3K|MT3K-Launcher)-(?:App-[a-zA-Z0-9.-]+-x64\.zip|Setup-[a-zA-Z0-9.-]+-x64\.exe))(?:\.part)?$/.test(
               entry.name
             )
           ) {

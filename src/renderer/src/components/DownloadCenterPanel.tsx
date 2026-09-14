@@ -258,7 +258,7 @@ export function DownloadCenterPanel(): JSX.Element {
           <header className="flex min-h-20 items-center justify-between gap-3 border-b border-white/[0.1] px-5">
             <div className="min-w-0">
               <p className="text-[9px] font-black uppercase tracking-[0.24em] text-accent">
-                ORBIT // TRANSFER
+                MT3K // TRANSFER
               </p>
               <h2 id="download-center-title" className="truncate text-lg font-black text-white">
                 {t('downloads.center.title')}

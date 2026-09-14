@@ -253,8 +253,8 @@ export class CustomLibraryService {
     const folder = source === 'folder'
     const result = await dialog.showOpenDialog(mainWindow, {
       title: folder
-        ? t("ORBIT · Select game folder")
-        : t("ORBIT · Select game executable"),
+        ? t("MT3K Launcher · Select game folder")
+        : t("MT3K Launcher · Select game executable"),
       buttonLabel: t("Detect game"),
       properties: folder ? ['openDirectory'] : ['openFile'],
       filters: folder ? undefined : [{ name: t('Windows games'), extensions: ['exe'] }]
@@ -286,7 +286,7 @@ export class CustomLibraryService {
   async selectArtwork(mainWindow: BrowserWindow, draftId: string): Promise<CustomGameDraft | null> {
     const draft = requireDraft(this.drafts, draftId)
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: t("ORBIT · Select cover"),
+      title: t("MT3K Launcher · Select cover"),
       buttonLabel: t("Use image"),
       properties: ['openFile'],
       filters: [{ name: t('Images'), extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp'] }]
@@ -311,8 +311,8 @@ export class CustomLibraryService {
     const folder = source === 'folder'
     const result = await dialog.showOpenDialog(mainWindow, {
       title: folder
-        ? t("ORBIT · Select save folder")
-        : t("ORBIT · Select save file"),
+        ? t("MT3K Launcher · Select save folder")
+        : t("MT3K Launcher · Select save file"),
       buttonLabel: t("Use for backups"),
       properties: folder ? ['openDirectory'] : ['openFile']
     })

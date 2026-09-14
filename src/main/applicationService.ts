@@ -1052,7 +1052,7 @@ class ApplicationService {
       fullscreen: true,
       autoHideMenuBar: true,
       backgroundColor: '#05070c',
-      title: 'ORBIT · YouTube TV',
+      title: 'MT3K Launcher · YouTube TV',
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,

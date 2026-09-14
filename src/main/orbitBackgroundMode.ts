@@ -60,7 +60,7 @@ export class OrbitBackgroundMode {
         const icon = await app.getFileIcon(process.execPath, { size: 'small' })
         if (this.disposed) return
         this.tray = new Tray(icon)
-        this.tray.setToolTip('ORBIT')
+        this.tray.setToolTip('MT3K Launcher')
         this.tray.on('double-click', () => void this.activate())
         this.updateTray()
       } catch (error) {
@@ -117,7 +117,7 @@ export class OrbitBackgroundMode {
     const args = app.isPackaged ? [BACKGROUND_ARGUMENT] : [app.getAppPath(), BACKGROUND_ARGUMENT]
     app.setLoginItemSettings({ name: LOGIN_NAME, path: process.execPath, args, openAtLogin: enabled })
     this.refreshLoginItem()
-    if (enabled !== this.startsWithWindows) throw new Error('Windows could not change ORBIT startup. Check ORBIT in Windows Startup Apps.')
+    if (enabled !== this.startsWithWindows) throw new Error('Windows could not change MT3K Launcher startup. Check MT3K Launcher in Windows Startup Apps.')
   }
   private refreshLoginItem(): void {
     const args = app.isPackaged ? [BACKGROUND_ARGUMENT] : [app.getAppPath(), BACKGROUND_ARGUMENT]
@@ -143,9 +143,9 @@ export class OrbitBackgroundMode {
   }
   private updateTray(): void {
     this.tray?.setContextMenu(Menu.buildFromTemplate([
-      { label: t("Open ORBIT"), click: () => void this.activate() },
+      { label: t("Open MT3K Launcher"), click: () => void this.activate() },
       { type: 'separator' },
-      { label: t("Quit ORBIT completely"), click: () => app.quit() }
+      { label: t("Quit MT3K Launcher completely"), click: () => app.quit() }
     ]))
   }
   private send(): void {
