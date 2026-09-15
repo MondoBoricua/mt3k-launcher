@@ -1832,7 +1832,7 @@ export const english = {
     'settings.avatar.title': 'Player avatar',
     'settings.avatar.body': 'Choose the avatar MT3K Launcher shows in the top-left corner.',
     'settings.avatar.steamUnavailable': 'Connect Steam to use your Steam avatar.',
-    'settings.avatar.orbit': 'Orbit',
+    'settings.avatar.orbit': 'MT3K',
     'settings.avatar.nova': 'Nova',
     'settings.avatar.pulse': 'Pulse',
     'settings.avatar.drift': 'Drift',

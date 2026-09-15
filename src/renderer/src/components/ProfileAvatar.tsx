@@ -11,17 +11,21 @@ import {
 import type { ProfileAvatarId } from '@shared/ipc'
 import { useT } from '@renderer/i18n/useT'
 import type { TranslationKey } from '@renderer/i18n/translations'
+import mt3kLogo from '@renderer/assets/brand/mt3k-logo.png'
 
 type LocalAvatarId = Exclude<ProfileAvatarId, 'steam'>
 
 interface AvatarVisual {
   icon?: LucideIcon
+  /** Bundled artwork shown instead of the gradient tile (the MT3K mascot). */
+  image?: string
   gradient: string
   decoration: string
 }
 
 const AVATAR_VISUALS: Record<LocalAvatarId, AvatarVisual> = {
   orbit: {
+    image: mt3kLogo,
     gradient: 'from-accent to-accent-2',
     decoration: 'after:bg-white/35'
   },
@@ -136,6 +140,19 @@ export function ProfileAvatar({
   const fallbackId: LocalAvatarId = avatarId === 'steam' ? 'orbit' : avatarId
   const visual = AVATAR_VISUALS[fallbackId]
   const Icon = visual.icon
+
+  if (visual.image) {
+    return (
+      <span
+        role={label ? 'img' : undefined}
+        aria-label={label}
+        className={`relative inline-flex shrink-0 overflow-hidden rounded-[32%] border border-white/25 bg-[#171930] shadow-[0_8px_22px_rgba(0,0,0,0.32)] ${className}`}
+      >
+        <img src={visual.image} alt="" draggable={false} className="h-full w-full object-cover" />
+        <span className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-white/12" />
+      </span>
+    )
+  }
 
   return (
     <span

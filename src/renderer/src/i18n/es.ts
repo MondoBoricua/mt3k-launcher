@@ -1673,7 +1673,7 @@ export const spanish = {
   "settings.avatar.title": "Avatar del jugador",
   "settings.avatar.body": "Elige el avatar que MT3K Launcher muestra en la esquina superior izquierda.",
   "settings.avatar.steamUnavailable": "Conecta Steam para usar tu avatar de Steam.",
-  "settings.avatar.orbit": "Orbit",
+  "settings.avatar.orbit": "MT3K",
   "settings.avatar.nova": "Nova",
   "settings.avatar.pulse": "Pulse",
   "settings.avatar.drift": "Drift",

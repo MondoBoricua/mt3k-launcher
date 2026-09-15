@@ -1673,7 +1673,7 @@ export const russian = {
   "settings.avatar.title": "Аватар игрока",
   "settings.avatar.body": "Выберите аватар, который MT3K Launcher показывает в левом верхнем углу.",
   "settings.avatar.steamUnavailable": "Подключите Steam, чтобы использовать свой аватар Steam.",
-  "settings.avatar.orbit": "Orbit",
+  "settings.avatar.orbit": "MT3K",
   "settings.avatar.nova": "Nova",
   "settings.avatar.pulse": "Pulse",
   "settings.avatar.drift": "Drift",

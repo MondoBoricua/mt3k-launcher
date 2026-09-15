@@ -2,6 +2,12 @@
 
 MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
 
+## 0.1.4-mt3k.8
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.7.
+
+- **Avatar con la mascota.** El avatar por defecto, arriba a la izquierda y en el selector de avatares, muestra la mascota de MT3K en lugar del cuadro con la letra "O" de ORBIT. La opción se llama "MT3K". Si elegiste otro avatar, tu foto de Steam o una imagen propia, no cambia nada.
+
 ## 0.1.4-mt3k.7
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.6.
