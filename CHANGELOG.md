@@ -12,6 +12,10 @@ Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.6.
 - **Social SDK 1.10.19337.** El SDK es un componente cerrado de Discord y no está en el repositorio. GitHub Actions lo trae de un almacenamiento privado al compilar, verifica su hash y su contrato, y lo empaqueta dentro de la app. Las 76 funciones que usa el launcher se comprobaron contra esta versión.
 - **Primera vez.** Cada usuario inicia sesión con su propia cuenta de Discord desde la sección de amigos.
 
+### Ícono
+
+- **Mascota de MT3K.** El ícono del launcher, el instalador, los accesos directos y los logos de Xbox Mode usan ahora la mascota de MT3K con capucha y control, sobre fondo azul marino y acentos rojos. Reemplaza el ícono provisional de 0.1.4-mt3k.6.
+
 ## 0.1.4-mt3k.6
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.5.
