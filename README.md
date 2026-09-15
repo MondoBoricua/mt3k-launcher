@@ -48,6 +48,8 @@ El detalle por versión está en [CHANGELOG.md](CHANGELOG.md).
 
 Requisitos: Windows 11 x64. Mando recomendado, teclado y ratón soportados.
 
+**Si la pantalla de actualización te dio error** en 0.1.4-mt3k.8 o una versión anterior, baja e instala `MT3K-Launcher-Setup` una vez. Esas versiones tenían un fallo que impedía actualizar desde la app; se arregló en 0.1.4-mt3k.9.
+
 **Si venías de ORBIT MT3K Edition:** actualiza desde la app o instala encima. Se conservan la biblioteca, los ajustes, la carpeta `Documentos\ORBIT` de emuladores y ROMs, y el registro de Xbox Mode. Por compatibilidad, el ejecutable sigue llamándose `ORBIT.exe` y los datos siguen en `%APPDATA%\ORBIT`. Las releases publican también copias `ORBIT-MT3K-*` de los mismos archivos para que las versiones anteriores encuentren la actualización.
 
 **Detalles de esta build:**

@@ -2,6 +2,15 @@
 
 MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
 
+## 0.1.4-mt3k.9
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.8.
+
+### Arreglos
+
+- **Actualizaciones dentro de la app.** *Update now* fallaba siempre con "The installer could not be started or the previous update did not complete", tanto en escritorio como en Xbox Mode. Al preparar la actualización, el modo en segundo plano no creaba la marca de suspensión con el ID de esa actualización, y el servicio abortaba justo antes de lanzar el instalador o el ayudante. Ahora la crea, y la borra si la actualización falla. Hay una prueba nueva, `npm run verify:update-suspension`.
+- **Cómo pasar a esta versión.** Las versiones hasta 0.1.4-mt3k.8 tienen el fallo, así que para llegar a 0.1.4-mt3k.9 hay que usar el instalador una vez. Desde aquí, las actualizaciones dentro de la app deberían funcionar.
+
 ## 0.1.4-mt3k.8
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.7.

@@ -9,6 +9,11 @@ import { getOrbitBackgroundServiceLoginItemInstallation } from './orbitBackgroun
 import { orbitServicePipeNames, requestOrbitPipe } from './orbitServiceProtocol'
 import { orbitStartsThroughXboxMode } from './xboxModeStartup'
 import { startupLoginItemIsActive, windowsLoginItemLookupPath } from './windowsStartupLoginItem'
+import {
+  clearBackgroundAgentSuspension,
+  readBackgroundAgentSuspension,
+  suspendBackgroundAgent
+} from './orbitBackgroundServiceSuspension'
 
 export const BACKGROUND_ARGUMENT = '--orbit-background'
 const LOGIN_NAME = 'ORBIT'
@@ -124,13 +129,25 @@ export class OrbitBackgroundMode {
     const actual = app.getLoginItemSettings({ path: windowsLoginItemLookupPath(process.execPath), args })
     this.startsWithWindows = startupLoginItemIsActive(actual.launchItems, { name: LOGIN_NAME, path: process.execPath, args })
   }
-  async prepareForAppUpdate(_transactionId?: string): Promise<void> {
+  async prepareForAppUpdate(transactionId?: string): Promise<void> {
     await this.startup
     if (this.legacyCleanupFailed) throw new Error(this.error ?? 'The old background service could not be stopped')
+    // AppUpdateService renews this exact transaction right before it launches the
+    // installer or package helper; without the marker the renewal fails and the
+    // update aborts as "install-failed".
+    if (transactionId) {
+      await suspendBackgroundAgent(app.getPath('userData'), { transactionId, recoverAgent: false })
+    }
     this.suspended = true
     this.controller.updateSettings({ ...settingsStore.store, hardwareControlEnabled: false })
   }
-  async recoverFromFailedAppUpdate(_transactionId?: string): Promise<void> {
+  async recoverFromFailedAppUpdate(transactionId?: string): Promise<void> {
+    if (transactionId) {
+      const suspension = await readBackgroundAgentSuspension(app.getPath('userData'))
+      if (suspension?.transactionId === transactionId) {
+        await clearBackgroundAgentSuspension(app.getPath('userData'))
+      }
+    }
     this.suspended = false
     if (this.ready) this.controller.updateSettings(settingsStore.store)
   }
