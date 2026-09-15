@@ -3,8 +3,8 @@ import { readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import koffi from 'koffi'
 
-const EXPECTED_VERSION = '1.10.18687'
-const EXPECTED_SHA256 = 'e2db188f962c6586feb65e6c31a5db435fe00c4bc196d4e29bb712be72d62bff'
+const EXPECTED_VERSION = '1.10.19337'
+const EXPECTED_SHA256 = 'f9953495b0d6263cc0b926e70f00adc2e3dda478e216ac6c8b36ba23840ab8ee'
 const dllPath = resolve(
   process.cwd(),
   'resources',

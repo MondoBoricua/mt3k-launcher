@@ -22,7 +22,7 @@ import { steamAuthManager } from './steam/steamAuth'
 import { parseSteamCommunityFriendsHtml } from './steam/steamWebParsers'
 import { discordSocialService } from './discord/discordSocialService'
 import type { DiscordSocialSnapshot } from './discord/discordSocialProtocol'
-import { ORBIT_DISCORD_APPLICATION_ID } from './discord/discordApplication'
+import { MT3K_LAUNCHER_DISCORD_APPLICATION_ID } from './discord/discordApplication'
 import { epicAuthManager } from './epic/epicAuth'
 import {
   epicSocialPresence,
@@ -732,7 +732,7 @@ export class FriendsService extends EventEmitter {
     }
 
     const discordRefresh = async (): Promise<void> => {
-      const snapshot = await discordSocialService.refresh(ORBIT_DISCORD_APPLICATION_ID)
+      const snapshot = await discordSocialService.refresh(MT3K_LAUNCHER_DISCORD_APPLICATION_ID)
       this.mergeDiscord(snapshot)
     }
 
@@ -762,26 +762,26 @@ export class FriendsService extends EventEmitter {
 
   async connectProvider(provider: FriendsProvider): Promise<FriendsSnapshot> {
     if (provider !== 'discord') return this.getSnapshot()
-    const snapshot = await discordSocialService.connect(ORBIT_DISCORD_APPLICATION_ID)
+    const snapshot = await discordSocialService.connect(MT3K_LAUNCHER_DISCORD_APPLICATION_ID)
     return this.mergeDiscord(snapshot)
   }
 
   async disconnectProvider(provider: FriendsProvider): Promise<FriendsSnapshot> {
     if (provider !== 'discord') return this.getSnapshot()
-    const snapshot = await discordSocialService.disconnect(ORBIT_DISCORD_APPLICATION_ID)
+    const snapshot = await discordSocialService.disconnect(MT3K_LAUNCHER_DISCORD_APPLICATION_ID)
     return this.mergeDiscord(snapshot)
   }
 
   getDiscordChatHistory(userId: unknown, limit: unknown): Promise<DiscordChatHistory> {
-    return discordSocialService.getChatHistory(ORBIT_DISCORD_APPLICATION_ID, userId, limit)
+    return discordSocialService.getChatHistory(MT3K_LAUNCHER_DISCORD_APPLICATION_ID, userId, limit)
   }
 
   getDiscordChatInbox(): Promise<DiscordChatInbox> {
-    return discordSocialService.getChatInbox(ORBIT_DISCORD_APPLICATION_ID)
+    return discordSocialService.getChatInbox(MT3K_LAUNCHER_DISCORD_APPLICATION_ID)
   }
 
   getDiscordServers(): Promise<DiscordServerList> {
-    return discordSocialService.getServers(ORBIT_DISCORD_APPLICATION_ID)
+    return discordSocialService.getServers(MT3K_LAUNCHER_DISCORD_APPLICATION_ID)
   }
 
   async openDiscordServer(serverId: unknown): Promise<void> {
@@ -796,11 +796,11 @@ export class FriendsService extends EventEmitter {
   }
 
   sendDiscordChatMessage(userId: unknown, content: unknown): Promise<DiscordChatSendResult> {
-    return discordSocialService.sendChatMessage(ORBIT_DISCORD_APPLICATION_ID, userId, content)
+    return discordSocialService.sendChatMessage(MT3K_LAUNCHER_DISCORD_APPLICATION_ID, userId, content)
   }
 
   setDiscordChatVisible(showing: unknown): Promise<void> {
-    return discordSocialService.setShowingChat(ORBIT_DISCORD_APPLICATION_ID, showing)
+    return discordSocialService.setShowingChat(MT3K_LAUNCHER_DISCORD_APPLICATION_ID, showing)
   }
 
   async openProvider(provider: FriendsProvider): Promise<void> {

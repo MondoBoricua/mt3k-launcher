@@ -40,6 +40,30 @@ jobs:
       - name: Build renderer, preload and main
         run: npm run build
 
+      - name: Add Discord Social SDK runtime
+        # Discord's SDK is proprietary: it lives in a private repository and is only
+        # added to trusted builds. Pull requests build without Discord.
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          DISCORD_SDK_DEPLOY_KEY: ${{ secrets.DISCORD_SDK_DEPLOY_KEY }}
+          DISCORD_SDK_VERSION: 1.10.19337
+        run: |
+          if [ -z "$DISCORD_SDK_DEPLOY_KEY" ]; then echo "DISCORD_SDK_DEPLOY_KEY secret is missing"; exit 1; fi
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          printf '%s\n' "$DISCORD_SDK_DEPLOY_KEY" > "$tmp/discord-sdk-key"
+          chmod 600 "$tmp/discord-sdk-key"
+          GIT_SSH_COMMAND="ssh -i $tmp/discord-sdk-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            git clone --quiet --depth 1 git@github.com:MondoBoricua/mt3k-launcher-sdk.git "$tmp/discord-sdk"
+          rm -f "$tmp/discord-sdk-key"
+          mkdir -p resources/discord-social-sdk/win32-x64
+          cp "$tmp/discord-sdk/$DISCORD_SDK_VERSION/discord_partner_sdk.dll" resources/discord-social-sdk/win32-x64/
+          rm -rf "$tmp/discord-sdk"
+
+      - name: Verify Discord Social SDK runtime
+        if: github.event_name != 'pull_request'
+        run: npm run verify:discord
+
       - name: Package unsigned NSIS installer
         run: npx electron-builder --win nsis --x64 --config electron-builder.mt3k.yml --publish never
 
@@ -83,7 +107,7 @@ jobs:
 
             **This installer is not code-signed.** Windows SmartScreen will warn once: click *More info* → *Run anyway*. Verify the download against `SHA256SUMS.txt` before installing.
 
-            Download `MT3K-Launcher-Setup-*.exe`. When setup finishes it offers to register MT3K Launcher as the Xbox Mode home app through Windows Developer Mode; Xbox Mode copies update through `MT3K-Launcher-App-*.zip`. The `ORBIT-MT3K-*` files are identical copies so builds from before the rename can still update. Plus features and in-app updates are included. Not included: a signed Xbox Mode AppX and the Discord Social SDK.
+            Download `MT3K-Launcher-Setup-*.exe`. When setup finishes it offers to register MT3K Launcher as the Xbox Mode home app through Windows Developer Mode; Xbox Mode copies update through `MT3K-Launcher-App-*.zip`. The `ORBIT-MT3K-*` files are identical copies so builds from before the rename can still update. Plus features, Discord (friends, presence and messages) and in-app updates are included. The Discord Social SDK is Discord's proprietary component, shipped only inside the app under Discord's terms. Not included: a signed Xbox Mode AppX.
           files: |
             release/*.exe
             release/*.zip

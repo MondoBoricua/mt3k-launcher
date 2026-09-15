@@ -2,6 +2,16 @@
 
 MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
 
+## 0.1.4-mt3k.7
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.6.
+
+### Discord
+
+- **Integración activada.** Amigos, presencia, mensajes directos y servidores de Discord funcionan dentro del launcher. Usa la aplicación de Discord propia de MT3K Launcher en lugar de la de ORBIT.
+- **Social SDK 1.10.19337.** El SDK es un componente cerrado de Discord y no está en el repositorio. GitHub Actions lo trae de un almacenamiento privado al compilar, verifica su hash y su contrato, y lo empaqueta dentro de la app. Las 76 funciones que usa el launcher se comprobaron contra esta versión.
+- **Primera vez.** Cada usuario inicia sesión con su propia cuenta de Discord desde la sección de amigos.
+
 ## 0.1.4-mt3k.6
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.5.

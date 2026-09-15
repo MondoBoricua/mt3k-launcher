@@ -1,7 +1,7 @@
 const { resolve } = require('node:path')
 const { app, utilityProcess } = require('electron')
 
-const expectedVersion = '1.10.18687'
+const expectedVersion = '1.10.19337'
 const workerPath = resolve(__dirname, '..', 'out', 'main', 'discordSocialWorker.js')
 const sdkPath = resolve(
   process.cwd(),
@@ -21,7 +21,7 @@ const fail = (message) => {
 
 app.whenReady().then(() => {
   const child = utilityProcess.fork(workerPath, [sdkPath, String(process.pid)], {
-    serviceName: 'ORBIT Discord Social Verification',
+    serviceName: 'MT3K Launcher Discord Social Verification',
     stdio: 'pipe'
   })
   const timer = setTimeout(() => fail('Discord utility worker verification timed out'), 15_000)
@@ -45,13 +45,13 @@ app.whenReady().then(() => {
         type: 'request',
         id: 2,
         command: 'refresh',
-        applicationId: '1526906410359848990'
+        applicationId: '1549231863346757663'
       })
       child.postMessage({
         type: 'request',
         id: 4,
         command: 'chat-history',
-        applicationId: '1526906410359848990',
+        applicationId: '1549231863346757663',
         recipientId: '1526906410359848991',
         limit: 50
       })
@@ -59,13 +59,13 @@ app.whenReady().then(() => {
         type: 'request',
         id: 5,
         command: 'chat-inbox',
-        applicationId: '1526906410359848990'
+        applicationId: '1549231863346757663'
       })
       child.postMessage({
         type: 'request',
         id: 6,
         command: 'servers',
-        applicationId: '1526906410359848990'
+        applicationId: '1549231863346757663'
       })
       return
     }

@@ -33,6 +33,7 @@ Empezó como **ORBIT MT3K Edition**, un fork de ORBIT 0.1.4. En septiembre de 20
 | **Xbox Mode desde el instalador**: al terminar la instalación ofrece registrarse como app de inicio de Xbox Mode y mantiene el registro al día. | 0.1.4-mt3k.5 |
 | **"Iniciar con Windows" arreglado** en instalaciones con espacios en la ruta. | 0.1.4-mt3k.5 |
 | **Nombre e identidad propios**: MT3K Launcher, con ícono nuevo, sin perder datos al actualizar desde la MT3K Edition. | 0.1.4-mt3k.6 |
+| **Discord**: amigos, presencia, mensajes directos y servidores dentro del launcher, con la aplicación de Discord propia de MT3K Launcher. | 0.1.4-mt3k.7 |
 
 El detalle por versión está en [CHANGELOG.md](CHANGELOG.md).
 
@@ -52,7 +53,7 @@ Requisitos: Windows 11 x64. Mando recomendado, teclado y ratón soportados.
 **Detalles de esta build:**
 
 - **Sin firma de código.** Las actualizaciones se verifican con el SHA-256 que GitHub publica para cada archivo.
-- **Sin Discord Social SDK.** El binario de Discord es propietario y no está en el repositorio, así que la presencia de Discord queda desactivada.
+- **Discord incluido.** Amigos, presencia, mensajes y servidores funcionan con la cuenta de Discord de cada usuario. El Social SDK es un componente cerrado de Discord: no está en este repositorio y el build oficial lo agrega al compilar.
 - **Funciones Plus.** En ORBIT, Plus es una membresía de pago. MT3K Launcher las activa en local, sin contactar Patreon, Gumroad ni ningún servidor, así que no hay pestaña de Plus ni nada que activar.
 
 ## Xbox Mode (experimental)
@@ -103,6 +104,8 @@ npx electron-builder --win nsis --x64 --config electron-builder.mt3k.yml --publi
 
 El instalador queda en `release/`. En GitHub Actions, cada push a `mt3k` deja el instalador como artefacto del workflow [`build-windows`](.github/workflows/build-windows.yml). Una etiqueta con el formato `v0.1.4-mt3k.N` publica una release con el instalador, el zip de la app para Xbox Mode, `latest.yml` y `SHA256SUMS.txt`.
 
+Las builds locales no traen Discord. Para probarlo, crea tu propia aplicación en el [portal de desarrolladores de Discord](https://discord.com/developers/applications), baja el Social SDK desde *Games → Social SDK → Downloads* y copia `discord_partner_sdk.dll` a `resources/discord-social-sdk/win32-x64/`.
+
 ### Verificar el Home en distintos tamaños
 
 El proyecto trae un harness que monta el Home real con datos de prueba en una ventana Electron offscreen y saca capturas:
@@ -132,4 +135,4 @@ MT3K Launcher es software libre bajo la [GNU GPL v3](LICENSE), con la [excepció
 
 ---
 
-**English.** MT3K Launcher is a controller-first game launcher for Windows based on ORBIT by Luis Garcia. It started as the ORBIT MT3K Edition fork of ORBIT 0.1.4 and continues independently since ORBIT's public repository disappeared in September 2026; it is not affiliated with ORBIT or its author. It adds ultrawide / 32:9 Home support, Steam removable-drive fixes, Steam metadata search, locally unlocked Plus features, in-app updates verified against GitHub's SHA-256 digests, and an experimental Xbox Mode registration through Windows Developer Mode that the installer offers. Updating from the MT3K Edition keeps your library, settings and Xbox Mode registration. GPL-3.0; no Discord SDK in these builds. See [CHANGELOG.md](CHANGELOG.md).
+**English.** MT3K Launcher is a controller-first game launcher for Windows based on ORBIT by Luis Garcia. It started as the ORBIT MT3K Edition fork of ORBIT 0.1.4 and continues independently since ORBIT's public repository disappeared in September 2026; it is not affiliated with ORBIT or its author. It adds ultrawide / 32:9 Home support, Steam removable-drive fixes, Steam metadata search, locally unlocked Plus features, in-app updates verified against GitHub's SHA-256 digests, and an experimental Xbox Mode registration through Windows Developer Mode that the installer offers. Updating from the MT3K Edition keeps your library, settings and Xbox Mode registration. GPL-3.0; the proprietary Discord Social SDK is added at build time and is not part of this repository. See [CHANGELOG.md](CHANGELOG.md).

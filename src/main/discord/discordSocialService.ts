@@ -37,7 +37,7 @@ const MAX_CHAT_CONVERSATIONS = 500
 const MAX_MESSAGE_LENGTH = 2_000
 const MAX_CHAT_HISTORY = 200
 const WORKER_ENTRY = 'discordSocialWorker.js'
-const SDK_VERSION = '1.10.18687'
+const SDK_VERSION = '1.10.19337'
 
 interface StoredDiscordAuth {
   applicationId: string

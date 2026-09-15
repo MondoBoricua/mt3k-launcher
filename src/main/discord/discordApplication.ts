@@ -1,2 +1,2 @@
-/** Public Discord application identity used by ORBIT's Social SDK login flow. */
-export const ORBIT_DISCORD_APPLICATION_ID = '1526906410359848990'
+/** Public Discord application identity (MT3K Launcher) used by the Social SDK login flow. */
+export const MT3K_LAUNCHER_DISCORD_APPLICATION_ID = '1549231863346757663'
