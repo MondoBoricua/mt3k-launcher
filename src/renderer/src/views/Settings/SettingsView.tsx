@@ -1,3 +1,5 @@
+import { ATTRACT_IDLE_MINUTES } from '@shared/attractModePolicy'
+import { clearCaptures } from '@renderer/state/capturesStore'
 import { type Language, languageLocale } from '@shared/language'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -635,6 +637,23 @@ const pageVariants = {
 
 export function SettingsView(): JSX.Element {
   const containerRef = useAutoFocus<HTMLDivElement>()
+  const attractModeEnabled = usePreferencesStore((s) => s.attractModeEnabled)
+  const attractModeIdleMinutes = usePreferencesStore((s) => s.attractModeIdleMinutes)
+  const captureShelfEnabled = usePreferencesStore((s) => s.captureShelfEnabled)
+  const saveShowcase = usePreferencesStore((s) => s.setShowcaseSettings)
+  const [showcaseSaving, setShowcaseSaving] = useState(false)
+  const [showcaseError, setShowcaseError] = useState(false)
+  const updateShowcase = async (partial: Parameters<typeof saveShowcase>[0]): Promise<void> => {
+    setShowcaseSaving(true)
+    setShowcaseError(false)
+    try {
+      await saveShowcase(partial)
+      if (partial.captureShelfEnabled === false) clearCaptures()
+    } catch (error) {
+      console.warn('[attract-captures] Settings save failed', error)
+      setShowcaseError(true)
+    } finally { setShowcaseSaving(false) }
+  }
   const controllerLabels = useControllerButtonLabels()
   const t = useT()
   useEffect(
@@ -2145,6 +2164,29 @@ export function SettingsView(): JSX.Element {
 
             {page === 'experience' && (
               <div className="mt-3 space-y-2">
+                {showcaseError && <p role="alert" className="text-sm text-amber-200">{t('showcase.saveError')}</p>}
+                <SettingsSection id="attract-mode" icon={Eye} title={t('attract.title')} description={t('attract.body')}>
+                  <SettingsToggle id="attractModeEnabled" active={attractModeEnabled} title={t('attract.enable')}
+                    description={t('attract.body')} defaultInactive disabled={showcaseSaving}
+                    onChange={(active) => void updateShowcase({ attractModeEnabled: active })} t={t} />
+                  {attractModeEnabled && <div className="mt-4">
+                    <p className="mb-2 text-sm text-white/70">{t('attract.delay')}</p>
+                    <div className="flex flex-wrap gap-2" role="group" aria-label={t('attract.delay')}>
+                      {ATTRACT_IDLE_MINUTES.map((minutes) => <FocusableButton variant="ghost" key={minutes} data-focusable disabled={showcaseSaving}
+                        aria-pressed={attractModeIdleMinutes === minutes}
+                        className={`rounded-full border px-5 py-3 text-sm data-[focused=true]:ring-2 data-[focused=true]:ring-accent ${attractModeIdleMinutes === minutes ? '!border-accent !bg-accent/20 !text-white' : 'border-white/10 text-muted'}`}
+                        onClick={() => void updateShowcase({ attractModeIdleMinutes: minutes })}>
+                        {t('attract.minutes', { minutes })}
+                      </FocusableButton>)}
+                    </div>
+                  </div>}
+                </SettingsSection>
+                <SettingsSection id="captures" icon={ImageIcon} title={t('captures.title')} description={t('captures.body')}>
+                  <SettingsToggle id="captureShelfEnabled" active={captureShelfEnabled} title={t('captures.enable')}
+                    description={t('captures.body')} defaultInactive disabled={showcaseSaving}
+                    onChange={(active) => void updateShowcase({ captureShelfEnabled: active })} t={t} />
+                </SettingsSection>
+
                 <SettingsSection
                   id="visibility"
                   icon={Eye}

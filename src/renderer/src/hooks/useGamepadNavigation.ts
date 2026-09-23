@@ -1,3 +1,5 @@
+import { useAttractModeStore } from '@renderer/state/attractModeStore'
+import { usePreferencesStore as attractPreferences } from '@renderer/state/preferencesStore'
 import { useEffect } from 'react'
 import { moveFocus, type NavDirection } from '@renderer/lib/spatialNavigation'
 import { dispatchBackInput, triggerBack } from '@renderer/lib/backHandlerStack'
@@ -357,6 +359,7 @@ export function useGamepadNavigation(): void {
       prevButtons[buttonIndex] = true
     }
 
+    let consumeAttractWake = false
     function pollGamepads(now: number): void {
       const pads = Array.from(navigator.getGamepads?.() ?? []).filter(
         (pad): pad is Gamepad => pad !== null
@@ -379,6 +382,20 @@ export function useGamepadNavigation(): void {
           .setActiveController('steam', currentNativeController.id)
       }
       const hasControllerActivity = hasGamepadActivity || hasNativeControllerActivity
+      if (attractPreferences.getState().attractModeEnabled) {
+        const attract = useAttractModeStore.getState()
+        if (hasControllerActivity) {
+          consumeAttractWake ||= attract.active
+          attract.touch()
+        }
+        if (consumeAttractWake) {
+          consumeAttractWake = hasControllerActivity
+          scheduleNextPoll(pads.length > 0 || hasNativeController)
+          return
+        }
+      } else {
+        consumeAttractWake = false
+      }
       const anyButtonPressed = (buttonIndex: number): boolean =>
         pads.some((pad) => isPressed(pad.buttons[buttonIndex])) ||
         nativeControllerButtonPressed(currentNativeController, buttonIndex)

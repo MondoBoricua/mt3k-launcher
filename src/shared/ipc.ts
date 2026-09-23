@@ -470,6 +470,9 @@ export interface OrbitBackgroundServiceStatus {
 }
 
 export interface OrbitSettings {
+  attractModeEnabled?: boolean
+  attractModeIdleMinutes?: number
+  captureShelfEnabled?: boolean
   backgroundModeEnabled?: boolean
   startWithWindows?: boolean
   theme: ThemeId
@@ -1903,6 +1906,10 @@ export const IPC = {
   gameAchievementsResolve: 'game:achievements:resolve',
   gameAchievementGuideResolve: 'game:achievement-guide:resolve',
   gameAchievementsSync: 'game:achievements:sync',
+  attractArtwork: 'attract:artwork',
+  capturesList: 'captures:list',
+  capturesOpen: 'captures:open',
+  capturesOpenFolder: 'captures:open-folder',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   steamWebApiCredentialGet: 'steam:web-api-credential:get',

@@ -11,6 +11,7 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "verify:attract-captures": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-attract-captures.ts",
     "verify:languages": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-languages.ts",
     "verify:languages:live": "electron scripts/verify-languages-live.cjs",
     "verify:onboarding-sync": "node --experimental-strip-types scripts/verify-onboarding-sync.ts",

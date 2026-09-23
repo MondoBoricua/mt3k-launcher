@@ -1,3 +1,5 @@
+import { FocusableButton } from '@renderer/components/FocusableButton'
+import { useCapturesStore } from '@renderer/state/capturesStore'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
@@ -287,6 +289,7 @@ export function LibraryView(): JSX.Element {
   const revealLockedRef = useRef(false)
   const revealUnlockTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const t = useT()
+  const captureShelfEnabled = usePreferencesStore((s) => s.captureShelfEnabled)
   const sortOptions: LibrarySelectOption<LibrarySortOrder>[] = [
     { value: 'installed-first', label: t('library.sort.installedFirst') },
     { value: 'title-ascending', label: t('library.sort.titleAscending') },
@@ -885,6 +888,8 @@ export function LibraryView(): JSX.Element {
                 </motion.button>
               )
             })}
+            {captureShelfEnabled && <FocusableButton variant="ghost" className="shrink-0 !px-3 !py-2"
+              onClick={() => useCapturesStore.getState().showPanel()}>{t('captures.title')}</FocusableButton>}
             <button
               ref={collectionButtonRef}
               data-focusable

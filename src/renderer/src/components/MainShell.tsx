@@ -1,3 +1,6 @@
+import { AttractMode } from './AttractMode'
+import { CapturesPanel } from './CapturesPanel'
+import { useCapturesStore } from '@renderer/state/capturesStore'
 import {
   lazy,
   Suspense,
@@ -73,6 +76,9 @@ export function MainShell(): JSX.Element {
   const initDownloads = useDownloadStore((state) => state.init)
   const downloadCenterOpen = useDownloadStore((state) => state.centerOpen)
   const refreshStoreIfStale = useStoreStore((s) => s.refreshIfStale)
+  const attractModeEnabled = usePreferencesStore((s) => s.attractModeEnabled)
+  const captureShelfEnabled = usePreferencesStore((s) => s.captureShelfEnabled)
+  const capturesOpen = useCapturesStore((s) => s.panelOpen)
   const detailGameId = useGameDetailStore((s) => s.gameId)
   const launcherMusicEnabled = usePreferencesStore((state) => state.launcherMusic)
   const launcherMusicVolume = usePreferencesStore((state) => state.launcherMusicVolume)
@@ -344,6 +350,8 @@ export function MainShell(): JSX.Element {
           fadeSeconds={gameTitleMusicFadeSeconds}
         />
         <DiscordChatController />
+        {attractModeEnabled && <AttractMode launchPhase={launchStatus.phase} />}
+        {captureShelfEnabled && capturesOpen && <CapturesPanel />}
         <div ref={shellRef} className="flex h-full w-full flex-col overflow-hidden">
           <TopBar />
           <main className="relative flex-1 overflow-hidden">
