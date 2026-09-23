@@ -2094,6 +2094,7 @@ export const russian = {
   "saveRestore.dialog.confirmHint": "Нажмите ещё раз, чтобы заменить текущее сохранение этой копией.",
   "saveRestore.dialog.restoring": "Восстановление…",
   "saveRestore.dialog.entryMeta": "{date} · файлов: {files} · {size}",
+    "notification.saveRestore.cleanupWarning": "Сохранение восстановлено. Предыдущее сохранение не удалось удалить; оно осталось рядом с папкой сохранения. Резервная копия: {safetyBackup}.",
   "notification.saveRestore.success.title": "Сохранение восстановлено",
   "notification.saveRestore.success.body":
     "Сохранение восстановлено. Резервная копия сохранена как {safetyBackup}.",

@@ -2282,6 +2282,7 @@ export const english = {
     'saveRestore.dialog.confirmHint': 'Press again to replace the current save with this backup.',
     'saveRestore.dialog.restoring': 'Restoring…',
     'saveRestore.dialog.entryMeta': '{date} · {files} files · {size}',
+    "notification.saveRestore.cleanupWarning": "Save restored. The previous save could not be removed and remains beside the save path. Safety backup: {safetyBackup}.",
     'notification.saveRestore.success.title': 'Save restored',
     'notification.saveRestore.success.body':
       'Your save was restored. A safety backup was kept as {safetyBackup}.',

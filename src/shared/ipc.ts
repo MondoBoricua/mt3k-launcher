@@ -1405,6 +1405,7 @@ export interface LocalGameBackupEntry {
 }
 
 export type LocalGameRestoreFailureReason =
+  | 'restore-in-progress'
   | 'game-running'
   | 'invalid-game'
   | 'invalid-backup'
@@ -1413,7 +1414,7 @@ export type LocalGameRestoreFailureReason =
   | 'rollback-failed'
 
 export interface LocalGameRestoreResult {
-  state: 'success' | 'failed'
+  state: 'success' | 'cleanup-failed' | 'failed'
   completedAt: number
   safetyBackupId?: string
   reason?: LocalGameRestoreFailureReason
@@ -1611,6 +1612,7 @@ export const GAME_LAUNCH_CANCEL_WINDOW_MS = 3_000
 export const GAME_TRACKING_STOP_HOLD_MS = 3_000
 
 export type GameLaunchFailureReason =
+  | 'restore-in-progress'
   | 'launch-rejected'
   | 'not-started'
   | 'startup-ended'

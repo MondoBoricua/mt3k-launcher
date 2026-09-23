@@ -460,11 +460,11 @@ export class UnifiedLibraryService extends EventEmitter {
   restoreCustomGameBackup(
     gameId: string,
     backupId: string,
-    launchStatus: GameLaunchStatus
+    getLaunchStatus: () => GameLaunchStatus
   ): Promise<LocalGameRestoreResult> {
     const game = gameRepository.getGame(gameId)
     if (!game || game.provider !== 'local') throw new Error('Custom game is not available')
-    return restoreLocalGameBackup(game, backupId, launchStatus, customLibraryService)
+    return restoreLocalGameBackup(game, backupId, getLaunchStatus, customLibraryService)
   }
 
   getRetroLibraryStatus(): RetroLibraryStatus {

@@ -1,3 +1,5 @@
+import { isRestoreInProgress } from './saveRestoreService'
+import { t } from './i18n'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { win32 as path } from 'node:path'
@@ -1128,6 +1130,11 @@ export class GameSessionManager extends EventEmitter {
 
     const token = ++this.activeToken
     this.activeGame = game
+    if (isRestoreInProgress(game.id)) {
+      this.update({ phase: 'error', gameId: game.id, gameName: game.name, provider: game.provider })
+      await this.fail(token, t('saveRestoreLaunchBlocked'), 'restore-in-progress')
+      return
+    }
     const requestedAt = Date.now()
     const cancelableUntil = requestedAt + GAME_LAUNCH_CANCEL_WINDOW_MS
     this.launchTargetRevealed = false
@@ -1684,7 +1691,7 @@ export class GameSessionManager extends EventEmitter {
     const launchWasAcceptedWithoutMonitoring =
       failureReason === 'monitor-unavailable' && Boolean(this.status.startedAt)
     const shouldRestoreOrbit =
-      failureReason === 'launch-rejected' ||
+      failureReason === 'launch-rejected' || failureReason === 'restore-in-progress' ||
       (!launchWasAcceptedWithoutMonitoring && !this.mainWindow.isMinimized())
     // A monitoring failure happens after the OS accepted the launch request.
     // Yield to that game instead of covering it with an error screen.

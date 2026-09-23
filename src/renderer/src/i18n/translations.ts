@@ -2298,6 +2298,7 @@ export const translations = {
     'saveRestore.dialog.confirmHint': 'Erneut drücken, um den aktuellen Stand durch dieses Backup zu ersetzen.',
     'saveRestore.dialog.restoring': 'Wird wiederhergestellt…',
     'saveRestore.dialog.entryMeta': '{date} · {files} Dateien · {size}',
+    "notification.saveRestore.cleanupWarning": "Spielstand wiederhergestellt. Der vorherige Spielstand konnte nicht gelöscht werden und bleibt neben dem Speicherpfad erhalten. Sicherheitskopie: {safetyBackup}.",
     'notification.saveRestore.success.title': 'Savegame wiederhergestellt',
     'notification.saveRestore.success.body':
       'Dein Savegame wurde wiederhergestellt. Ein Sicherheitsbackup wurde als {safetyBackup} behalten.',

@@ -1,4 +1,5 @@
 import { t } from './i18n'
+import { assertNoLinks } from './saveRestoreFiles'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
 import {
@@ -14,7 +15,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { basename, dirname, extname, join, parse } from 'node:path'
-import { resolveSaveBackupRoot, sameOrInside } from '@shared/saveRestorePolicy'
+import { resolveSaveBackupRoot, sameOrInside, validPayloadName } from '@shared/saveRestorePolicy'
 import { settingsStore } from './settingsStore'
 import { pathToFileURL } from 'node:url'
 import { app, dialog, nativeImage, shell, type BrowserWindow } from 'electron'
@@ -378,7 +379,9 @@ export class CustomLibraryService {
     const temporaryDirectory = `${finalDirectory}.partial-${randomUUID()}`
 
     try {
+      await assertNoLinks(local.savePath)
       const sourcePath = await realpath(local.savePath)
+      if (!validPayloadName(basename(sourcePath))) throw new Error('Invalid save payload name')
       const sourceInfo = await lstat(sourcePath)
       if (
         sourceInfo.isDirectory() &&
@@ -392,7 +395,10 @@ export class CustomLibraryService {
           recursive: true,
           force: false,
           errorOnExist: true,
-          verbatimSymlinks: true
+          filter: async (entry) => {
+            if ((await lstat(entry)).isSymbolicLink()) throw new Error('Save backup link rejected')
+            return true
+          }
         })
       } else if (sourceInfo.isFile()) {
         await copyFile(sourcePath, join(temporaryDirectory, basename(sourcePath)))
@@ -401,15 +407,24 @@ export class CustomLibraryService {
       }
       await writeFile(
         join(temporaryDirectory, 'orbit-backup.json'),
-        JSON.stringify({ gameId: game.id, gameName: game.name, sourcePath, createdAt: completedAt }, null, 2),
+        JSON.stringify({
+          gameId: game.id,
+          gameName: game.name,
+          sourcePath,
+          createdAt: completedAt,
+          payloadName: basename(sourcePath),
+          payloadKind: sourceInfo.isDirectory() ? 'directory' : 'file'
+        }, null, 2),
         'utf8'
       )
       await mkdir(backupRoot, { recursive: true })
       await rename(temporaryDirectory, finalDirectory)
       await this.rotateBackups(backupRoot)
       return { state: 'success', completedAt, backupPath: finalDirectory }
-    } catch {
-      await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined)
+    } catch (error) {
+      console.warn('[save-restore] Backup failed', error)
+      await rm(temporaryDirectory, { recursive: true, force: true }).catch((cleanupError) =>
+        console.warn('[save-restore] Partial backup cleanup failed', cleanupError))
       return { state: 'failed', completedAt }
     }
   }

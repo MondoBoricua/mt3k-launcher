@@ -308,6 +308,12 @@ async function startOrbitUi(): Promise<void> {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // Load the persisted local library and finish recovery before launch IPC is available.
+  const { libraryService } = await import('./library/libraryService')
+  libraryService.hydrateFromDisk()
+  const { recoverInterruptedRestores } = await import('./saveRestoreService')
+  await recoverInterruptedRestores()
+
   const mainWindow = createWindow(registerIpcHandlers)
   const steamControllerInput = new SteamControllerInputService(mainWindow)
   steamControllerInput.start()

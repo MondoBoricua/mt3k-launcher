@@ -13,7 +13,7 @@ interface Props {
   gameId: string
   gameName: string
   onClose: () => void
-  onRestored: (result: { safetyBackupId?: string }) => void
+  onRestored: (result: { safetyBackupId?: string; cleanupFailed?: boolean }) => void
   onRestoreFailed: (reason?: string) => void
 }
 
@@ -90,8 +90,8 @@ export function SaveRestoreBackupDialog({
     setConfirmId(null)
     try {
       const result = await window.api.library.custom.restoreBackup(gameId, entry.id)
-      if (result.state === 'success') {
-        onRestored({ safetyBackupId: result.safetyBackupId })
+      if (result.state === 'success' || result.state === 'cleanup-failed') {
+        onRestored({ safetyBackupId: result.safetyBackupId, cleanupFailed: result.state === 'cleanup-failed' })
         onClose()
         return
       }

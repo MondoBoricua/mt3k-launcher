@@ -1,4 +1,4 @@
-import { basename, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 /** Comprueba si `child` es igual a `parent` o una ruta dentro de él (sin seguir symlinks). */
 export function sameOrInside(parent: string, child: string): boolean {
@@ -56,6 +56,8 @@ export interface OrbitBackupManifest {
   gameName: string
   sourcePath: string
   createdAt: number
+  payloadName?: string
+  payloadKind?: 'file' | 'directory'
 }
 
 export function parseOrbitBackupManifest(raw: unknown): OrbitBackupManifest | null {
@@ -65,7 +67,11 @@ export function parseOrbitBackupManifest(raw: unknown): OrbitBackupManifest | nu
   if (typeof record.gameName !== 'string' || !record.gameName.trim()) return null
   if (typeof record.sourcePath !== 'string' || !record.sourcePath.trim()) return null
   if (typeof record.createdAt !== 'number' || !Number.isFinite(record.createdAt)) return null
+  const hasPayload = 'payloadName' in record || 'payloadKind' in record
+  if (hasPayload && (!validPayloadName(record.payloadName) ||
+    (record.payloadKind !== 'file' && record.payloadKind !== 'directory'))) return null
   return {
+    ...(hasPayload ? { payloadName: record.payloadName as string, payloadKind: record.payloadKind as 'file' | 'directory' } : {}),
     gameId: record.gameId.trim(),
     gameName: record.gameName.trim(),
     sourcePath: record.sourcePath.trim(),
@@ -119,7 +125,7 @@ export function refuseBackupDirectoryPath(
   const normalizedBackup = resolve(backupDirectoryPath)
   const normalizedRoot = resolve(gameBackupRoot)
   if (basename(normalizedBackup).includes('.partial-')) return 'partial-directory'
-  if (!sameOrInside(normalizedRoot, normalizedBackup)) return 'outside-game-root'
+  if (normalizedBackup === normalizedRoot || dirname(normalizedBackup) !== normalizedRoot) return 'outside-game-root'
   return null
 }
 
@@ -134,6 +140,7 @@ export type RestorePlanFailureReason =
   | 'manifest-game-mismatch'
   | 'missing-payload'
   | 'destination-not-absolute'
+  | 'payload-kind-mismatch'
 
 /** Plan puro para copiar el payload del backup hacia el save actual. */
 export function planRestoreFromBackup(input: {
@@ -145,7 +152,10 @@ export function planRestoreFromBackup(input: {
   saveIsDirectory: boolean
 }): RestorePlan | RestorePlanFailureReason {
   if (input.manifest.gameId !== input.expectedGameId) return 'manifest-game-mismatch'
-  if (!input.payloadName || input.payloadName === 'orbit-backup.json') return 'missing-payload'
+  if (!validPayloadName(input.payloadName)) return 'missing-payload'
+  if (input.manifest.payloadName && input.manifest.payloadName !== input.payloadName) return 'missing-payload'
+  if (input.manifest.payloadKind && (input.manifest.payloadKind === 'directory') !== input.saveIsDirectory) return 'payload-kind-mismatch'
+  if (!isAbsolute(input.currentSavePath.trim())) return 'destination-not-absolute'
   const destinationPath = resolve(input.currentSavePath.trim())
   if (!isAbsolute(destinationPath)) return 'destination-not-absolute'
 
@@ -184,4 +194,24 @@ export type SimulatedRestoreOutcome = 'success' | 'failure'
 /** Decide si hay que ejecutar rollback después de un restore (para tests sin disco). */
 export function shouldRollbackAfterRestore(outcome: SimulatedRestoreOutcome): boolean {
   return outcome === 'failure'
+}
+
+/** Portable single path component: also reject Windows separators, streams and aliases. */
+export function validPayloadName(name: unknown): name is string {
+  return typeof name === 'string' && name.length > 0 && name !== '.' && name !== '..' &&
+    name.toLowerCase() !== 'orbit-backup.json' && !/[<>:"/\\|?*\u0000-\u001f]/u.test(name) &&
+    !/[. ]$/u.test(name)
+}
+
+export function selectBackupPayload(manifest: OrbitBackupManifest, entries: readonly string[]): string | null {
+  if (manifest.payloadName) return entries.includes(manifest.payloadName) ? manifest.payloadName : null
+  return entries.length === 1 && validPayloadName(entries[0]) ? entries[0] : null
+}
+
+export function restoreBlockedBySession(
+  gameId: string,
+  status: { gameId?: string; phase: string }
+): boolean {
+  return status.gameId === gameId &&
+    (status.phase === 'launching' || status.phase === 'running' || status.phase === 'returning')
 }
