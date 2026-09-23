@@ -537,6 +537,8 @@ export interface OrbitSettings {
   hardwareControlEnabled: boolean
   hardwareControlButton: HardwareControlButton
   hardwareControlHoldSeconds: HardwareControlHoldSeconds
+  /** Carpeta raíz para backups de save; vacío = userData/save-backups. */
+  saveBackupDirectory?: string
 }
 
 export type StoreLoginState = 'idle' | 'waiting-for-browser' | 'success' | 'error'
@@ -1358,6 +1360,34 @@ export interface LocalGameBackupResult {
   backupPath?: string
 }
 
+export interface LocalGameBackupEntry {
+  id: string
+  createdAt: number
+  fileCount: number
+  totalBytes: number
+}
+
+export type LocalGameRestoreFailureReason =
+  | 'game-running'
+  | 'invalid-game'
+  | 'invalid-backup'
+  | 'safety-backup-failed'
+  | 'restore-failed'
+  | 'rollback-failed'
+
+export interface LocalGameRestoreResult {
+  state: 'success' | 'failed'
+  completedAt: number
+  safetyBackupId?: string
+  reason?: LocalGameRestoreFailureReason
+}
+
+export interface SaveBackupDirectoryStatus {
+  configuredPath?: string
+  effectivePath: string
+  isDefault: boolean
+}
+
 /**
  * Provider-neutral library record. `id` is the durable identity used by ORBIT's
  * database (`<provider>:<providerGameId>`); `appId` remains Steam-specific data
@@ -1843,6 +1873,11 @@ export const IPC = {
   customGameRemove: 'library:custom:remove',
   customGameBackup: 'library:custom:backup',
   customGameOpenBackups: 'library:custom:backups:open',
+  customGameListBackups: 'library:custom:backups:list',
+  customGameRestoreBackup: 'library:custom:backup:restore',
+  settingsSaveBackupDirectoryGet: 'settings:save-backup-directory:get',
+  settingsSaveBackupDirectoryChoose: 'settings:save-backup-directory:choose',
+  settingsSaveBackupDirectoryUseDefault: 'settings:save-backup-directory:use-default',
   retroLibraryStatusGet: 'library:retro:status:get',
   retroLibraryRefresh: 'library:retro:refresh',
   retroLibraryDirectoryAdd: 'library:retro:directory:add',

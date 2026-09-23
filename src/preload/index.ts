@@ -54,6 +54,9 @@ import {
   type CustomUiAudioCue,
   type CustomUiAudioCues,
   type LocalGameBackupResult,
+  type LocalGameBackupEntry,
+  type LocalGameRestoreResult,
+  type SaveBackupDirectoryStatus,
   type OrbitBackgroundServiceAction,
   type OrbitBackgroundServiceStatus,
   type OrbitApplicationSnapshot,
@@ -97,7 +100,13 @@ const orbitApi = {
   settings: {
     get: (): Promise<OrbitSettings> => ipcRenderer.invoke(IPC.settingsGet),
     set: (partial: Partial<OrbitSettings>): Promise<OrbitSettings> =>
-      ipcRenderer.invoke(IPC.settingsSet, partial)
+      ipcRenderer.invoke(IPC.settingsSet, partial),
+    getSaveBackupDirectory: (): Promise<SaveBackupDirectoryStatus> =>
+      ipcRenderer.invoke(IPC.settingsSaveBackupDirectoryGet),
+    chooseSaveBackupDirectory: (): Promise<SaveBackupDirectoryStatus | null> =>
+      ipcRenderer.invoke(IPC.settingsSaveBackupDirectoryChoose),
+    useDefaultSaveBackupDirectory: (): Promise<SaveBackupDirectoryStatus> =>
+      ipcRenderer.invoke(IPC.settingsSaveBackupDirectoryUseDefault)
   },
   orbitPlus: {
     get: (): Promise<OrbitPlusSnapshot> => ipcRenderer.invoke(IPC.orbitPlusGet),
@@ -406,7 +415,11 @@ const orbitApi = {
       backup: (gameId: string): Promise<LocalGameBackupResult> =>
         ipcRenderer.invoke(IPC.customGameBackup, gameId),
       openBackups: (gameId: string): Promise<void> =>
-        ipcRenderer.invoke(IPC.customGameOpenBackups, gameId)
+        ipcRenderer.invoke(IPC.customGameOpenBackups, gameId),
+      listBackups: (gameId: string): Promise<LocalGameBackupEntry[]> =>
+        ipcRenderer.invoke(IPC.customGameListBackups, gameId),
+      restoreBackup: (gameId: string, backupId: string): Promise<LocalGameRestoreResult> =>
+        ipcRenderer.invoke(IPC.customGameRestoreBackup, gameId, backupId)
     },
     retro: {
       getStatus: (): Promise<RetroLibraryStatus> =>

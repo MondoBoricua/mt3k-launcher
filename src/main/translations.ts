@@ -53,6 +53,10 @@ export const mainTranslations = {
     "MT3K Launcher · Select save folder": "MT3K Launcher · Select save folder",
     "MT3K Launcher · Select save file": "MT3K Launcher · Select save file",
     "Use for backups": "Use for backups",
+    "MT3K Launcher · Choose save backup folder": "MT3K Launcher · Choose save backup folder",
+    "Use this folder": "Use this folder",
+    "The selected folder cannot be used for save backups.": "The selected folder cannot be used for save backups.",
+    "The selected folder is not writable.": "The selected folder is not writable.",
     "The game name must be between 1 and 120 characters.": "The game name must be between 1 and 120 characters."
   },
   "de": {
@@ -107,6 +111,10 @@ export const mainTranslations = {
     "MT3K Launcher · Select save folder": "MT3K Launcher · Savegame-Ordner auswählen",
     "MT3K Launcher · Select save file": "MT3K Launcher · Savegame-Datei auswählen",
     "Use for backups": "Für Backups verwenden",
+    "MT3K Launcher · Choose save backup folder": "MT3K Launcher · Savegame-Backup-Ordner wählen",
+    "Use this folder": "Diesen Ordner verwenden",
+    "The selected folder cannot be used for save backups.": "Der gewählte Ordner kann nicht für Savegame-Backups verwendet werden.",
+    "The selected folder is not writable.": "Der gewählte Ordner ist nicht beschreibbar.",
     "The game name must be between 1 and 120 characters.": "Der Spielname muss zwischen 1 und 120 Zeichen lang sein."
   },
   "es": {
@@ -161,6 +169,10 @@ export const mainTranslations = {
     "MT3K Launcher · Select save folder": "MT3K Launcher · Elegir carpeta de partidas",
     "MT3K Launcher · Select save file": "MT3K Launcher · Elegir archivo de partida",
     "Use for backups": "Usar para copias de seguridad",
+    "MT3K Launcher · Choose save backup folder": "MT3K Launcher · Elegir carpeta de copias de partidas",
+    "Use this folder": "Usar esta carpeta",
+    "The selected folder cannot be used for save backups.": "La carpeta seleccionada no puede usarse para copias de partidas.",
+    "The selected folder is not writable.": "La carpeta seleccionada no permite escritura.",
     "The game name must be between 1 and 120 characters.": "El nombre del juego debe tener entre 1 y 120 caracteres."
   },
   "ru": {
@@ -215,6 +227,10 @@ export const mainTranslations = {
     "MT3K Launcher · Select save folder": "MT3K Launcher · Выберите папку сохранений",
     "MT3K Launcher · Select save file": "MT3K Launcher · Выберите файл сохранения",
     "Use for backups": "Использовать для резервных копий",
+    "MT3K Launcher · Choose save backup folder": "MT3K Launcher · Выберите папку резервных копий",
+    "Use this folder": "Использовать эту папку",
+    "The selected folder cannot be used for save backups.": "Выбранную папку нельзя использовать для резервных копий сохранений.",
+    "The selected folder is not writable.": "В выбранную папку нельзя записывать.",
     "The game name must be between 1 and 120 characters.": "Название игры должно содержать от 1 до 120 символов."
   }
 } as const satisfies Record<Language, Record<string, string>>

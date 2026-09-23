@@ -11,12 +11,15 @@ import {
   type CustomGameSaveSource,
   type GameAchievementsSnapshot,
   type GameCompletionTimes,
+  type GameLaunchStatus,
   type GameMetadataSyncResult,
   type GameMetadataUpdateInput,
   type LibraryGame,
   type LibrarySnapshot,
   type LibraryStats,
   type LocalGameBackupResult,
+  type LocalGameBackupEntry,
+  type LocalGameRestoreResult,
   type RetroLibraryResult,
   type RetroLibraryStatus,
   type RetroEmulatorDownloadInput,
@@ -39,6 +42,7 @@ import { playStationAuthManager } from '../playstation/playstationAuth'
 import { playStationLibraryService } from '../playstation/playstationLibrary'
 import { storeService } from '../store/storeService'
 import { customLibraryService } from '../customLibrary'
+import { listLocalGameBackups, restoreLocalGameBackup } from '../saveRestoreService'
 import { customArtworkService } from '../customArtwork'
 import { projectLibraryVisibility } from '@shared/libraryVisibility'
 import { retroLibraryService } from '../retro/retroLibrary'
@@ -445,6 +449,22 @@ export class UnifiedLibraryService extends EventEmitter {
     const game = gameRepository.getGame(gameId)
     if (!game || game.provider !== 'local') throw new Error('Custom game is not available')
     await customLibraryService.openBackupDirectory(game)
+  }
+
+  listCustomGameBackups(gameId: string): Promise<LocalGameBackupEntry[]> {
+    const game = gameRepository.getGame(gameId)
+    if (!game || game.provider !== 'local') throw new Error('Custom game is not available')
+    return listLocalGameBackups(game)
+  }
+
+  restoreCustomGameBackup(
+    gameId: string,
+    backupId: string,
+    launchStatus: GameLaunchStatus
+  ): Promise<LocalGameRestoreResult> {
+    const game = gameRepository.getGame(gameId)
+    if (!game || game.provider !== 'local') throw new Error('Custom game is not available')
+    return restoreLocalGameBackup(game, backupId, launchStatus, customLibraryService)
   }
 
   getRetroLibraryStatus(): RetroLibraryStatus {

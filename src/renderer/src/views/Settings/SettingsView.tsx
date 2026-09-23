@@ -42,6 +42,7 @@ import {
   Undo2,
   UserRound
 } from 'lucide-react'
+import { SaveBackupDirectorySection } from './SaveBackupDirectorySection'
 import { SettingsSection, SettingsSections } from './SettingsSection'
 import { TextSizeControl } from './TextSizeControl'
 import { useAutoFocus } from '@renderer/hooks/useAutoFocus'
@@ -3559,6 +3560,8 @@ export function SettingsView(): JSX.Element {
 
             {page === 'system' && (
               <div className="mt-3 space-y-2">
+                <SaveBackupDirectorySection />
+
                 <SettingsSection
                   id="onboarding"
                   icon={RotateCcw}
