@@ -1,10 +1,17 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { app } from 'electron'
 import {
+  isRetroArchConfigPath,
+  parseRetroArchNetworkMemory,
+  planRetroArchNetworkEnable,
+  planRetroArchNetworkRestore,
   selectRetroArchConfigPath,
-  upsertRetroArchNetworkCommands
+  type RetroArchNetworkMemory
 } from '@shared/retroArchCommands'
 import { settingsStore } from '../settingsStore'
+import { access } from 'node:fs/promises'
+import { applyRetroArchConfigPlan } from './retroArchConfigFile'
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
@@ -15,11 +22,41 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+function memoryPath(): string {
+  return join(app.getPath('userData'), 'retroarch-network-config.json')
+}
+
+async function readMemory(): Promise<RetroArchNetworkMemory | null> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(memoryPath(), 'utf8'))
+    return parseRetroArchNetworkMemory(parsed)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') return null
+    console.warn(
+      `[retro-pause-menu] no se pudo leer el recuerdo del cfg: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    )
+    return null
+  }
+}
+
+async function writeMemory(memory: RetroArchNetworkMemory): Promise<void> {
+  const file = memoryPath()
+  const tempPath = `${file}.mt3k-tmp`
+  await writeFile(tempPath, JSON.stringify(memory), { encoding: 'utf8', flush: true })
+  await rename(tempPath, file)
+}
+
+async function clearMemory(): Promise<void> {
+  await rm(memoryPath(), { force: true })
+}
+
 /**
- * Prende la interfaz de comandos de RetroArch en el cfg que el usuario
- * ya tiene. Si el toggle está apagado, no leemos ni escribimos nada.
- * Un fallo aquí no tumba el lanzamiento: el menú dirá que RetroArch
- * no contestó y el juego igual abre.
+ * Prende la interfaz de comandos en el cfg que RetroArch va a leer.
+ * Con el toggle apagado no se lee ni se escribe nada.
+ * Un fallo aquí no tumba el lanzamiento.
  */
 export async function ensureRetroArchNetworkCommands(executablePath: string): Promise<void> {
   if (settingsStore.store.retroPauseMenuEnabled !== true) return
@@ -42,23 +79,59 @@ export async function ensureRetroArchNetworkCommands(executablePath: string): Pr
       appDataConfigExists: appDataConfigPath ? await pathExists(appDataConfigPath) : false,
       portableLayout
     })
-    if (!location) {
+    if (!location || !isRetroArchConfigPath(location.path)) {
       console.warn('[retro-pause-menu] no hay un retroarch.cfg donde escribir los comandos de red')
       return
     }
 
-    let current = ''
-    if (!location.create) {
-      current = await readFile(location.path, 'utf8')
-    }
-    const updated = upsertRetroArchNetworkCommands(current)
-    if (updated === current) return
-
     if (location.create) await mkdir(dirname(location.path), { recursive: true })
-    await writeFile(location.path, updated, 'utf8')
+    let captured: RetroArchNetworkMemory | null = null
+    const result = await applyRetroArchConfigPlan(
+      location.path,
+      (text) => {
+        const plan = planRetroArchNetworkEnable(text)
+        if (plan.action === 'write') {
+          captured = {
+            version: 1,
+            configPath: location.path,
+            original: plan.original,
+            written: plan.written
+          }
+        }
+        return plan
+      },
+      { allowCreate: location.create }
+    )
+    if (result === 'written' && captured) await writeMemory(captured)
   } catch (error) {
     console.warn(
       `[retro-pause-menu] no se pudo preparar retroarch.cfg: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    )
+  }
+}
+
+/**
+ * Al apagar el toggle (o al arrancar si ya quedó apagado) devuelve
+ * las claves originales, pero solo si nadie las cambió después.
+ */
+export async function restoreRetroArchNetworkCommandsOnDisable(): Promise<void> {
+  if (settingsStore.store.retroPauseMenuEnabled === true) return
+  if (process.platform !== 'win32') return
+
+  try {
+    const memory = await readMemory()
+    if (!memory) return
+    const result = await applyRetroArchConfigPlan(memory.configPath, (text) =>
+      planRetroArchNetworkRestore(text, memory)
+    )
+    // Rechazado (cfg ilegible o enorme): se conserva el recuerdo pa' reintentar.
+    if (result === 'rejected') return
+    await clearMemory()
+  } catch (error) {
+    console.warn(
+      `[retro-pause-menu] no se pudo restaurar retroarch.cfg: ${
         error instanceof Error ? error.message : String(error)
       }`
     )

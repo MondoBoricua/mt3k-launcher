@@ -1,6 +1,7 @@
 import { ATTRACT_IDLE_MINUTES } from '@shared/attractModePolicy'
 import { clearCaptures } from '@renderer/state/capturesStore'
 import { reportLaunchProfileError } from '@renderer/state/launchProfileStore'
+import { LaunchProfileDiscardControl } from '@renderer/components/LaunchProfileDiscardControl'
 import { type Language, languageLocale } from '@shared/language'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -3590,6 +3591,7 @@ export function SettingsView(): JSX.Element {
                         usePreferencesStore.setState({ launchProfilesEnabled: next.launchProfilesEnabled === true })
                       }).catch(reportLaunchProfileError)
                     }} />
+                  <LaunchProfileDiscardControl />
                 </SettingsSection>
                 <SettingsSection
                   id="background-service"

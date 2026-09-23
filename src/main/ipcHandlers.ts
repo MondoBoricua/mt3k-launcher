@@ -1,6 +1,7 @@
 import { listCaptures, openCapture, openCapturesFolder } from './captures/captureLibrary'
 import { ATTRACT_IDLE_MINUTES } from '@shared/attractModePolicy'
 import { launchProfileService } from './launchProfileService'
+import { restoreRetroArchNetworkCommandsOnDisable } from './retro/retroArchNetworkConfig'
 import { isLanguage } from '@shared/language'
 import { app, clipboard, ipcMain, shell, type BrowserWindow } from 'electron'
 import { spawn } from 'node:child_process'
@@ -760,6 +761,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   launchProfileService.initialize((event) => {
     if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(IPC.launchProfilesEvent, event)
   })
+  // Si el toggle quedó apagado, devolvemos el cfg solo cuando todavía es el nuestro.
+  void restoreRetroArchNetworkCommandsOnDisable()
+  app.once('before-quit', () => launchProfileService.dispose())
   const profileGameId = (value: unknown): string => {
     if (typeof value !== 'string' || value.length > 512 || ['__proto__', 'constructor', 'prototype'].includes(value) || !libraryService.getGame(value)) throw new Error('Invalid library game')
     return value
@@ -777,6 +781,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.launchProfilesConfirm, (event, token: unknown) => profileRequest(event, () => launchProfileService.confirm(token)))
   ipcMain.handle(IPC.launchProfilesRevert, (event) => profileRequest(event, () => launchProfileService.restore()))
   ipcMain.handle(IPC.launchProfilesError, (event) => profileRequest(event, () => launchProfileService.takeError()))
+  // Olvidar el journal funciona aunque el toggle esté apagado: es el escape si el monitor no vuelve.
+  const assertProfileSender = (event: Electron.IpcMainInvokeEvent): void => {
+    if (event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+      throw new Error('Invalid display request sender')
+    }
+  }
+  ipcMain.handle(IPC.launchProfilesPending, (event) => {
+    assertProfileSender(event)
+    return launchProfileService.hasPendingRestore()
+  })
+  ipcMain.handle(IPC.launchProfilesDiscard, (event) => {
+    assertProfileSender(event)
+    return launchProfileService.discardPendingRestore()
+  })
   const mainWindowDisposers = new Set<() => void>()
   const disposeWithMainWindow = (dispose: () => void): void => {
     mainWindowDisposers.add(dispose)
@@ -1111,9 +1129,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       throw new Error('ORBIT Plus is required for premium appearance')
     }
     const languageChanged = partial.language !== undefined && partial.language !== settingsStore.get('language')
+    const retroPauseTurningOff =
+      partial.retroPauseMenuEnabled === false && settingsStore.get('retroPauseMenuEnabled') === true
     const next = { ...publicSettingsSnapshot(), ...partial }
     settingsStore.set(next)
     if ('launchProfilesEnabled' in partial) launchProfileService.preferencesChanged()
+    if (retroPauseTurningOff) void restoreRetroArchNetworkCommandsOnDisable()
     if (languageChanged) {
       geForceNowCatalogService.refreshIfStale()
       void libraryService.refresh().catch(() => undefined)

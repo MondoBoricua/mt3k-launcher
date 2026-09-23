@@ -28,6 +28,7 @@ import {
 import { settingsStore } from './settingsStore'
 import { activateExternalProcessWindow } from './externalWindowActivation'
 import { isRetroArchPauseSession } from '@shared/retroArchCommands'
+import { shouldRestoreLaunchProfile } from '@shared/launchProfilePolicy'
 import type { GameTrackingMethod } from '@shared/gameTracking'
 import { SteamGameActivityReader } from './steam/steamGameActivity'
 import {
@@ -2098,8 +2099,11 @@ export class GameSessionManager extends EventEmitter {
     if (status.phase === 'idle' || status.phase === 'error' || status.phase === 'returning') {
       this.runningGamePid = undefined
     }
-    if (status.phase === 'idle') {
+    // idle cierra la sesión bien; error también, por si el splash no llega a idle.
+    if (shouldRestoreLaunchProfile(status.phase) && status.phase !== previous.phase) {
       this.callbacks.restoreLaunchProfile?.()
+    }
+    if (status.phase === 'idle') {
       this.activeGame = null
       this.providerAttachedGameId = undefined
       this.providerPresenceMissingSince = undefined

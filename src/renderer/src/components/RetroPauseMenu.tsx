@@ -83,9 +83,11 @@ export function RetroPauseMenu(): JSX.Element | null {
     setBusy(true)
     setNotice(null)
     try {
-      const current = statusFromSnapshot(snapshot)
-      if (resumeShouldUnpause(current)) {
+      // Estado fresco: si RetroArch ya no está en pausa, un toggle lo pausaría.
+      const fresh = await refreshStatus()
+      if (resumeShouldUnpause(statusFromSnapshot(fresh))) {
         const unpaused = await window.api.retroArch.command('PAUSE_TOGGLE')
+        await refreshStatus()
         if (!unpaused.ok) {
           setFailure(t(errorKey(unpaused.error ?? 'unreachable')))
           playUiSound('error')
@@ -94,6 +96,7 @@ export function RetroPauseMenu(): JSX.Element | null {
       }
       const returned = await window.api.retroArch.returnToGame()
       if (!returned) {
+        await refreshStatus()
         setFailure(t('retroPauseMenu.error.returnFailed'))
         playUiSound('error')
         return
@@ -111,7 +114,7 @@ export function RetroPauseMenu(): JSX.Element | null {
     } finally {
       setBusy(false)
     }
-  }, [busy, closeMenu, snapshot, t])
+  }, [busy, closeMenu, refreshStatus, t])
 
   useBackHandler(() => {
     void resume()
@@ -191,6 +194,7 @@ export function RetroPauseMenu(): JSX.Element | null {
     setNotice(null)
     try {
       const result = await window.api.retroArch.command(action.command)
+      await refreshStatus()
       if (!result.ok) {
         setFailure(t(errorKey(result.error ?? 'unreachable')))
         playUiSound('error')
@@ -202,7 +206,6 @@ export function RetroPauseMenu(): JSX.Element | null {
         closeMenu()
         return
       }
-      await refreshStatus()
     } catch (error) {
       console.warn(
         `[retro-pause-menu] el comando falló: ${

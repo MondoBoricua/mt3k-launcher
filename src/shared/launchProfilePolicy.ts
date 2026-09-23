@@ -11,7 +11,13 @@ export interface DisplayModeList {
 }
 export type LaunchProfileEvent =
   | { kind: 'confirm'; token: string; profile: LaunchProfile }
-  | { kind: 'closed' | 'error' | 'restored' }
+  | { kind: 'closed' | 'restored' }
+  | { kind: 'error'; reason?: 'pending-journal' }
+
+/** Lo que el botón de olvidar le devuelve al renderer. */
+export type LaunchProfileDiscardResult = 'forgotten' | 'busy' | 'absent'
+
+export type LaunchWithPendingJournalDecision = 'launch' | 'apply-profile' | 'refuse-pending-journal'
 
 export function detectDisplayMode(displays: readonly { internal?: boolean }[]): DisplayMode {
   if (displays.some((display) => display.internal === false)) return 'docked'
@@ -46,6 +52,77 @@ export function validateProfile(profile: unknown, availableModes: readonly Launc
 export function restorePlan(previous: DisplaySnapshot, applied: DisplaySnapshot): DisplaySnapshot | null {
   if (previous.deviceName !== applied.deviceName || previous.identity !== applied.identity) return null
   return sameProfile(previous.profile, applied.profile) ? null : { ...previous, profile: { ...previous.profile } }
+}
+
+/**
+ * Un journal pendiente no puede tapar un juego que no tiene perfil
+ * para el modo de ahora. Solo se niega el lanzamiento que aplicaría
+ * otro perfil encima de una restauración que todavía no se pudo hacer.
+ */
+export function decideLaunchWithPendingJournal(input: {
+  journalPending: boolean
+  hasProfileForMode: boolean
+}): LaunchWithPendingJournalDecision {
+  if (input.journalPending) {
+    return input.hasProfileForMode ? 'refuse-pending-journal' : 'launch'
+  }
+  return input.hasProfileForMode ? 'apply-profile' : 'launch'
+}
+
+/**
+ * El escritorio se devuelve al cerrar la sesión, también si el
+ * lanzamiento terminó en error y nunca llegó a idle.
+ */
+export function shouldRestoreLaunchProfile(phase: string): boolean {
+  return phase === 'idle' || phase === 'error' || phase === 'complete'
+}
+
+/**
+ * Al arrancar se lee el journal aunque el toggle esté apagado:
+ * devolver el escritorio no depende de que la función siga prendida.
+ */
+export function shouldRecoverDisplayJournalOnStartup(journalOnDisk: boolean): boolean {
+  return journalOnDisk
+}
+
+/** Reintentar solo cuando el monitor puede haber vuelto, y no en medio de una confirmación. */
+export function shouldRetryPendingDisplayRestore(input: {
+  eventName: string
+  confirmationPending: boolean
+  journalPending: boolean
+}): boolean {
+  if (input.confirmationPending || !input.journalPending) return false
+  return input.eventName === 'display-added' || input.eventName === 'display-metrics-changed'
+}
+
+/**
+ * Olvidar el journal es explícito. Si todavía hay un "¿ves esta pantalla?"
+ * en curso, no se borra: primero hay que cerrar ese aviso.
+ */
+export function decideDiscardPendingRestore(input: {
+  confirmed: boolean
+  confirmationPending: boolean
+  journalPending: boolean
+}): 'forget' | 'keep' | 'busy' {
+  if (!input.confirmed) return 'keep'
+  if (input.confirmationPending) return 'busy'
+  if (!input.journalPending) return 'keep'
+  return 'forget'
+}
+
+/**
+ * Identidad distinta o monitor ausente: el journal se queda y se puede
+ * reintentar. Otro fallo (el modo no pasó la prueba, por ejemplo) también
+ * conserva el journal, pero no es "el monitor se fue".
+ */
+export function displayRestoreFailureIsMonitor(message: string): boolean {
+  return (
+    message.includes('Display identity changed') ||
+    message.includes('Display disconnected') ||
+    message.includes('Display monitor disconnected') ||
+    message.includes('Display monitor identity unavailable') ||
+    message.includes('Primary display unavailable')
+  )
 }
 
 export function isRestoreJournal(value: unknown): value is RestoreJournal {

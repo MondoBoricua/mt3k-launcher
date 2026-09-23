@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { detectDisplayMode, selectProfile, validateProfile, restorePlan, isRestoreJournal, type DisplaySnapshot, type RestoreJournal, type LaunchProfileEvent } from '../src/shared/launchProfilePolicy.ts'
+import { detectDisplayMode, selectProfile, validateProfile, restorePlan, isRestoreJournal, decideLaunchWithPendingJournal, shouldRestoreLaunchProfile, shouldRecoverDisplayJournalOnStartup, shouldRetryPendingDisplayRestore, decideDiscardPendingRestore, displayRestoreFailureIsMonitor, type DisplaySnapshot, type RestoreJournal, type LaunchProfileEvent } from '../src/shared/launchProfilePolicy.ts'
 import { readRestoreJournal, writeRestoreJournal, clearRestoreJournal } from '../src/main/launchProfileJournal.ts'
 import { LaunchProfileTransaction } from '../src/main/launchProfileTransaction.ts'
 
@@ -55,6 +55,7 @@ function harness() {
   let now = 0
   let failApply = false
   let failWrite = false
+  let applyMessage = 'Display disconnected'
   const changes: DisplaySnapshot[] = []
   const events: LaunchProfileEvent[] = []
   const transaction = new LaunchProfileTransaction({
@@ -62,13 +63,15 @@ function harness() {
     read: () => disk,
     write: (value) => { if (failWrite) throw new Error('Disk full'); disk = value },
     clear: () => { disk = null },
-    apply: (value) => { if (failApply) throw new Error('Display disconnected'); assert.ok(disk); changes.push(value) },
+    apply: (value) => { if (failApply) throw new Error(applyMessage); assert.ok(disk); changes.push(value) },
     emit: (event) => events.push(event),
     schedule: (callback) => { deadline = callback; return () => { deadline = null } }
   })
   return { transaction, changes, events, disk: () => disk, expire: () => deadline?.(),
     advance: () => { now = 15_000 },
-    failApply: (value: boolean) => { failApply = value }, failWrite: () => { failWrite = true },
+    failApply: (value: boolean) => { failApply = value; if (value) applyMessage = 'Display disconnected' },
+    failIdentity: () => { failApply = true; applyMessage = 'Display identity changed' },
+    failWrite: () => { failWrite = true },
     token: () => { const event = events.find((e) => e.kind === 'confirm'); assert.ok(event?.kind === 'confirm'); return event.token } }
 }
 const confirmed = harness()
@@ -123,5 +126,52 @@ late.advance()
 assert.equal(late.transaction.confirm(late.token()), false, 'late IPC cannot beat a queued timer')
 assert.equal(await lateResult, false)
 assert.equal(late.disk(), null)
+
+assert.equal(decideLaunchWithPendingJournal({ journalPending: true, hasProfileForMode: false }), 'launch')
+assert.equal(decideLaunchWithPendingJournal({ journalPending: true, hasProfileForMode: true }), 'refuse-pending-journal')
+assert.equal(decideLaunchWithPendingJournal({ journalPending: false, hasProfileForMode: true }), 'apply-profile')
+assert.equal(decideLaunchWithPendingJournal({ journalPending: false, hasProfileForMode: false }), 'launch')
+assert.equal(shouldRestoreLaunchProfile('error'), true)
+assert.equal(shouldRestoreLaunchProfile('idle'), true)
+assert.equal(shouldRestoreLaunchProfile('complete'), true)
+assert.equal(shouldRestoreLaunchProfile('running'), false)
+assert.equal(shouldRestoreLaunchProfile('launching'), false)
+assert.equal(shouldRecoverDisplayJournalOnStartup(true), true)
+assert.equal(shouldRecoverDisplayJournalOnStartup(false), false)
+assert.equal(shouldRetryPendingDisplayRestore({ eventName: 'display-added', confirmationPending: false, journalPending: true }), true)
+assert.equal(shouldRetryPendingDisplayRestore({ eventName: 'display-metrics-changed', confirmationPending: false, journalPending: true }), true)
+assert.equal(shouldRetryPendingDisplayRestore({ eventName: 'display-removed', confirmationPending: false, journalPending: true }), false)
+assert.equal(shouldRetryPendingDisplayRestore({ eventName: 'display-added', confirmationPending: true, journalPending: true }), false)
+assert.equal(shouldRetryPendingDisplayRestore({ eventName: 'display-added', confirmationPending: false, journalPending: false }), false)
+assert.equal(decideDiscardPendingRestore({ confirmed: true, confirmationPending: false, journalPending: true }), 'forget')
+assert.equal(decideDiscardPendingRestore({ confirmed: false, confirmationPending: false, journalPending: true }), 'keep')
+assert.equal(decideDiscardPendingRestore({ confirmed: true, confirmationPending: true, journalPending: true }), 'busy')
+assert.equal(decideDiscardPendingRestore({ confirmed: true, confirmationPending: false, journalPending: false }), 'keep')
+assert.equal(displayRestoreFailureIsMonitor('Display identity changed'), true)
+assert.equal(displayRestoreFailureIsMonitor('Display disconnected'), true)
+assert.equal(displayRestoreFailureIsMonitor('Display mode test failed (1)'), false)
+
+const stuck = harness()
+const stuckLaunch = stuck.transaction.begin(previous, applied)
+stuck.failIdentity()
+assert.equal(stuck.transaction.restore(), false)
+assert.equal(await stuckLaunch, false)
+assert.ok(stuck.disk(), 'identity mismatch keeps the journal')
+assert.equal(stuck.transaction.hasJournal(), true)
+assert.equal(decideLaunchWithPendingJournal({ journalPending: stuck.transaction.hasJournal(), hasProfileForMode: false }), 'launch')
+assert.equal(decideLaunchWithPendingJournal({ journalPending: stuck.transaction.hasJournal(), hasProfileForMode: true }), 'refuse-pending-journal')
+assert.equal(await stuck.transaction.begin(previous, applied), false, 'a new profile is refused while the journal is pending')
+const beforeForget = stuck.changes.length
+assert.equal(stuck.transaction.forget(), true)
+assert.equal(stuck.disk(), null)
+assert.equal(stuck.transaction.hasJournal(), false)
+assert.equal(stuck.changes.length, beforeForget, 'discard does not touch the display')
+
+const busyForget = harness()
+const busyLaunch = busyForget.transaction.begin(previous, applied)
+assert.equal(busyForget.transaction.forget(), false)
+assert.ok(busyForget.disk(), 'forget waits until the confirmation is done')
+busyForget.transaction.restore()
+assert.equal(await busyLaunch, false)
 
 console.log('Launch profiles: policy, validation, journal, confirmation, rollback and recovery passed')

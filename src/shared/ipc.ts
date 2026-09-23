@@ -1843,6 +1843,8 @@ export const IPC = {
   launchProfilesSave: "launchProfiles:save",
   launchProfilesConfirm: "launchProfiles:confirm",
   launchProfilesRevert: "launchProfiles:revert",
+  launchProfilesPending: "launchProfiles:pending",
+  launchProfilesDiscard: "launchProfiles:discard",
   launchProfilesEvent: "launchProfiles:event",
   launchProfilesError: "launchProfiles:error",
   steamLoginStart: 'steam:login:start',
