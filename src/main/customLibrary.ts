@@ -13,7 +13,9 @@ import {
   stat,
   writeFile
 } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve } from 'node:path'
+import { basename, dirname, extname, join, parse } from 'node:path'
+import { resolveSaveBackupRoot, sameOrInside } from '@shared/saveRestorePolicy'
+import { settingsStore } from './settingsStore'
 import { pathToFileURL } from 'node:url'
 import { app, dialog, nativeImage, shell, type BrowserWindow } from 'electron'
 import type {
@@ -238,9 +240,9 @@ function safeBackupDirectoryName(game: LibraryGame): string {
   return createHash('sha256').update(game.id).digest('hex').slice(0, 24)
 }
 
-function sameOrInside(parent: string, child: string): boolean {
-  const pathFromParent = relative(resolve(parent), resolve(child))
-  return pathFromParent === '' || (!pathFromParent.startsWith('..') && !isAbsolute(pathFromParent))
+function backupRootForGame(game: LibraryGame): string {
+  const root = resolveSaveBackupRoot(app.getPath('userData'), settingsStore.store.saveBackupDirectory)
+  return join(root, safeBackupDirectoryName(game))
 }
 
 export class CustomLibraryService {
@@ -370,7 +372,7 @@ export class CustomLibraryService {
       return { state: 'skipped', completedAt }
     }
 
-    const backupRoot = join(app.getPath('userData'), 'save-backups', safeBackupDirectoryName(game))
+    const backupRoot = backupRootForGame(game)
     const timestamp = new Date(completedAt).toISOString().replace(/[:.]/g, '-')
     const finalDirectory = join(backupRoot, timestamp)
     const temporaryDirectory = `${finalDirectory}.partial-${randomUUID()}`
@@ -414,7 +416,7 @@ export class CustomLibraryService {
 
   async openBackupDirectory(game: LibraryGame): Promise<void> {
     if (game.provider !== 'local') throw new Error('Custom game is not available')
-    const backupRoot = join(app.getPath('userData'), 'save-backups', safeBackupDirectoryName(game))
+    const backupRoot = backupRootForGame(game)
     await mkdir(backupRoot, { recursive: true })
     const error = await shell.openPath(backupRoot)
     if (error) throw new Error(error)

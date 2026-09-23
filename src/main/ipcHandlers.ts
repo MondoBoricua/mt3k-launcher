@@ -94,6 +94,11 @@ import { epicAuthManager } from './epic/epicAuth'
 import { playStationAuthManager } from './playstation/playstationAuth'
 import { playStationRemotePlayService } from './playstation/remotePlay'
 import { libraryService } from './library/libraryService'
+import {
+  chooseSaveBackupDirectory,
+  clearSaveBackupDirectory,
+  readSaveBackupDirectoryStatus
+} from './saveRestoreService'
 import { GameSessionManager } from './gameSessionManager'
 import {
   launchGame,
@@ -354,6 +359,9 @@ function validateSettingsPartial(value: unknown): asserts value is Partial<Orbit
   }
   if ('retroAchievementsWebApiKey' in partial) {
     throw new Error('RetroAchievements credentials require the dedicated credential API')
+  }
+  if ('saveBackupDirectory' in partial && partial.saveBackupDirectory !== undefined) {
+    throw new Error('Use the save backup directory picker')
   }
   if ('retroRomDirectories' in partial) {
     if (
@@ -1520,6 +1528,29 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.customGameOpenBackups, (_e, gameId: unknown) =>
     libraryService.openCustomGameBackups(validatedShortString(gameId, 'custom game ID'))
   )
+
+  ipcMain.handle(IPC.customGameListBackups, (_e, gameId: unknown) =>
+    libraryService.listCustomGameBackups(validatedShortString(gameId, 'custom game ID'))
+  )
+
+  ipcMain.handle(IPC.customGameRestoreBackup, (_e, gameId: unknown, backupId: unknown) => {
+    const gameIdValue = validatedShortString(gameId, 'custom game ID')
+    const backupIdValue = validatedShortString(backupId, 'backup ID', 256)
+    if (backupIdValue.includes('..') || backupIdValue.includes('/') || backupIdValue.includes('\\')) {
+      throw new Error('Invalid backup ID')
+    }
+    return libraryService.restoreCustomGameBackup(
+      gameIdValue,
+      backupIdValue,
+      gameSessionManager.getStatus()
+    )
+  })
+
+  ipcMain.handle(IPC.settingsSaveBackupDirectoryGet, () => readSaveBackupDirectoryStatus())
+  ipcMain.handle(IPC.settingsSaveBackupDirectoryChoose, () =>
+    chooseSaveBackupDirectory(mainWindow)
+  )
+  ipcMain.handle(IPC.settingsSaveBackupDirectoryUseDefault, () => clearSaveBackupDirectory())
 
   ipcMain.handle(IPC.retroLibraryStatusGet, () => libraryService.getRetroLibraryStatus())
   ipcMain.handle(IPC.retroLibraryRefresh, () => libraryService.refreshRetroLibrary())

@@ -4,6 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
   CalendarDays,
   Archive,
+  ArchiveRestore,
   ChevronUp,
   CircleAlert,
   CloudLightning,
@@ -41,6 +42,7 @@ import { GameTrailerBackground, GameTrailerDialog } from './GameTrailerPlayer'
 import { GameMetadataEditor } from './GameMetadataEditor'
 import { formatWindowsArguments, LaunchOptionsDialog } from './LaunchOptionsDialog'
 import { LibraryCollectionDialog } from './LibraryCollectionDialog'
+import { SaveRestoreBackupDialog } from './SaveRestoreBackupDialog'
 import {
   GameDetailActionMenu,
   type GameDetailActionMenuItem
@@ -158,6 +160,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   const [metadataEditorOpen, setMetadataEditorOpen] = useState(false)
   const [launchOptionsOpen, setLaunchOptionsOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
+  const [saveRestoreOpen, setSaveRestoreOpen] = useState(false)
   const [openActionMenu, setOpenActionMenu] = useState<'discover' | 'manage' | null>(null)
   const [favoriteBusy, setFavoriteBusy] = useState(false)
   const [cloudLaunchState, setCloudLaunchState] = useState<'idle' | 'launching' | 'error'>('idle')
@@ -444,6 +447,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
       metadataEditorOpen ||
       launchOptionsOpen ||
       collectionsOpen ||
+      saveRestoreOpen ||
       trailerOpen ||
       downloadCenterOpen ||
       openActionMenu !== null
@@ -453,6 +457,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   }, [
     metadataEditorOpen,
     collectionsOpen,
+    saveRestoreOpen,
     downloadCenterOpen,
     launchOptionsOpen,
     openActionMenu,
@@ -750,6 +755,12 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
         label: t('details.openBackups'),
         icon: FolderOpen,
         onSelect: () => void window.api.library.custom.openBackups(game.id)
+      },
+      {
+        id: 'restore-backup',
+        label: t('details.restoreBackup'),
+        icon: ArchiveRestore,
+        onSelect: () => setSaveRestoreOpen(true)
       }
     )
   }
@@ -816,8 +827,8 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
     <>
     <motion.div
       ref={detailRootRef}
-      data-focus-scope={metadataEditorOpen || launchOptionsOpen || collectionsOpen || trailerOpen || downloadCenterOpen || openActionMenu !== null || achievementSheetOpen ? undefined : 'active'}
-      aria-hidden={metadataEditorOpen || launchOptionsOpen || collectionsOpen || trailerOpen || downloadCenterOpen || openActionMenu !== null || undefined}
+      data-focus-scope={metadataEditorOpen || launchOptionsOpen || collectionsOpen || saveRestoreOpen || trailerOpen || downloadCenterOpen || openActionMenu !== null || achievementSheetOpen ? undefined : 'active'}
+      aria-hidden={metadataEditorOpen || launchOptionsOpen || collectionsOpen || saveRestoreOpen || trailerOpen || downloadCenterOpen || openActionMenu !== null || undefined}
       role="dialog"
       aria-modal="true"
       aria-label={game.name}
@@ -866,7 +877,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
           orientation="horizontal"
           className="absolute inset-0 h-full w-full scale-[1.02] object-cover"
         />
-        {trailer && trailer.format !== 'external' && backgroundTrailers && !reduceMotion && !trailerOpen && !achievementGuidePlayer && !metadataEditorOpen && !launchOptionsOpen && !collectionsOpen && !achievementSheetOpen && (
+        {trailer && trailer.format !== 'external' && backgroundTrailers && !reduceMotion && !trailerOpen && !achievementGuidePlayer && !metadataEditorOpen && !launchOptionsOpen && !collectionsOpen && !saveRestoreOpen && !achievementSheetOpen && (
           <GameTrailerBackground key={`${game.id}:${trailer.url}`} trailer={trailer} />
         )}
         <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/65 to-black/20" />
@@ -1288,6 +1299,38 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
         onClose={() => {
           setCollectionsOpen(false)
           requestAnimationFrame(() => focusElement(manageActionsRef.current))
+        }}
+      />
+    )}
+    {saveRestoreOpen && (
+      <SaveRestoreBackupDialog
+        gameId={game.id}
+        gameName={game.name}
+        onClose={() => {
+          setSaveRestoreOpen(false)
+          requestAnimationFrame(() => focusElement(manageActionsRef.current))
+        }}
+        onRestored={({ safetyBackupId }) => {
+          notify({
+            tone: 'success',
+            titleKey: 'notification.saveRestore.success.title',
+            messageKey: 'notification.saveRestore.success.body',
+            vars: { safetyBackup: safetyBackupId ?? '—' },
+            force: true,
+            replace: true
+          })
+        }}
+        onRestoreFailed={(reason) => {
+          notify({
+            tone: 'error',
+            titleKey: 'notification.saveRestore.failed.title',
+            messageKey:
+              reason === 'game-running'
+                ? 'notification.saveRestore.failed.running'
+                : 'notification.saveRestore.failed.body',
+            force: true,
+            replace: true
+          })
         }}
       />
     )}
