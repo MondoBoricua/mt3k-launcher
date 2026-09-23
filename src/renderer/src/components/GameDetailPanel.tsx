@@ -1335,11 +1335,11 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
           setSaveRestoreOpen(false)
           requestAnimationFrame(() => focusElement(manageActionsRef.current))
         }}
-        onRestored={({ safetyBackupId }) => {
+        onRestored={({ safetyBackupId, cleanupFailed }) => {
           notify({
-            tone: 'success',
+            tone: cleanupFailed ? 'info' : 'success',
             titleKey: 'notification.saveRestore.success.title',
-            messageKey: 'notification.saveRestore.success.body',
+            messageKey: cleanupFailed ? 'notification.saveRestore.cleanupWarning' : 'notification.saveRestore.success.body',
             vars: { safetyBackup: safetyBackupId ?? '—' },
             force: true,
             replace: true

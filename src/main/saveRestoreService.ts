@@ -1,16 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import {
-  access,
-  copyFile,
-  cp,
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  realpath,
-  rename,
-  rm
-} from 'node:fs/promises'
+import { access, lstat, readFile, readdir, realpath, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { constants as fsConstants } from 'node:fs'
 import { app, dialog, type BrowserWindow } from 'electron'
@@ -25,10 +14,9 @@ import {
   buildBackupCatalog,
   parseOrbitBackupManifest,
   planRestoreFromBackup,
-  planRestoreRollback,
   refuseBackupDirectoryPath,
   resolveSaveBackupRoot,
-  sameOrInside,
+  restoreBlockedBySession,
   validateSaveBackupDirectory,
   type OrbitBackupManifest
 } from '@shared/saveRestorePolicy'
@@ -36,6 +24,14 @@ import { t } from './i18n'
 import { gameRepository } from './library/gameRepository'
 import { settingsStore } from './settingsStore'
 import type { CustomLibraryService } from './customLibrary'
+import {
+  copyRestorePayload,
+  readRestorePayload,
+  resolveRestoreDestination,
+  promoteRestore,
+  recoverRestorePath,
+  RestorePromotionError
+} from './saveRestoreFiles'
 
 const MANIFEST_FILE = 'orbit-backup.json'
 
@@ -106,12 +102,10 @@ async function summarizeBackupDirectory(directoryPath: string): Promise<{
   manifest: OrbitBackupManifest | null
   fileCount: number
   totalBytes: number
-  payloadName?: string
 }> {
   let manifest: OrbitBackupManifest | null = null
   let fileCount = 0
   let totalBytes = 0
-  let payloadName: string | undefined
 
   const entries = await readdir(directoryPath, { withFileTypes: true })
   for (const entry of entries) {
@@ -131,14 +125,12 @@ async function summarizeBackupDirectory(directoryPath: string): Promise<{
     fileCount += 1
     if (info.isFile()) {
       totalBytes += info.size
-      if (!payloadName) payloadName = entry.name
     } else if (info.isDirectory()) {
       totalBytes += await directoryByteSize(entryPath)
-      if (!payloadName) payloadName = entry.name
     }
   }
 
-  return { manifest, fileCount, totalBytes, payloadName }
+  return { manifest, fileCount, totalBytes }
 }
 
 async function directoryByteSize(directoryPath: string): Promise<number> {
@@ -181,171 +173,96 @@ export async function listLocalGameBackups(game: LibraryGame): Promise<LocalGame
   return buildBackupCatalog(catalogs)
 }
 
-async function assertPayloadInsideBackup(
-  backupDirectoryPath: string,
-  payloadName: string
-): Promise<void> {
-  const payloadPath = join(backupDirectoryPath, payloadName)
-  const resolvedPayload = await lstat(payloadPath)
-  if (resolvedPayload.isSymbolicLink()) {
-    throw new Error('Backup payload symlink rejected')
-  }
-  if (!sameOrInside(backupDirectoryPath, payloadPath)) {
-    throw new Error('Backup payload escapes backup folder')
-  }
+// Acquisition is synchronous, before the first await. A second restore never queues.
+const restoringGames = new Set<string>()
+let restoreInProgress = false
+
+export function isRestoreInProgress(gameId: string): boolean {
+  return restoringGames.has(gameId)
 }
 
-async function copyPayloadToStaging(
-  sourcePath: string,
-  stagingPath: string,
-  isDirectory: boolean
-): Promise<void> {
-  await rm(stagingPath, { recursive: true, force: true })
-  if (isDirectory) {
-    await cp(sourcePath, stagingPath, {
-      recursive: true,
-      force: true,
-      errorOnExist: false,
-      verbatimSymlinks: true
-    })
-  } else {
-    await mkdir(join(stagingPath, '..'), { recursive: true })
-    await copyFile(sourcePath, stagingPath)
-  }
-}
-
-async function promoteStagingToDestination(
-  stagingPath: string,
-  destinationPath: string,
-  isDirectory: boolean
-): Promise<void> {
-  const backupLabel = `.orbit-restore-prev-${randomUUID()}`
-  const previousPath = isDirectory
-    ? `${destinationPath}${backupLabel}`
-    : `${destinationPath}.orbit-restore-prev-${randomUUID()}`
-
+export async function recoverInterruptedRestores(): Promise<void> {
+  if (restoreInProgress) return
+  const games = gameRepository.getGamesByProvider('local').filter(game => game.local?.savePath)
+  restoreInProgress = true
+  for (const game of games) restoringGames.add(game.id)
   try {
-    await rename(destinationPath, previousPath)
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code !== 'ENOENT') throw error
-  }
-
-  try {
-    await rename(stagingPath, destinationPath)
-    await rm(previousPath, { recursive: true, force: true })
-  } catch (error) {
-    try {
-      await rm(destinationPath, { recursive: true, force: true })
-      await rename(previousPath, destinationPath)
-    } catch (rollbackError) {
-      console.warn('[save-restore] Failed to roll back botched restore promotion', rollbackError)
+    for (const game of games) {
+      try { await recoverRestorePath(game.local!.savePath!) }
+      catch (error) { console.warn('[save-restore] Recovery failed', game.id, error) }
     }
-    throw error
+  } finally {
+    for (const game of games) restoringGames.delete(game.id)
+    restoreInProgress = false
   }
-}
-
-async function applySafetyBackupRollback(plan: ReturnType<typeof planRestoreRollback>): Promise<void> {
-  const payloadSource = join(plan.safetyBackupDirectory, plan.safetyPayloadName)
-  const stagingPath = plan.isDirectory
-    ? `${plan.destinationPath}.orbit-restore-safety-${randomUUID()}`
-    : `${plan.destinationPath}.orbit-restore-safety-${randomUUID()}`
-  await copyPayloadToStaging(payloadSource, stagingPath, plan.isDirectory)
-  await promoteStagingToDestination(stagingPath, plan.destinationPath, plan.isDirectory)
 }
 
 export async function restoreLocalGameBackup(
   game: LibraryGame,
   backupId: string,
-  launchStatus: GameLaunchStatus,
+  getLaunchStatus: () => GameLaunchStatus,
   customLibraryService: CustomLibraryService
 ): Promise<LocalGameRestoreResult> {
-  const completedAt = Date.now()
-  if (launchStatus.gameId === game.id && launchStatus.phase !== 'idle') {
-    console.warn('[save-restore] Restore refused while game session is active')
-    return { state: 'failed', completedAt, reason: 'game-running' }
+  const failed = (reason: NonNullable<LocalGameRestoreResult['reason']>): LocalGameRestoreResult => {
+    console.warn('[save-restore] Restore failed', game.id, reason)
+    return { state: 'failed', completedAt: Date.now(), reason }
   }
-
-  const local = game.local
-  if (game.provider !== 'local' || !local?.savePath) {
-    return { state: 'failed', completedAt, reason: 'invalid-game' }
-  }
-
-  const backupRoot = await gameBackupRoot(game)
-  const backupDirectoryPath = join(backupRoot, backupId.trim())
-  const refusal = refuseBackupDirectoryPath(backupDirectoryPath, backupRoot)
-  if (refusal) {
-    console.warn('[save-restore] Backup path refused', refusal)
-    return { state: 'failed', completedAt, reason: 'invalid-backup' }
-  }
-
-  const summary = await summarizeBackupDirectory(backupDirectoryPath)
-  if (!summary.manifest || !summary.payloadName) {
-    return { state: 'failed', completedAt, reason: 'invalid-backup' }
-  }
-
-  let saveInfo
-  try {
-    saveInfo = await lstat(local.savePath)
-  } catch {
-    return { state: 'failed', completedAt, reason: 'invalid-game' }
-  }
-
-  const plan = planRestoreFromBackup({
-    manifest: summary.manifest,
-    expectedGameId: game.id,
-    backupDirectoryPath,
-    currentSavePath: local.savePath,
-    payloadName: summary.payloadName,
-    saveIsDirectory: saveInfo.isDirectory()
-  })
-  if (typeof plan === 'string') {
-    console.warn('[save-restore] Restore plan failed', plan)
-    return { state: 'failed', completedAt, reason: 'invalid-backup' }
-  }
-
-  const safetyResult = await customLibraryService.backup(game)
-  if (safetyResult.state !== 'success' || !safetyResult.backupPath) {
-    console.warn('[save-restore] Safety backup failed before restore')
-    return { state: 'failed', completedAt, reason: 'safety-backup-failed' }
-  }
-
-  const safetySummary = await summarizeBackupDirectory(safetyResult.backupPath)
-  if (!safetySummary.payloadName) {
-    return { state: 'failed', completedAt, reason: 'safety-backup-failed' }
-  }
-
-  const payloadSource = join(plan.backupDirectoryPath, plan.payloadName)
-  const stagingPath = plan.isDirectory
-    ? `${plan.destinationPath}.orbit-restore-staging-${randomUUID()}`
-    : `${plan.destinationPath}.orbit-restore-staging-${randomUUID()}`
-
-  try {
-    await assertPayloadInsideBackup(plan.backupDirectoryPath, plan.payloadName)
-    await copyPayloadToStaging(payloadSource, stagingPath, plan.isDirectory)
-    await promoteStagingToDestination(stagingPath, plan.destinationPath, plan.isDirectory)
-  } catch (error) {
-    console.warn('[save-restore] Restore failed; rolling back to safety backup', error)
-    try {
-      await applySafetyBackupRollback(
-        planRestoreRollback({
-          safetyBackupDirectory: safetyResult.backupPath,
-          safetyPayloadName: safetySummary.payloadName,
-          destinationPath: plan.destinationPath,
-          isDirectory: plan.isDirectory
-        })
-      )
-    } catch (rollbackError) {
-      console.warn('[save-restore] Safety rollback failed', rollbackError)
-      return { state: 'failed', completedAt, reason: 'rollback-failed' }
+  if (restoreInProgress || restoringGames.has(game.id)) return failed('restore-in-progress')
+  restoreInProgress = true
+  restoringGames.add(game.id)
+  let stagingPath: string | undefined
+  let failureReason: NonNullable<LocalGameRestoreResult['reason']> = 'invalid-backup'
+  const checkSession = (): void => {
+    const status = getLaunchStatus()
+    if (restoreBlockedBySession(game.id, status)) {
+      failureReason = 'game-running'
+      throw new Error('Game session active during restore')
     }
-    return { state: 'failed', completedAt, reason: 'restore-failed' }
   }
+  try {
+    checkSession()
+    if (game.provider !== 'local' || !game.local?.savePath) return failed('invalid-game')
+    const backupRoot = await gameBackupRoot(game)
+    const backupDirectoryPath = join(backupRoot, backupId.trim())
+    if (refuseBackupDirectoryPath(backupDirectoryPath, backupRoot)) return failed('invalid-backup')
+    const destination = await resolveRestoreDestination(game.local.savePath, backupRoot)
+    const saveInfo = await lstat(destination)
+    const payload = await readRestorePayload(backupRoot, backupDirectoryPath, saveInfo.isDirectory())
+    const plan = planRestoreFromBackup({
+      manifest: payload.manifest, expectedGameId: game.id,
+      backupDirectoryPath: payload.directory, currentSavePath: destination,
+      payloadName: payload.payloadName, saveIsDirectory: saveInfo.isDirectory()
+    })
+    if (typeof plan === 'string') return failed('invalid-backup')
 
-  return {
-    state: 'success',
-    completedAt,
-    safetyBackupId: basename(safetyResult.backupPath)
+    // Stage before creating the safety backup: rotation may remove the selected old backup.
+    stagingPath = `${destination}.orbit-restore-staging-${randomUUID()}`
+    await copyRestorePayload(payload.source, stagingPath)
+    failureReason = 'safety-backup-failed'
+    const safety = await customLibraryService.backup(game)
+    if (safety.state !== 'success' || !safety.backupPath) return failed('safety-backup-failed')
+    const safetyPayload = await readRestorePayload(backupRoot, safety.backupPath, saveInfo.isDirectory())
+    if (safetyPayload.manifest.gameId !== game.id) return failed('safety-backup-failed')
+
+    failureReason = 'restore-failed'
+    // Revalidate after the potentially slow safety backup, then check live status at rename.
+    if (await resolveRestoreDestination(game.local.savePath, backupRoot) !== destination) {
+      throw new Error('Save destination changed during restore')
+    }
+    const state = await promoteRestore(stagingPath, destination, checkSession)
+    return { state, completedAt: Date.now(), safetyBackupId: basename(safety.backupPath) }
+  } catch (error) {
+    console.warn('[save-restore] Restore refused or failed', error)
+    // Promotion restores the exact previous tree; never overwrite it with a safety copy.
+    // On rollback failure it remains under its recovery name for the next startup.
+    return failed(error instanceof RestorePromotionError && error.rollbackFailed ? 'rollback-failed' : failureReason)
+  } finally {
+    if (stagingPath) {
+      try { await rm(stagingPath, { recursive: true, force: true }) }
+      catch (error) { console.warn('[save-restore] Could not remove staging', stagingPath, error) }
+    }
+    restoringGames.delete(game.id)
+    restoreInProgress = false
   }
 }
 

@@ -1652,7 +1652,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return libraryService.restoreCustomGameBackup(
       gameIdValue,
       backupIdValue,
-      gameSessionManager.getStatus()
+      () => gameSessionManager.getStatus()
     )
   })
 

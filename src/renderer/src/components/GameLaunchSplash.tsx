@@ -221,13 +221,15 @@ export function GameLaunchSplash({ status }: Props): JSX.Element {
             ? t('launch.trackingStopped')
             : t('launch.returning')
   const failureTitle =
-    status.failureReason === 'launch-rejected'
+    status.failureReason === 'launch-rejected' || status.failureReason === 'restore-in-progress'
       ? t('launch.failed')
       : status.failureReason === 'monitor-unavailable'
         ? t('launch.startedWithoutTracking')
         : t('launch.monitorUnavailable')
   const failureDescription =
-    status.failureReason === 'launch-rejected'
+    status.failureReason === 'restore-in-progress'
+      ? status.message ?? t('launch.failureLaunchRejected')
+      : status.failureReason === 'launch-rejected'
       ? t('launch.failureLaunchRejected')
       : status.failureReason === 'not-started'
         ? t('launch.failureNotStarted')

@@ -2094,6 +2094,7 @@ export const spanish = {
   "saveRestore.dialog.confirmHint": "Pulsa otra vez para sustituir la partida actual por esta copia.",
   "saveRestore.dialog.restoring": "Restaurando…",
   "saveRestore.dialog.entryMeta": "{date} · {files} archivos · {size}",
+    "notification.saveRestore.cleanupWarning": "Partida restaurada. No se pudo eliminar la partida anterior; permanece junto a la ruta de guardado. Copia de seguridad: {safetyBackup}.",
   "notification.saveRestore.success.title": "Partida restaurada",
   "notification.saveRestore.success.body":
     "Se restauró la partida. Se guardó una copia de seguridad como {safetyBackup}.",

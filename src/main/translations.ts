@@ -2,6 +2,7 @@ import type { Language } from '@shared/language'
 
 export const mainTranslations = {
   "en": {
+    "saveRestoreLaunchBlocked": "Wait until the save restore finishes before launching this game.",
     "Windows games": "Windows games",
     "noActiveSession": "No active Steam session",
     "loginFailed": "Steam login failed",
@@ -60,6 +61,7 @@ export const mainTranslations = {
     "The game name must be between 1 and 120 characters.": "The game name must be between 1 and 120 characters."
   },
   "de": {
+    "saveRestoreLaunchBlocked": "Warte, bis die Wiederherstellung des Spielstands abgeschlossen ist, bevor du dieses Spiel startest.",
     "Windows games": "Windows-Spiele",
     "noActiveSession": "Keine aktive Steam-Session",
     "loginFailed": "Steam-Login fehlgeschlagen",
@@ -118,6 +120,7 @@ export const mainTranslations = {
     "The game name must be between 1 and 120 characters.": "Der Spielname muss zwischen 1 und 120 Zeichen lang sein."
   },
   "es": {
+    "saveRestoreLaunchBlocked": "Espera a que termine la restauración de la partida antes de iniciar este juego.",
     "Windows games": "Juegos de Windows",
     "noActiveSession": "No hay ninguna sesión activa de Steam",
     "loginFailed": "Falló el inicio de sesión de Steam",
@@ -176,6 +179,7 @@ export const mainTranslations = {
     "The game name must be between 1 and 120 characters.": "El nombre del juego debe tener entre 1 y 120 caracteres."
   },
   "ru": {
+    "saveRestoreLaunchBlocked": "Дождитесь завершения восстановления сохранения, прежде чем запускать эту игру.",
     "Windows games": "Игры Windows",
     "noActiveSession": "Нет активного сеанса Steam",
     "loginFailed": "Не удалось войти в Steam",
