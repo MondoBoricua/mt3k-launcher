@@ -65,6 +65,7 @@ const responses = {
   'downloads.get': { revision: 0, checkedAt: 0, updatedAt: 0, activities: [] },
   'system.status.get': { platform: 'windows', state: 'ready', checkedAt: 0, battery: { present: false, charging: false, powerSource: 'ac' }, network: { connected: false, type: 'unknown' }, bluetooth: { available: false, enabled: false } },
   'retroAchievements.credentials.get': { configured: false },
+  'launchProfiles.pending': null,
   'settings.getSaveBackupDirectory': { configuredPath: undefined, effectivePath: 'C:\\Users\\test\\AppData\\Roaming\\ORBIT\\save-backups', isDefault: true },
   'steam.credentials.get': { configured: false },
   'playstation.refreshRemotePlayStatus': { apps: [], selectedApp: null },
