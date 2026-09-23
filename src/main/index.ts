@@ -281,9 +281,13 @@ async function startOrbitUi(): Promise<void> {
 
   protocol.handle('orbit-image', async (request) => {
     if (request.url.startsWith('orbit-image://captures/')) {
-      const { resolveCaptureImage } = await import('./captures/captureLibrary')
-      const capture = await resolveCaptureImage(request.url)
-      return capture ? net.fetch(pathToFileURL(capture).toString()) : new Response(null, { status: 404 })
+      const { readCaptureThumbnail } = await import('./captures/captureLibrary')
+      const capture = await readCaptureThumbnail(request.url)
+      if (!capture) return new Response(null, { status: 404 })
+      return new Response(new Uint8Array(capture.bytes), {
+        status: 200,
+        headers: { 'content-type': capture.contentType, 'cache-control': 'no-store' }
+      })
     }
     const fileName = decodeURIComponent(request.url.replace('orbit-image://', ''))
     if (fileName.includes('..') || fileName.includes('/') || fileName.includes('\\')) {

@@ -7,16 +7,21 @@ import { useLibraryStore } from '@renderer/state/libraryStore'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import { useT } from '@renderer/i18n/useT'
 import { FocusableButton } from './FocusableButton'
+import { isGuestModeActive, useGuestModeStore } from '@renderer/state/guestModeStore'
 
 export function CaptureTile({ item }: { item: CaptureItem }): JSX.Element {
   const t = useT()
   const language = usePreferencesStore((s) => s.language)
   const open = useCapturesStore((s) => s.open)
+  // Guests may look at captures but never open files or folders outside the launcher.
+  const readOnly = useGuestModeStore(isGuestModeActive)
   const [failed, setFailed] = useState(false)
   const date = new Date(item.capturedAt).toLocaleString(languageLocale(language))
   return (
-    <FocusableButton variant="ghost" onClick={() => void open(item.path)}
+    <FocusableButton variant="ghost" onClick={() => { if (!readOnly) void open(item.path) }}
       aria-label={t('captures.openItem', { title: item.gameTitleGuess, date })}
+      aria-disabled={readOnly || undefined}
+      data-capture-read-only={readOnly ? 'true' : undefined}
       className="min-w-0 !rounded-2xl !p-0 overflow-hidden text-left data-[focused=true]:ring-2 data-[focused=true]:ring-accent">
       <div className="relative flex aspect-video items-center justify-center overflow-hidden bg-black/50">
         {item.kind === 'image' && item.thumbnailUrl && !failed
@@ -32,7 +37,7 @@ export function CaptureTile({ item }: { item: CaptureItem }): JSX.Element {
       <div className="p-3">
         <p className="truncate text-sm font-bold text-white">{item.gameTitleGuess}</p>
         <p className="mt-1 text-xs text-white/60">{date}</p>
-        <p className="mt-1 text-xs text-accent">{t('captures.open')}</p>
+        {!readOnly && <p className="mt-1 text-xs text-accent">{t('captures.open')}</p>}
       </div>
     </FocusableButton>
   )
@@ -50,6 +55,7 @@ export function CaptureShelf({ gameId }: { gameId: string }): JSX.Element {
   const loading = useCapturesStore((s) => s.loading)
   const refresh = useCapturesStore((s) => s.refresh)
   const openFolder = useCapturesStore((s) => s.openFolder)
+  const readOnly = useGuestModeStore(isGuestModeActive)
   const snapshot = useLibraryStore((s) => s.snapshot)
   const games = useMemo(() => [...snapshot.games, ...snapshot.excludedGames], [snapshot])
   const captures = useMemo(() => items.filter((item) => matchCaptureGame(item.gameTitleGuess, games)?.id === gameId), [items, games, gameId])
@@ -58,7 +64,7 @@ export function CaptureShelf({ gameId }: { gameId: string }): JSX.Element {
     <section data-capture-shelf className="my-4 rounded-2xl border border-white/10 bg-black/20 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-bold text-white">{t('captures.title')}</h2>
-        <FocusableButton variant="ghost" onClick={() => void openFolder()}>{t('captures.openFolder')}</FocusableButton>
+        {!readOnly && <FocusableButton variant="ghost" onClick={() => void openFolder()}>{t('captures.openFolder')}</FocusableButton>}
       </div>
       <CaptureFeedback />
       {loading && <p role="status" className="my-3 text-sm text-muted">{t('captures.loading')}</p>}

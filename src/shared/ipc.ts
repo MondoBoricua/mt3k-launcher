@@ -568,6 +568,8 @@ export interface GuestModeStatus {
   /** Epoch milliseconds while PIN entry is refused after repeated failures. */
   lockedUntil?: number
   attemptsLeft: number
+  /** Main-owned Settings unlock; the renderer only mirrors it. */
+  settingsUnlockedUntil?: number
 }
 
 export type GuestModeVerifyResult =
@@ -2014,6 +2016,7 @@ export const IPC = {
   guestModeDisable: 'guest-mode:disable',
   guestModeSetAllowedCollection: 'guest-mode:allowed-collection:set',
   guestModeStatusUpdated: 'guest-mode:status:updated',
+  guestModeLockSettings: 'guest-mode:settings:lock',
   controllerInputState: 'controller-input:state',
   imageResolve: 'image:resolve',
   imageArtworkSearchList: 'image:artwork-search:list',
