@@ -34,6 +34,10 @@ Cinco funciones nuevas. Todas vienen **apagadas** y se activan en Configuración
 
 - Un **PIN de 4 a 6 dígitos** que se escribe con el mando. Con el modo activo solo se ven los juegos de una colección que elijas; desaparecen la tienda, los amigos y las aplicaciones; Configuración pide el PIN; y no se puede desinstalar, ocultar ni editar juegos. Cinco intentos fallidos bloquean el PIN un minuto. El PIN se guarda como hash, nunca en claro. Es una restricción del launcher, no un control parental de Windows.
 
+### Revisión de seguridad
+
+- Las cinco funciones pasaron por una revisión cruzada independiente antes de salir. Se cerraron los escapes del modo invitado por menús y por IPC, el restaurador de partidas rechaza enlaces simbólicos y bloquea el lanzamiento del juego mientras restaura, el `retroarch.cfg` se escribe de forma atómica con copia de seguridad y se deshace al apagar la función, y los perfiles de lanzamiento ya no bloquean otros juegos cuando falta el monitor.
+
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.8.
 
