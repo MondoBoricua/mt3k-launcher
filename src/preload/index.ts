@@ -1,5 +1,5 @@
 import type { CaptureItem } from '../shared/capturePolicy'
-import type { DisplayModeList, DisplayMode, LaunchProfile, LaunchProfileEntry, LaunchProfileEvent } from '@shared/launchProfilePolicy'
+import type { DisplayModeList, DisplayMode, LaunchProfile, LaunchProfileEntry, LaunchProfileEvent, LaunchProfileDiscardResult } from '@shared/launchProfilePolicy'
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import {
@@ -122,6 +122,8 @@ const orbitApi = {
     save: (gameId: string, mode: DisplayMode, profile: LaunchProfile | null): Promise<LaunchProfileEntry> => ipcRenderer.invoke(IPC.launchProfilesSave, gameId, mode, profile),
     confirm: (token: string): Promise<boolean> => ipcRenderer.invoke(IPC.launchProfilesConfirm, token),
     revert: (): Promise<void> => ipcRenderer.invoke(IPC.launchProfilesRevert),
+    pending: (): Promise<boolean> => ipcRenderer.invoke(IPC.launchProfilesPending),
+    discard: (): Promise<LaunchProfileDiscardResult> => ipcRenderer.invoke(IPC.launchProfilesDiscard),
     takeError: (): Promise<LaunchProfileEvent | null> => ipcRenderer.invoke(IPC.launchProfilesError),
     onEvent: (callback: (event: LaunchProfileEvent) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, event: LaunchProfileEvent): void => callback(event)

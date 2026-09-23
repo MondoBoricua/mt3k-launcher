@@ -1,10 +1,14 @@
 import { create } from 'zustand'
 import type { DisplayMode, DisplayModeList, LaunchProfile, LaunchProfileEntry, LaunchProfileEvent } from '@shared/launchProfilePolicy'
+import type { TranslationKey } from '@renderer/i18n/translations'
 import { notify } from './notificationStore'
 
-export function reportLaunchProfileError(error: unknown): void {
+export function reportLaunchProfileError(
+  error: unknown,
+  messageKey: TranslationKey = 'launchProfiles.error'
+): void {
   console.warn('[launch-profiles] Request failed:', error)
-  notify({ titleKey: 'launchProfiles.title', messageKey: 'launchProfiles.error', tone: 'error', force: true })
+  notify({ titleKey: 'launchProfiles.title', messageKey, tone: 'error', force: true })
 }
 interface LaunchProfileState {
   gameId: string | null
@@ -57,7 +61,12 @@ export const useLaunchProfileStore = create<LaunchProfileState>((set, get) => ({
   },
   receive: (event) => {
     set({ pending: event.kind === 'confirm' ? event : null })
-    if (event.kind === 'error') reportLaunchProfileError('Display operation failed')
+    if (event.kind === 'error') {
+      reportLaunchProfileError(
+        'Display operation failed',
+        event.reason === 'pending-journal' ? 'launchProfiles.pendingBlocksLaunch' : 'launchProfiles.error'
+      )
+    }
     if (event.kind === 'restored') notify({ titleKey: 'launchProfiles.title', messageKey: 'launchProfiles.restored', force: true })
   },
   confirm: async () => {

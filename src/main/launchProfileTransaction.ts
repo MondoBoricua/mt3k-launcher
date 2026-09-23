@@ -66,6 +66,27 @@ export class LaunchProfileTransaction {
     return true
   }
 
+  /** Hay un journal en memoria que todavía no se pudo devolver. */
+  hasJournal(): boolean {
+    return this.journal !== null
+  }
+
+  /** El usuario todavía está en el aviso de "¿ves esta pantalla?". */
+  confirmationPending(): boolean {
+    return this.pending !== null
+  }
+
+  /**
+   * Borra el journal sin tocar la pantalla.
+   * Si hay una confirmación en curso, no hace nada: ese aviso tiene su propio cancelar.
+   */
+  forget(): boolean {
+    if (this.pending) return false
+    this.journal = null
+    this.deps.clear()
+    return true
+  }
+
   restore(): boolean {
     const pending = this.pending
     this.pending = null

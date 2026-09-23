@@ -253,3 +253,198 @@ export function selectRetroArchConfigPath(
   if (input.appDataConfigPath) return { path: input.appDataConfigPath, create: true }
   return null
 }
+
+/** Tope del cfg: más de esto no se toca, pa' no reescribir un archivo raro. */
+export const RETROARCH_CONFIG_MAX_BYTES = 4 * 1024 * 1024
+
+/** Valores que el launcher escribe. `null` quiere decir que la clave no estaba. */
+export interface RetroArchNetworkKeyState {
+  network_cmd_enable: string | null
+  network_cmd_port: string | null
+}
+
+/**
+ * Recuerdo de lo que había en el cfg antes de tocarlo.
+ * Vive en userData (`retroarch-network-config.json`), no dentro de RetroArch.
+ */
+export interface RetroArchNetworkMemory {
+  version: 1
+  configPath: string
+  original: RetroArchNetworkKeyState
+  written: RetroArchNetworkKeyState
+}
+
+const WANTED_NETWORK_KEYS: RetroArchNetworkKeyState = {
+  network_cmd_enable: 'true',
+  network_cmd_port: '55355'
+}
+
+/**
+ * Lee el cfg como bytes. Si no es UTF-8 válido o pasa de 4 MB,
+ * no devolvemos texto: el que llama tiene que dejar el archivo quieto.
+ */
+export function decodeRetroArchConfigBytes(
+  bytes: Uint8Array
+): { ok: true; text: string } | { ok: false; reason: 'too-large' | 'invalid-utf8' } {
+  if (bytes.byteLength > RETROARCH_CONFIG_MAX_BYTES) return { ok: false, reason: 'too-large' }
+  try {
+    return { ok: true, text: new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
+  } catch {
+    return { ok: false, reason: 'invalid-utf8' }
+  }
+}
+
+function unquoteConfigValue(raw: string): string {
+  const trimmed = raw.trim()
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2)
+  ) {
+    return trimmed.slice(1, -1)
+  }
+  return trimmed
+}
+
+/**
+ * La última asignación sin comentar gana, igual que RetroArch.
+ * Si la clave no aparece, el valor queda en `null` (ausente).
+ */
+export function readRetroArchNetworkKeys(content: string): RetroArchNetworkKeyState {
+  const pattern = /^\s*(network_cmd_enable|network_cmd_port)\s*=\s*(.*?)\s*$/iu
+  return content.split(/\r?\n/u).reduce<RetroArchNetworkKeyState>((current, line) => {
+    if (/^\s*#/u.test(line)) return current
+    const match = pattern.exec(line)
+    if (!match) return current
+    const key = match[1].toLowerCase() as keyof RetroArchNetworkKeyState
+    return { ...current, [key]: unquoteConfigValue(match[2] ?? '') }
+  }, { network_cmd_enable: null, network_cmd_port: null })
+}
+
+function sameNetworkKeys(left: RetroArchNetworkKeyState, right: RetroArchNetworkKeyState): boolean {
+  return (
+    left.network_cmd_enable === right.network_cmd_enable &&
+    left.network_cmd_port === right.network_cmd_port
+  )
+}
+
+/** True cuando las dos claves ya tienen lo que el launcher iba a escribir. */
+export function networkCommandsAlreadyWanted(content: string): boolean {
+  return sameNetworkKeys(readRetroArchNetworkKeys(content), WANTED_NETWORK_KEYS)
+}
+
+export interface RetroArchNetworkWritePlan {
+  action: 'skip' | 'write'
+  text: string
+  original: RetroArchNetworkKeyState
+  written: RetroArchNetworkKeyState
+}
+
+/**
+ * Decide si hay que escribir. Si las dos claves ya valen lo que queremos,
+ * no se toca el archivo (ni el backup).
+ */
+export function planRetroArchNetworkEnable(content: string): RetroArchNetworkWritePlan {
+  const original = readRetroArchNetworkKeys(content)
+  if (sameNetworkKeys(original, WANTED_NETWORK_KEYS)) {
+    return { action: 'skip', text: content, original, written: { ...WANTED_NETWORK_KEYS } }
+  }
+  return {
+    action: 'write',
+    text: upsertRetroArchNetworkCommands(content),
+    original,
+    written: { ...WANTED_NETWORK_KEYS }
+  }
+}
+
+function removeFlatKey(lines: readonly string[], key: string): string[] {
+  const pattern = new RegExp(`^\\s*${key}\\s*=`, 'iu')
+  return lines.filter((line) => !pattern.test(line))
+}
+
+/**
+ * Devuelve el cfg a los valores de antes.
+ * Si la clave no existía, se quitan las líneas que el launcher metió.
+ */
+export function applyRetroArchNetworkOriginals(
+  content: string,
+  original: RetroArchNetworkKeyState
+): string {
+  const newline = preferredNewline(content)
+  const trailingNewline = content.endsWith('\n')
+  const body = content.replace(/(?:\r\n|\n)$/u, '')
+  const lines = body.length === 0 ? [] : body.split(/\r?\n/u)
+  const next = (['network_cmd_enable', 'network_cmd_port'] as const).reduce(
+    (current, key) => {
+      const value = original[key]
+      return value === null ? removeFlatKey(current, key) : applyFlatKey(current, key, value)
+    },
+    lines
+  )
+  if (next.length === 0) return ''
+  const joined = next.join(newline)
+  if (trailingNewline || content.length === 0) return `${joined}${newline}`
+  return joined
+}
+
+export interface RetroArchNetworkRestorePlan {
+  action: 'skip' | 'restore'
+  text: string
+}
+
+/**
+ * Solo restauramos si el cfg sigue con lo que el launcher escribió.
+ * Si el usuario cambió una clave después, el archivo se queda como está.
+ */
+export function planRetroArchNetworkRestore(
+  content: string,
+  memory: Pick<RetroArchNetworkMemory, 'original' | 'written'>
+): RetroArchNetworkRestorePlan {
+  const current = readRetroArchNetworkKeys(content)
+  if (!sameNetworkKeys(current, memory.written)) return { action: 'skip', text: content }
+  const text = applyRetroArchNetworkOriginals(content, memory.original)
+  if (text === content) return { action: 'skip', text }
+  return { action: 'restore', text }
+}
+
+function isNetworkKeyValue(value: unknown): value is string | null {
+  return value === null || (typeof value === 'string' && value.length <= 64 && !value.includes('\0'))
+}
+
+function parseNetworkKeyState(value: unknown): RetroArchNetworkKeyState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).some((key) => key !== 'network_cmd_enable' && key !== 'network_cmd_port')) {
+    return null
+  }
+  if (!isNetworkKeyValue(record.network_cmd_enable) || !isNetworkKeyValue(record.network_cmd_port)) {
+    return null
+  }
+  return {
+    network_cmd_enable: record.network_cmd_enable,
+    network_cmd_port: record.network_cmd_port
+  }
+}
+
+/**
+ * El JSON del sidecar es data de afuera: si no cuadra, se ignora.
+ * La ruta tiene que apuntar a un `retroarch.cfg` y no puede subir de carpeta.
+ */
+export function parseRetroArchNetworkMemory(value: unknown): RetroArchNetworkMemory | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (record.version !== 1 || !isRetroArchConfigPath(record.configPath)) return null
+  const original = parseNetworkKeyState(record.original)
+  const written = parseNetworkKeyState(record.written)
+  if (!original || !written) return null
+  return { version: 1, configPath: record.configPath, original, written }
+}
+
+/** Ruta absoluta a retroarch.cfg, sin `..` ni bytes nulos. */
+export function isRetroArchConfigPath(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 4096) return false
+  if (value.includes('\0')) return false
+  const normalized = value.replaceAll('\\', '/')
+  if (normalized.split('/').some((part) => part === '..' || part === '.')) return false
+  const absolute = /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//') || normalized.startsWith('/')
+  return absolute && /\/retroarch\.cfg$/iu.test(normalized)
+}

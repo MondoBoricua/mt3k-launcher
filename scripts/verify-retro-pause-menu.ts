@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import { createSocket } from 'node:dgram'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   encodeRetroArchCommand,
   isRetroArchCommand,
@@ -9,9 +12,17 @@ import {
   resumeShouldUnpause,
   openShouldPause,
   selectRetroArchConfigPath,
-  upsertRetroArchNetworkCommands
+  upsertRetroArchNetworkCommands,
+  decodeRetroArchConfigBytes,
+  planRetroArchNetworkEnable,
+  planRetroArchNetworkRestore,
+  parseRetroArchNetworkMemory,
+  isRetroArchConfigPath,
+  readRetroArchNetworkKeys,
+  RETROARCH_CONFIG_MAX_BYTES
 } from '../src/shared/retroArchCommands.ts'
 import { sendRetroArchUdp } from '../src/main/retro/retroArchCommandClient.ts'
+import { applyRetroArchConfigPlan } from '../src/main/retro/retroArchConfigFile.ts'
 
 // Lista blanca: un string cualquiera no se codifica ni se manda.
 assert.equal(isRetroArchCommand('SAVE_STATE'), true)
@@ -184,6 +195,70 @@ try {
   }
 } finally {
   server.close()
+}
+
+const configDir = mkdtempSync(join(tmpdir(), 'retroarch-cfg-'))
+try {
+  const cfg = join(configDir, 'retroarch.cfg')
+  const original = 'video_fullscreen = "true"\r\nnetwork_cmd_enable = "false"\r\n'
+  writeFileSync(cfg, original)
+  const enabled = planRetroArchNetworkEnable(original)
+  assert.equal(enabled.action, 'write')
+  assert.equal(enabled.original.network_cmd_enable, 'false')
+  assert.equal(enabled.original.network_cmd_port, null)
+  assert.equal(await applyRetroArchConfigPlan(cfg, () => enabled), 'written')
+  assert.equal(readFileSync(cfg, 'utf8'), enabled.text)
+  assert.equal(readFileSync(`${cfg}.mt3k-bak`, 'utf8'), original)
+  assert.equal(existsSync(`${cfg}.mt3k-tmp`), false)
+
+  const already = planRetroArchNetworkEnable(readFileSync(cfg, 'utf8'))
+  assert.equal(already.action, 'skip')
+  assert.equal(
+    planRetroArchNetworkEnable('network_cmd_enable=true\nnetwork_cmd_port=55355\n').action,
+    'skip'
+  )
+  const backup = readFileSync(`${cfg}.mt3k-bak`)
+  assert.equal(await applyRetroArchConfigPlan(cfg, () => already), 'skipped')
+  assert.deepEqual(readFileSync(`${cfg}.mt3k-bak`), backup)
+  assert.equal(readFileSync(cfg, 'utf8'), enabled.text)
+
+  const memory = {
+    version: 1 as const,
+    configPath: cfg,
+    original: enabled.original,
+    written: enabled.written
+  }
+  assert.deepEqual(parseRetroArchNetworkMemory(memory), memory)
+  assert.equal(parseRetroArchNetworkMemory({ ...memory, configPath: '../retroarch.cfg' }), null)
+  assert.equal(isRetroArchConfigPath('C:\\RetroArch\\retroarch.cfg'), true)
+  assert.equal(isRetroArchConfigPath('/tmp/not-retro.cfg'), false)
+
+  const restoring = planRetroArchNetworkRestore(readFileSync(cfg, 'utf8'), memory)
+  assert.equal(restoring.action, 'restore')
+  assert.equal(await applyRetroArchConfigPlan(cfg, () => restoring), 'written')
+  const restoredKeys = readRetroArchNetworkKeys(readFileSync(cfg, 'utf8'))
+  assert.equal(restoredKeys.network_cmd_enable, 'false')
+  assert.equal(restoredKeys.network_cmd_port, null)
+  assert.equal(readFileSync(`${cfg}.mt3k-bak`, 'utf8'), enabled.text)
+
+  const tweaked = enabled.text.replace('network_cmd_port = "55355"', 'network_cmd_port = "12345"')
+  writeFileSync(cfg, tweaked)
+  const leave = planRetroArchNetworkRestore(tweaked, memory)
+  assert.equal(leave.action, 'skip')
+  assert.equal(await applyRetroArchConfigPlan(cfg, () => leave), 'skipped')
+  assert.equal(readFileSync(cfg, 'utf8'), tweaked)
+
+  writeFileSync(cfg, Buffer.from([0xff, 0xfe, 0xfd]))
+  assert.equal(await applyRetroArchConfigPlan(cfg, () => enabled), 'rejected')
+  assert.deepEqual(readFileSync(cfg), Buffer.from([0xff, 0xfe, 0xfd]))
+  const invalid = decodeRetroArchConfigBytes(Buffer.from([0x80]))
+  assert.equal(invalid.ok, false)
+  if (!invalid.ok) assert.equal(invalid.reason, 'invalid-utf8')
+  const huge = decodeRetroArchConfigBytes(Buffer.alloc(RETROARCH_CONFIG_MAX_BYTES + 1))
+  assert.equal(huge.ok, false)
+  if (!huge.ok) assert.equal(huge.reason, 'too-large')
+} finally {
+  rmSync(configDir, { recursive: true, force: true })
 }
 
 console.log('retro pause menu checks passed')
