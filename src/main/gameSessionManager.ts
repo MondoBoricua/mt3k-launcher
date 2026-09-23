@@ -89,6 +89,8 @@ export interface CompletedGameSessionResult {
 }
 
 export interface GameSessionCallbacks {
+  beforeLocalLaunch?: (game: LibraryGame) => Promise<boolean>
+  restoreLaunchProfile?: () => void
   getLibraryGames?: () => readonly LibraryGame[]
   getGeForceNowMatches?: () => readonly GeForceNowLibraryMatch[]
   onGameConfirmed?: (game: LibraryGame, detectedAt: number, source?: 'local' | 'geforce-now') => void | Promise<void>
@@ -1157,6 +1159,15 @@ export class GameSessionManager extends EventEmitter {
     let ensureFullscreenWithHotkey = false
     try {
       if (token !== this.activeToken) return
+      const profileReady = (await this.callbacks.beforeLocalLaunch?.(game)) ?? true
+      if (token !== this.activeToken) return
+      if (!profileReady) {
+        sampler.stop()
+        if (this.sampler === sampler) this.sampler = null
+        this.releaseLaunchShield(false)
+        this.update({ phase: 'idle' })
+        return
+      }
       const receipt = await launchGame(game)
       if (receipt.spawnedGamePid) directlySpawnedGamePids.add(receipt.spawnedGamePid)
       ensureFullscreenWithHotkey = receipt.ensureFullscreenWithHotkey === true
@@ -1536,6 +1547,7 @@ export class GameSessionManager extends EventEmitter {
     this.activeGame = null
     this.geForceNowLaunchIntent = undefined
     this.geForceNowSessionIdentity = undefined
+    this.callbacks.restoreLaunchProfile?.()
     this.status = { phase: 'idle' }
     this.removeAllListeners()
     return completed
@@ -2032,6 +2044,7 @@ export class GameSessionManager extends EventEmitter {
   private update(status: GameLaunchStatus): void {
     const previous = this.status
     if (status.phase === 'idle') {
+      this.callbacks.restoreLaunchProfile?.()
       this.activeGame = null
       this.providerAttachedGameId = undefined
       this.providerPresenceMissingSince = undefined

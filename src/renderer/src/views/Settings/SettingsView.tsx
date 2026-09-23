@@ -1,5 +1,6 @@
 import { ATTRACT_IDLE_MINUTES } from '@shared/attractModePolicy'
 import { clearCaptures } from '@renderer/state/capturesStore'
+import { reportLaunchProfileError } from '@renderer/state/launchProfileStore'
 import { type Language, languageLocale } from '@shared/language'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -3559,6 +3560,15 @@ export function SettingsView(): JSX.Element {
 
             {page === 'hardware' && (
               <div className="mt-3 space-y-2">
+                <SettingsSection id="launch-profiles" icon={Gamepad2} title={t('launchProfiles.title')} description={t('launchProfiles.body')}>
+                  <SettingsToggle id="launchProfilesEnabled" active={settings?.launchProfilesEnabled === true} defaultInactive disabled={!settings} title={t('launchProfiles.enable')} description={t('launchProfiles.body')} t={t}
+                    onChange={(active) => {
+                      void window.api.settings.set({ launchProfilesEnabled: active }).then((next) => {
+                        setSettings(next)
+                        usePreferencesStore.setState({ launchProfilesEnabled: next.launchProfilesEnabled === true })
+                      }).catch(reportLaunchProfileError)
+                    }} />
+                </SettingsSection>
                 <SettingsSection
                   id="background-service"
                   icon={ShieldCheck}

@@ -473,6 +473,7 @@ export interface OrbitSettings {
   attractModeEnabled?: boolean
   attractModeIdleMinutes?: number
   captureShelfEnabled?: boolean
+  launchProfilesEnabled?: boolean
   backgroundModeEnabled?: boolean
   startWithWindows?: boolean
   theme: ThemeId
@@ -1798,6 +1799,13 @@ export interface SystemSyncStatus {
 }
 
 export const IPC = {
+  displayListModes: "display:listModes",
+  launchProfilesGet: "launchProfiles:get",
+  launchProfilesSave: "launchProfiles:save",
+  launchProfilesConfirm: "launchProfiles:confirm",
+  launchProfilesRevert: "launchProfiles:revert",
+  launchProfilesEvent: "launchProfiles:event",
+  launchProfilesError: "launchProfiles:error",
   steamLoginStart: 'steam:login:start',
   steamLoginCancel: 'steam:login:cancel',
   steamLoginStatus: 'steam:login:status',

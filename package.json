@@ -7,6 +7,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "verify:launch-profiles": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-launch-profiles.ts",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",

@@ -31,6 +31,7 @@ const defaults: OrbitSettings = {
   attractModeEnabled: false,
   attractModeIdleMinutes: 5,
   captureShelfEnabled: false,
+  launchProfilesEnabled: false,
   backgroundModeEnabled: true,
   startWithWindows: false,
   theme: 'midnight',

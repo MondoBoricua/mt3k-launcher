@@ -1,3 +1,4 @@
+import { LaunchProfileListener } from '@renderer/components/LaunchProfileConfirmation'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useGamepadNavigation } from '@renderer/hooks/useGamepadNavigation'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
@@ -75,6 +76,7 @@ function initialStartupMode(): StartupAnimationMode {
 }
 
 function OrbitApp(): JSX.Element | null {
+  const launchProfilesEnabled = usePreferencesStore((s) => s.launchProfilesEnabled)
   const cachedStartupMode = useRef(initialStartupMode())
   const [ready, setReady] = useState(false)
   const [startupMode, setStartupMode] = useState<StartupAnimationMode>(
@@ -214,6 +216,7 @@ function OrbitApp(): JSX.Element | null {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-base">
+      {ready && launchProfilesEnabled && <LaunchProfileListener />}
       <div
         ref={appContentRef}
         data-orbit-app-content
