@@ -98,6 +98,7 @@ import {
   type RetroArchStatusSnapshot
 } from '@shared/retroArchCommands'
 import { sendRetroArchUdp } from './retro/retroArchCommandClient'
+import { guestModeService } from './guestModeService'
 import { steamAuthManager } from './steam/steamAuth'
 import { steamWebApiCredentials } from './steam/steamWebApiCredentials'
 import { epicAuthManager } from './epic/epicAuth'
@@ -303,11 +304,27 @@ function validateRetroEmulatorInstall(value: unknown): RetroEmulatorInstallInput
   return validateRetroEmulatorDownload(value)
 }
 
+/** Guest-mode keys never travel through the generic settings channel; the PIN gates them. */
+const GUEST_MODE_MANAGED_KEYS = [
+  'guestModeEnabled',
+  'guestModePinHash',
+  'guestModeAllowedCollectionId'
+] as const
+
+function validatedOptionalPin(value: unknown): unknown {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'string' || value.length > 16) throw new Error('Invalid guest PIN')
+  return value
+}
+
 function validateSettingsPartial(value: unknown): asserts value is Partial<OrbitSettings> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error('Invalid settings payload')
   }
   const partial = value as Record<string, unknown>
+  for (const key of GUEST_MODE_MANAGED_KEYS) {
+    if (key in partial) throw new Error(`${key} can only be changed through guest mode`)
+  }
   if ('language' in partial && !isLanguage(partial.language)) {
     throw new Error('Invalid language')
   }
@@ -1184,6 +1201,33 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const status = await backgroundServiceManager.getStatus()
     return status.hardwareControl
   })
+  guestModeService.attach(mainWindow)
+  ipcMain.handle(IPC.guestModeStatus, () => guestModeService.status())
+  ipcMain.handle(IPC.guestModeSetup, (_e, pin: unknown, currentPin: unknown) =>
+    guestModeService.setPin(validatedOptionalPin(pin), validatedOptionalPin(currentPin))
+  )
+  ipcMain.handle(IPC.guestModeVerify, (_e, pin: unknown) =>
+    guestModeService.verifyPin(validatedOptionalPin(pin))
+  )
+  ipcMain.handle(IPC.guestModeEnable, (_e, pin: unknown) =>
+    guestModeService.enable(validatedOptionalPin(pin))
+  )
+  ipcMain.handle(IPC.guestModeDisable, (_e, pin: unknown) =>
+    guestModeService.disable(validatedOptionalPin(pin))
+  )
+  ipcMain.handle(
+    IPC.guestModeSetAllowedCollection,
+    (_e, collectionId: unknown, pin: unknown) => {
+      if (
+        collectionId !== null &&
+        collectionId !== undefined &&
+        (typeof collectionId !== 'string' || collectionId.length > 128)
+      ) {
+        throw new Error('Invalid collection ID')
+      }
+      return guestModeService.setAllowedCollection(collectionId, validatedOptionalPin(pin))
+    }
+  )
   ipcMain.handle(IPC.applicationsGet, () => applicationService.getSnapshot())
   ipcMain.handle(IPC.applicationsRefresh, () => applicationService.getSnapshot(true))
   ipcMain.handle(IPC.applicationsLaunch, async (_e, applicationIdValue: unknown) => {
@@ -1425,6 +1469,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   )
 
   ipcMain.handle(IPC.libraryGameExclude, (_e, gameIdValue: unknown) => {
+    guestModeService.assertActionAllowed('hide')
     return libraryService.setGameExcluded(
       validatedShortString(gameIdValue, 'library game ID'),
       true
@@ -1432,15 +1477,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
 
   ipcMain.handle(IPC.libraryGameRestore, (_e, gameIdValue: unknown) => {
+    guestModeService.assertActionAllowed('hide')
     return libraryService.setGameExcluded(
       validatedShortString(gameIdValue, 'library game ID'),
       false
     )
   })
 
-  ipcMain.handle(IPC.libraryGameMetadataUpdate, (_e, value: unknown) =>
-    libraryService.updateGameMetadata(validateGameMetadataUpdate(value))
-  )
+  ipcMain.handle(IPC.libraryGameMetadataUpdate, (_e, value: unknown) => {
+    guestModeService.assertActionAllowed('edit-metadata')
+    return libraryService.updateGameMetadata(validateGameMetadataUpdate(value))
+  })
 
   ipcMain.handle(IPC.libraryGameMetadataSync, (_e, gameIdValue: unknown) =>
     libraryService.syncGameMetadata(
@@ -1571,6 +1618,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
 
   ipcMain.handle(IPC.customGameRemove, async (_e, gameIdValue: unknown) => {
+    guestModeService.assertActionAllowed('uninstall')
     const gameId = validatedShortString(gameIdValue, 'custom game ID')
     const snapshot = await libraryService.removeCustomGame(gameId)
     for (const orientation of ['vertical', 'horizontal'] as const) {
@@ -1658,6 +1706,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
 
   ipcMain.handle(IPC.gameUninstall, async (_event, gameIdValue: unknown) => {
+    guestModeService.assertActionAllowed('uninstall')
     const gameId = validatedShortString(gameIdValue, 'game uninstall ID')
     const game = libraryService.getGame(gameId)
     if (!game) throw new Error('Game is not available')

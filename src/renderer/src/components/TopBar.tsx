@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { Home, LayoutGrid, Library, ShoppingBag, Settings, UsersRound } from 'lucide-react'
+import { Home, LayoutGrid, Library, LockKeyhole, ShoppingBag, Settings, UsersRound } from 'lucide-react'
 import {
   getVisibleMainViews,
   useNavigationStore,
@@ -20,6 +20,7 @@ import {
   useDiscordChatStore
 } from '@renderer/state/discordChatStore'
 import { preloadMainView } from '@renderer/lib/mainViewLoaders'
+import { isGuestModeActive, useGuestModeStore } from '@renderer/state/guestModeStore'
 
 const items: { id: MainView; labelKey: TranslationKey; icon: typeof Home }[] = [
   { id: 'home', labelKey: 'nav.home', icon: Home },
@@ -59,6 +60,7 @@ export function TopBar(): JSX.Element {
   const homeLayout = usePreferencesStore((state) => state.homeLayout)
   const reduceMotion = Boolean(useReducedMotion())
   const unreadCount = useDiscordChatStore((state) => totalDiscordUnread(state.unreadByUser))
+  const guestModeActive = useGuestModeStore(isGuestModeActive)
   const headerRef = useRef<HTMLElement>(null)
   const navRef = useRef<HTMLElement>(null)
   const [topBarGeometry, setTopBarGeometry] = useState({
@@ -68,14 +70,14 @@ export function TopBar(): JSX.Element {
 
   useEffect(() => {
     if (
-      (!showFriendsHub && mainView === 'friends') ||
-      (!showStoreTab && mainView === 'store')
+      ((!showFriendsHub || guestModeActive) && mainView === 'friends') ||
+      ((!showStoreTab || guestModeActive) && mainView === 'store')
     ) {
       setMainView('home')
     }
-  }, [mainView, setMainView, showFriendsHub, showStoreTab])
+  }, [guestModeActive, mainView, setMainView, showFriendsHub, showStoreTab])
 
-  const visibleViews = getVisibleMainViews({ showFriendsHub, showStoreTab })
+  const visibleViews = getVisibleMainViews({ showFriendsHub, showStoreTab, guestModeActive })
   const motionMode = effectiveDockMotion(dockMotion, reduceMotion)
   const itemTransition =
     motionMode === 'calm'
@@ -125,7 +127,7 @@ export function TopBar(): JSX.Element {
       observer.disconnect()
       window.removeEventListener('resize', updateGeometry)
     }
-  }, [dockSize, showFriendsHub, showStoreTab])
+  }, [dockSize, guestModeActive, showFriendsHub, showStoreTab])
 
   return (
     <header
@@ -316,6 +318,17 @@ export function TopBar(): JSX.Element {
             )
           })}
           <span aria-hidden="true" className="orbit-dock-separator mx-0.5 h-5 w-px bg-white/10" />
+          {guestModeActive && (
+            <span
+              role="img"
+              data-guest-mode-indicator="true"
+              aria-label={t('guestMode.indicator')}
+              title={t('guestMode.indicator')}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-accent"
+            >
+              <LockKeyhole size={15} strokeWidth={2.2} />
+            </span>
+          )}
           <DownloadActivityIsland />
           <SystemQuickMenu compact />
           <PowerMenu />

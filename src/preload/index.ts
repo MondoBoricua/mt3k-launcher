@@ -38,6 +38,8 @@ import {
   type MetadataSearchResult,
   type GeForceNowCatalogSnapshot,
   type HardwareControlStatus,
+  type GuestModeStatus,
+  type GuestModeVerifyResult,
   type NativeControllerInputSnapshot,
   type HomeWallpaperAsset,
   type ImageOrientation,
@@ -278,6 +280,28 @@ const orbitApi = {
         callback(status)
       ipcRenderer.on(IPC.hardwareControlStatus, listener)
       return () => ipcRenderer.removeListener(IPC.hardwareControlStatus, listener)
+    }
+  },
+  guestMode: {
+    status: (): Promise<GuestModeStatus> => ipcRenderer.invoke(IPC.guestModeStatus),
+    setup: (pin: string, currentPin?: string): Promise<GuestModeVerifyResult> =>
+      ipcRenderer.invoke(IPC.guestModeSetup, pin, currentPin),
+    verify: (pin: string): Promise<GuestModeVerifyResult> =>
+      ipcRenderer.invoke(IPC.guestModeVerify, pin),
+    enable: (pin: string): Promise<GuestModeVerifyResult> =>
+      ipcRenderer.invoke(IPC.guestModeEnable, pin),
+    disable: (pin: string): Promise<GuestModeVerifyResult> =>
+      ipcRenderer.invoke(IPC.guestModeDisable, pin),
+    setAllowedCollection: (
+      collectionId: string | null,
+      pin?: string
+    ): Promise<GuestModeVerifyResult> =>
+      ipcRenderer.invoke(IPC.guestModeSetAllowedCollection, collectionId, pin),
+    onStatus: (callback: (status: GuestModeStatus) => void): (() => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, status: GuestModeStatus): void =>
+        callback(status)
+      ipcRenderer.on(IPC.guestModeStatusUpdated, listener)
+      return () => ipcRenderer.removeListener(IPC.guestModeStatusUpdated, listener)
     }
   },
   controllerInput: {

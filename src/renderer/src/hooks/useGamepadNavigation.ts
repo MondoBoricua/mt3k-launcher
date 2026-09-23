@@ -19,6 +19,7 @@ import {
 } from '@renderer/lib/controllerProfile'
 import { useControllerStore } from '@renderer/state/controllerStore'
 import { useGameDetailStore } from '@renderer/state/gameDetailStore'
+import { isGuestModeActive, useGuestModeStore } from '@renderer/state/guestModeStore'
 import { ORBIT_PERFORMANCE_MODE_EVENT } from '@renderer/lib/performanceMode'
 import { cycleActiveArtworkPicker } from '@renderer/lib/artworkPickerNavigation'
 import { resolveGameCardSecondaryActivation } from '@renderer/lib/gameCardActivation'
@@ -192,7 +193,8 @@ function cycleMainView(step: 1 | -1): void {
   if (document.querySelector('[data-focus-scope="active"]')) return
   const { mainView, setMainView } = useNavigationStore.getState()
   const { showFriendsHub, showStoreTab } = usePreferencesStore.getState()
-  const visibleViews = getVisibleMainViews({ showFriendsHub, showStoreTab })
+  const guestModeActive = isGuestModeActive(useGuestModeStore.getState())
+  const visibleViews = getVisibleMainViews({ showFriendsHub, showStoreTab, guestModeActive })
   const idx = visibleViews.indexOf(mainView)
   const next = visibleViews[(idx + step + visibleViews.length) % visibleViews.length]
   setMainView(next, step)

@@ -13,15 +13,34 @@ export const MAIN_VIEW_ORDER: MainView[] = [
 
 export function getVisibleMainViews({
   showFriendsHub,
-  showStoreTab
+  showStoreTab,
+  guestModeActive = false
 }: {
   showFriendsHub: boolean
   showStoreTab: boolean
+  /** Guest mode hides the store, the friends hub and Applications regardless of the visibility toggles. */
+  guestModeActive?: boolean
 }): MainView[] {
   return MAIN_VIEW_ORDER.filter(
     (view) =>
-      (view !== 'friends' || showFriendsHub) && (view !== 'store' || showStoreTab)
+      (view !== 'friends' || (showFriendsHub && !guestModeActive)) &&
+      (view !== 'store' || (showStoreTab && !guestModeActive)) &&
+      // Guests must not reach Applications either: it can open a browser or any Windows app.
+      (view !== 'applications' || !guestModeActive)
   )
+}
+
+type MainViewGuard = (view: MainView) => boolean
+
+let mainViewGuard: MainViewGuard | null = null
+
+/**
+ * Lets a feature intercept navigation (guest mode asks for its PIN before
+ * Settings opens). Returning `false` cancels the change; the guard is then
+ * responsible for navigating later if it wants to.
+ */
+export function setMainViewGuard(guard: MainViewGuard | null): void {
+  mainViewGuard = guard
 }
 
 export type OnboardingStep = 'welcome' | 'steam-login' | 'epic-login' | 'success'
@@ -46,6 +65,7 @@ export const useNavigationStore = create<NavigationState>((set) => ({
   setOnboardingStep: (onboardingStep) => set({ onboardingStep }),
   setMainView: (mainView, direction) =>
     set((state) => {
+      if (mainView !== state.mainView && mainViewGuard && !mainViewGuard(mainView)) return state
       const currentIndex = MAIN_VIEW_ORDER.indexOf(state.mainView)
       const nextIndex = MAIN_VIEW_ORDER.indexOf(mainView)
       return {

@@ -48,7 +48,9 @@ import {
 import { SaveBackupDirectorySection } from './SaveBackupDirectorySection'
 import { SettingsSection, SettingsSections } from './SettingsSection'
 import { TextSizeControl } from './TextSizeControl'
+import { GuestModePanel } from '@renderer/components/GuestModePanel'
 import { useAutoFocus } from '@renderer/hooks/useAutoFocus'
+import { useGuestModeStore } from '@renderer/state/guestModeStore'
 import {
   usePreferencesStore,
   flushMusicSettingsSave,
@@ -761,6 +763,7 @@ export function SettingsView(): JSX.Element {
     useShallow(({ theme: _theme, ...preferences }) => preferences)
   )
   const customLibraryCount = useLibraryCollectionsStore((s) => s.collections.length)
+  const guestModeEnabled = useGuestModeStore((s) => s.status.enabled)
   const orbitPlusSnapshot = useOrbitPlusStore((s) => s.snapshot)
   const manualAudioUnlocked = orbitPlusHasFeature(orbitPlusSnapshot, 'manual-audio')
   const appearanceUnlocked = orbitPlusHasFeature(
@@ -3632,6 +3635,16 @@ export function SettingsView(): JSX.Element {
             {page === 'system' && (
               <div className="mt-3 space-y-2">
                 <SaveBackupDirectorySection />
+
+                <SettingsSection
+                  id="guest-mode"
+                  icon={LockKeyhole}
+                  title={t('guestMode.title')}
+                  description={t('settings.section.guest-modeBody')}
+                  summary={t(guestModeEnabled ? 'settings.summary.on' : 'settings.summary.off')}
+                >
+                  <GuestModePanel />
+                </SettingsSection>
 
                 <SettingsSection
                   id="onboarding"
