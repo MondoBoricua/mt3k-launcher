@@ -76,6 +76,8 @@ assert.equal(catalog[1]?.createdAt, 2)
 const gameRoot = join(customRoot, 'deadbeef')
 const backupDir = join(gameRoot, '2024-01-03T10-00-00-000Z')
 assert.equal(refuseBackupDirectoryPath(backupDir, gameRoot), null)
+assert.equal(refuseBackupDirectoryPath(gameRoot, gameRoot), 'outside-game-root')
+assert.equal(refuseBackupDirectoryPath(join(gameRoot, 'a', 'b'), gameRoot), 'outside-game-root')
 assert.equal(refuseBackupDirectoryPath('/tmp/evil', gameRoot), 'outside-game-root')
 assert.equal(
   refuseBackupDirectoryPath(join(gameRoot, '2024.partial-1'), gameRoot),
