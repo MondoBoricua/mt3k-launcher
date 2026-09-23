@@ -1,3 +1,4 @@
+import { launchProfileService } from './launchProfileService'
 import { isLanguage } from '@shared/language'
 import { app, clipboard, ipcMain, shell, type BrowserWindow } from 'electron'
 import { spawn } from 'node:child_process'
@@ -693,6 +694,26 @@ function findArtworkGame(gameId: string): LibraryGame | null {
 }
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
+  launchProfileService.initialize((event) => {
+    if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(IPC.launchProfilesEvent, event)
+  })
+  const profileGameId = (value: unknown): string => {
+    if (typeof value !== 'string' || value.length > 512 || ['__proto__', 'constructor', 'prototype'].includes(value) || !libraryService.getGame(value)) throw new Error('Invalid library game')
+    return value
+  }
+  const profileRequest = <T>(event: Electron.IpcMainInvokeEvent, action: () => T): T => {
+    try {
+      if (event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('Invalid display request sender')
+      if (settingsStore.get('launchProfilesEnabled') !== true) throw new Error('Launch profiles disabled')
+      return action()
+    } catch (error) { console.warn('[launch-profiles] IPC request failed:', error); throw error }
+  }
+  ipcMain.handle(IPC.displayListModes, (event) => profileRequest(event, () => launchProfileService.listModes()))
+  ipcMain.handle(IPC.launchProfilesGet, (event, id: unknown) => profileRequest(event, () => launchProfileService.get(profileGameId(id))))
+  ipcMain.handle(IPC.launchProfilesSave, (event, id: unknown, mode: unknown, profile: unknown) => profileRequest(event, () => launchProfileService.save(profileGameId(id), mode, profile)))
+  ipcMain.handle(IPC.launchProfilesConfirm, (event, token: unknown) => profileRequest(event, () => launchProfileService.confirm(token)))
+  ipcMain.handle(IPC.launchProfilesRevert, (event) => profileRequest(event, () => launchProfileService.restore()))
+  ipcMain.handle(IPC.launchProfilesError, (event) => profileRequest(event, () => launchProfileService.takeError()))
   const mainWindowDisposers = new Set<() => void>()
   const disposeWithMainWindow = (dispose: () => void): void => {
     mainWindowDisposers.add(dispose)
@@ -740,6 +761,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   )
   disposeWithMainWindow(() => libraryRefreshScheduler.dispose())
   const gameSessionManager = new GameSessionManager(mainWindow, {
+    beforeLocalLaunch: (game) => launchProfileService.beforeLaunch(game.id),
+    restoreLaunchProfile: () => launchProfileService.restore(),
     getLibraryGames: () => libraryService.getSnapshot().games,
     getGeForceNowMatches: () => currentGeForceNowSnapshot().matches,
     onGameConfirmed: (game, detectedAt, source) => libraryService.markGameStarted(game.id, detectedAt, source),
@@ -992,7 +1015,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(IPC.settingsSet, (_e, partial: unknown) => {
     validateSettingsPartial(partial)
-    for (const key of ['backgroundModeEnabled', 'startWithWindows'] as const) {
+    for (const key of ['backgroundModeEnabled', 'startWithWindows', 'launchProfilesEnabled'] as const) {
       if (key in partial && typeof partial[key] !== 'boolean') throw new Error(`Invalid ${key}`)
     }
     if ('startWithWindows' in partial) backgroundServiceManager.setStartWithWindows(partial.startWithWindows!)
@@ -1019,6 +1042,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const languageChanged = partial.language !== undefined && partial.language !== settingsStore.get('language')
     const next = { ...publicSettingsSnapshot(), ...partial }
     settingsStore.set(next)
+    if ('launchProfilesEnabled' in partial) launchProfileService.preferencesChanged()
     if (languageChanged) {
       geForceNowCatalogService.refreshIfStale()
       void libraryService.refresh().catch(() => undefined)

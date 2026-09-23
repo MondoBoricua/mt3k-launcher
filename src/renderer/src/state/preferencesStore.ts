@@ -77,6 +77,7 @@ import {
 import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 
 interface PreferencesState {
+  launchProfilesEnabled: boolean
   theme: ThemeId
   cornerStyle: CornerStyleId
   profileAvatar: ProfileAvatarId
@@ -525,6 +526,7 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
   notificationsEnabled: true,
   notificationPosition: 'top-right',
   notificationMotion: 'slide',
+  launchProfilesEnabled: false,
   hardwareControlEnabled: false,
   hardwareControlButton: 'menu',
   hardwareControlHoldSeconds: 2,
@@ -670,6 +672,7 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
       notificationsEnabled: settings.notificationsEnabled ?? true,
       notificationPosition: settings.notificationPosition ?? 'top-right',
       notificationMotion: settings.notificationMotion ?? 'slide',
+      launchProfilesEnabled: settings.launchProfilesEnabled === true,
       hardwareControlEnabled: settings.hardwareControlEnabled ?? false,
       hardwareControlButton: settings.hardwareControlButton ?? 'menu',
       hardwareControlHoldSeconds: settings.hardwareControlHoldSeconds ?? 2,

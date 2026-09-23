@@ -27,6 +27,7 @@ import {
 } from '@shared/launcherMusic'
 
 const defaults: OrbitSettings = {
+  launchProfilesEnabled: false,
   backgroundModeEnabled: true,
   startWithWindows: false,
   theme: 'midnight',

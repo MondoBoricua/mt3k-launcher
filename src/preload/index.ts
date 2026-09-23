@@ -1,3 +1,4 @@
+import type { DisplayModeList, DisplayMode, LaunchProfile, LaunchProfileEntry, LaunchProfileEvent } from '@shared/launchProfilePolicy'
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import {
@@ -94,6 +95,21 @@ import {
 } from '@shared/ipc'
 
 const orbitApi = {
+  display: {
+    listModes: (): Promise<DisplayModeList> => ipcRenderer.invoke(IPC.displayListModes)
+  },
+  launchProfiles: {
+    get: (gameId: string): Promise<LaunchProfileEntry> => ipcRenderer.invoke(IPC.launchProfilesGet, gameId),
+    save: (gameId: string, mode: DisplayMode, profile: LaunchProfile | null): Promise<LaunchProfileEntry> => ipcRenderer.invoke(IPC.launchProfilesSave, gameId, mode, profile),
+    confirm: (token: string): Promise<boolean> => ipcRenderer.invoke(IPC.launchProfilesConfirm, token),
+    revert: (): Promise<void> => ipcRenderer.invoke(IPC.launchProfilesRevert),
+    takeError: (): Promise<LaunchProfileEvent | null> => ipcRenderer.invoke(IPC.launchProfilesError),
+    onEvent: (callback: (event: LaunchProfileEvent) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, event: LaunchProfileEvent): void => callback(event)
+      ipcRenderer.on(IPC.launchProfilesEvent, listener)
+      return () => ipcRenderer.removeListener(IPC.launchProfilesEvent, listener)
+    }
+  },
   settings: {
     get: (): Promise<OrbitSettings> => ipcRenderer.invoke(IPC.settingsGet),
     set: (partial: Partial<OrbitSettings>): Promise<OrbitSettings> =>

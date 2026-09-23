@@ -1,3 +1,5 @@
+import { LaunchProfileEditor } from './LaunchProfileEditor'
+import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, useReducedMotion } from 'framer-motion'
@@ -383,6 +385,7 @@ function syncSummary(result: GameMetadataSyncResult | null): 'complete' | 'parti
 
 export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
   const t = useT()
+  const launchProfilesEnabled = usePreferencesStore((s) => s.launchProfilesEnabled)
   const reduceMotion = Boolean(useReducedMotion())
   const rootRef = useRef<HTMLDivElement>(null)
   const firstTabRef = useRef<HTMLButtonElement>(null)
@@ -733,6 +736,7 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
                     {t('metadata.storeSearch.filled', { name: storeFillName })}
                   </p>
                 )}
+                {launchProfilesEnabled && <LaunchProfileEditor gameId={game.id} />}
                 <Field label={t('metadata.name')} manual={Boolean(game.nameOverride)}>
                   <input data-focusable data-metadata-field="name" aria-invalid={invalid('name')} autoComplete="off" maxLength={160} value={draft.name} onChange={(event) => set('name', event.target.value)} className={inputClass('name')} />
                 </Field>
