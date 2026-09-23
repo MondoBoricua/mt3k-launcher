@@ -2,7 +2,38 @@
 
 MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
 
-## 0.1.4-mt3k.9
+## 0.1.4-mt3k.10
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.9.
+
+Cinco funciones nuevas. Todas vienen **apagadas** y se activan en Configuración, para que el launcher siga siendo simple por defecto.
+
+### Perfiles de lanzamiento (Configuración → Hardware)
+
+- **Resolución y tasa de refresco por juego**, con un perfil para **portátil** (solo la pantalla integrada) y otro para **dock** (hay una pantalla externa). Se aplica justo antes de abrir el juego y se restaura al cerrarlo, al parar el seguimiento, al cerrar el launcher o al apagar la función.
+- **Confirmación con vuelta atrás.** Al cambiar el modo aparece un diálogo controlable con el mando; si no confirmas en 15 segundos, o pulsas B, se restaura la pantalla y se cancela el lanzamiento.
+- **Recuperación.** Un diario en la carpeta de datos restaura la pantalla en el próximo arranque si el launcher se cerró a la fuerza. Si el monitor cambió o no está, no se aplica nada y se avisa.
+- Se edita desde el editor de metadatos del juego, pestaña *Overview*. HDR queda marcado como no disponible por ahora; los ajustes de AMD (AFMF, RSR) y el tope de FPS quedan para más adelante.
+
+### Menú de pausa de RetroArch (Configuración → Experiencia)
+
+- Con un juego de RetroArch corriendo, el atajo del mando que trae el launcher al frente abre un menú: **Reanudar, Guardar estado, Cargar estado, Captura, Avance rápido y Salir del juego**. Habla con RetroArch por su interfaz de comandos en red local.
+- Al activarlo, el launcher asegura `network_cmd_enable` y `network_cmd_port` en el `retroarch.cfg` que RetroArch usa de verdad, sin tocar el resto del archivo. Los emuladores independientes no tienen menú.
+
+### Restaurar partidas y carpeta de copias
+
+- **Restaurar copia** desde la ficha del juego local: lista las copias con fecha y tamaño, pide confirmación, hace una copia de seguridad del estado actual antes de tocar nada, y si algo falla vuelve a ese estado. Se niega si el juego está corriendo.
+- **Carpeta de copias** en Configuración → Sistema: apunta las copias a una carpeta sincronizada por Google Drive, OneDrive o Dropbox y tus partidas quedan en la nube. Las copias anteriores se quedan donde estaban.
+
+### Modo vitrina y capturas (Configuración → Experiencia)
+
+- **Modo vitrina.** Tras 2, 5, 10 o 15 minutos sin tocar nada en Inicio o Biblioteca, el launcher muestra el arte de tus juegos a pantalla completa. Cualquier botón lo cierra y vuelve exactamente a donde estabas. Nunca arranca con un juego abierto ni con un diálogo en pantalla.
+- **Capturas.** Lee las fotos y clips que Game Bar guarda en `Videos\Capturas`, las agrupa por juego y las muestra en la ficha del juego y en un panel de la Biblioteca. Solo se pueden abrir archivos de esa carpeta.
+
+### Modo invitado (Configuración → Sistema)
+
+- Un **PIN de 4 a 6 dígitos** que se escribe con el mando. Con el modo activo solo se ven los juegos de una colección que elijas; desaparecen la tienda, los amigos y las aplicaciones; Configuración pide el PIN; y no se puede desinstalar, ocultar ni editar juegos. Cinco intentos fallidos bloquean el PIN un minuto. El PIN se guarda como hash, nunca en claro. Es una restricción del launcher, no un control parental de Windows.
+
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.8.
 

@@ -34,6 +34,11 @@ Empezó como **ORBIT MT3K Edition**, un fork de ORBIT 0.1.4. En septiembre de 20
 | **"Iniciar con Windows" arreglado** en instalaciones con espacios en la ruta. | 0.1.4-mt3k.5 |
 | **Nombre e identidad propios**: MT3K Launcher, con ícono nuevo, sin perder datos al actualizar desde la MT3K Edition. | 0.1.4-mt3k.6 |
 | **Discord**: amigos, presencia, mensajes directos y servidores dentro del launcher, con la aplicación de Discord propia de MT3K Launcher. | 0.1.4-mt3k.7 |
+| **Perfiles de lanzamiento**: resolución y refresco por juego, con perfil para portátil y para dock, restaurados al cerrar el juego. Apagado por defecto. | 0.1.4-mt3k.10 |
+| **Menú de pausa de RetroArch**: guardar y cargar estado, captura, avance rápido y salir, desde el mando. Apagado por defecto. | 0.1.4-mt3k.10 |
+| **Restaurar partidas y carpeta de copias**: restaura una copia desde la ficha del juego y manda las copias a tu carpeta de Google Drive u OneDrive. | 0.1.4-mt3k.10 |
+| **Modo vitrina y capturas**: arte de tus juegos cuando el launcher está inactivo, y las capturas de Game Bar dentro de cada juego. Apagados por defecto. | 0.1.4-mt3k.10 |
+| **Modo invitado**: PIN con el mando, solo los juegos de una colección, sin tienda ni ajustes. Apagado por defecto. | 0.1.4-mt3k.10 |
 
 El detalle por versión está en [CHANGELOG.md](CHANGELOG.md).
 
