@@ -24,6 +24,8 @@ import {
   windowsPackageIdentityMatches
 } from './gameLaunchDetectionPolicy'
 import { settingsStore } from './settingsStore'
+import { activateExternalProcessWindow } from './externalWindowActivation'
+import { isRetroArchPauseSession } from '@shared/retroArchCommands'
 import type { GameTrackingMethod } from '@shared/gameTracking'
 import { SteamGameActivityReader } from './steam/steamGameActivity'
 import {
@@ -928,6 +930,8 @@ export class GameSessionManager extends EventEmitter {
   private readonly providerAttachedProcessIds = new Set<number>()
   private providerReturnInFlight = false
   private readonly suppressedProviderGameIds = new Set<string>()
+  /** Pid de la ventana de RetroArch para devolverle el foco al reanudar. */
+  private runningGamePid: number | undefined
 
   constructor(
     private readonly mainWindow: BrowserWindow,
@@ -946,7 +950,38 @@ export class GameSessionManager extends EventEmitter {
   }
 
   getStatus(): GameLaunchStatus {
-    return { ...this.status }
+    const game = this.activeGame
+    return {
+      ...this.status,
+      // El renderer usa esto para no pintar el menú en un emulador suelto.
+      retroArchSession: isRetroArchPauseSession({
+        phase: this.status.phase,
+        provider: game?.provider,
+        emulatorId: game?.retro?.emulatorId
+      })
+    }
+  }
+
+  /** Sesión confirmada de RetroArch, no un emulador independiente. */
+  isRetroArchSession(): boolean {
+    return this.getStatus().retroArchSession === true
+  }
+
+  /**
+   * Devuelve el foco a la ventana del juego. En macOS no hay API de
+   * ventana de Windows, así que responde false sin minimizar el launcher.
+   */
+  async returnToRunningGame(): Promise<boolean> {
+    if (!this.isRetroArchSession()) return false
+    const pid = this.runningGamePid
+    if (!pid || process.platform !== 'win32') return false
+    const focused = await activateExternalProcessWindow(pid)
+    if (!focused) {
+      console.warn('[retro-pause-menu] no se pudo activar la ventana de RetroArch')
+      return false
+    }
+    this.releaseLaunchShield(true)
+    return true
   }
 
   expectGeForceNowGame(game: LibraryGame, match: GeForceNowLibraryMatch): () => void {
@@ -1170,6 +1205,14 @@ export class GameSessionManager extends EventEmitter {
       }
       const receipt = await launchGame(game)
       if (receipt.spawnedGamePid) directlySpawnedGamePids.add(receipt.spawnedGamePid)
+      // Guardamos el pid desde el arranque por si el handoff todavía no vio la ventana.
+      if (
+        receipt.spawnedGamePid &&
+        game.provider === 'retro' &&
+        game.retro?.emulatorId === 'retroarch'
+      ) {
+        this.runningGamePid = receipt.spawnedGamePid
+      }
       ensureFullscreenWithHotkey = receipt.ensureFullscreenWithHotkey === true
     } catch (error) {
       sampler.stop()
@@ -2031,6 +2074,8 @@ export class GameSessionManager extends EventEmitter {
 
   private handoffToGame(token: number, pid: number, ensureFullscreenWithHotkey = false): void {
     if (token !== this.activeToken) return
+    // El pid visible es el que Resume tiene que traer al frente.
+    this.runningGamePid = pid
     this.releaseLaunchShield(true)
     focusExternalProcess(pid, ensureFullscreenWithHotkey)
   }
@@ -2043,6 +2088,9 @@ export class GameSessionManager extends EventEmitter {
 
   private update(status: GameLaunchStatus): void {
     const previous = this.status
+    if (status.phase === 'idle' || status.phase === 'error' || status.phase === 'returning') {
+      this.runningGamePid = undefined
+    }
     if (status.phase === 'idle') {
       this.callbacks.restoreLaunchProfile?.()
       this.activeGame = null

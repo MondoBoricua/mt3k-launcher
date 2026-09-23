@@ -91,6 +91,13 @@ import {
 import { isSteamAppId, normalizeMetadataSearchQuery } from '@shared/gameMetadataSearch'
 import { lookupSteamStoreMetadata, searchSteamStoreMetadata } from './metadataSearchService'
 import { publicSettingsSnapshot, settingsStore } from './settingsStore'
+import {
+  isRetroArchCommand,
+  parseStatus,
+  type RetroArchCommandResult,
+  type RetroArchStatusSnapshot
+} from '@shared/retroArchCommands'
+import { sendRetroArchUdp } from './retro/retroArchCommandClient'
 import { steamAuthManager } from './steam/steamAuth'
 import { steamWebApiCredentials } from './steam/steamWebApiCredentials'
 import { epicAuthManager } from './epic/epicAuth'
@@ -632,6 +639,12 @@ function validateSettingsPartial(value: unknown): asserts value is Partial<Orbit
   ) {
     throw new Error('Invalid hardware control hold time')
   }
+  if (
+    'retroPauseMenuEnabled' in partial &&
+    typeof partial.retroPauseMenuEnabled !== 'boolean'
+  ) {
+    throw new Error('Invalid RetroArch pause menu state')
+  }
 }
 
 function validatedImageOrientation(value: unknown): ImageOrientation {
@@ -819,7 +832,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   }
   app.once('before-quit', disposeGameSession)
   disposeWithMainWindow(disposeGameSession)
-  const backgroundServiceManager = new OrbitBackgroundMode(mainWindow)
+  const backgroundServiceManager = new OrbitBackgroundMode(mainWindow, {
+    // El atajo de hardware solo abre el menú si el toggle está prendido
+    // y la sesión que corre es RetroArch, no un emulador suelto.
+    retroArchPauseEligible: () =>
+      settingsStore.store.retroPauseMenuEnabled === true &&
+      gameSessionManager.isRetroArchSession()
+  })
   const disposeBackgroundService = (): void => backgroundServiceManager.dispose()
   app.once('before-quit', disposeBackgroundService)
   disposeWithMainWindow(disposeBackgroundService)
@@ -1675,6 +1694,71 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.gameTrackingStop, () => gameSessionManager.stopTracking())
   ipcMain.handle(IPC.gameLaunchGet, () => gameSessionManager.getStatus())
   ipcMain.handle(IPC.gameLaunchRevealLauncher, () => gameSessionManager.revealLauncher())
+
+  // Con el toggle apagado no se abre el socket. El renderer traduce `error`.
+  const retroArchUnavailable = (): RetroArchStatusSnapshot => {
+    if (settingsStore.store.retroPauseMenuEnabled !== true) {
+      return {
+        enabled: false,
+        retroArchSession: false,
+        playback: 'UNKNOWN',
+        reply: null,
+        error: 'disabled'
+      }
+    }
+    if (!gameSessionManager.isRetroArchSession()) {
+      return {
+        enabled: true,
+        retroArchSession: false,
+        playback: 'UNKNOWN',
+        reply: null,
+        error: 'not-retroarch'
+      }
+    }
+    return {
+      enabled: true,
+      retroArchSession: true,
+      playback: 'UNKNOWN',
+      reply: null
+    }
+  }
+
+  ipcMain.handle(IPC.retroArchStatus, async (): Promise<RetroArchStatusSnapshot> => {
+    const gate = retroArchUnavailable()
+    if (gate.error) return gate
+    const result = await sendRetroArchUdp('GET_STATUS')
+    if (!result.ok || !result.reply) {
+      console.warn('[retro-pause-menu] RetroArch no contestó el estado')
+      return { ...gate, error: result.error ?? 'unreachable' }
+    }
+    const parsed = parseStatus(result.reply)
+    return {
+      ...gate,
+      playback: parsed.playback,
+      reply: result.reply,
+      error: parsed.playback === 'UNKNOWN' ? 'unrecognized' : undefined
+    }
+  })
+
+  ipcMain.handle(IPC.retroArchCommand, async (_event, name: unknown): Promise<RetroArchCommandResult> => {
+    const gate = retroArchUnavailable()
+    if (gate.error) return { ok: false, reply: null, error: gate.error }
+    if (!isRetroArchCommand(name) || name === 'GET_STATUS') {
+      console.warn('[retro-pause-menu] comando rechazado desde el renderer')
+      return { ok: false, reply: null, error: 'rejected' }
+    }
+    const result = await sendRetroArchUdp(name)
+    if (!result.ok) {
+      console.warn(`[retro-pause-menu] el comando ${name} no llegó a RetroArch`)
+    }
+    return result
+  })
+
+  ipcMain.handle(IPC.retroArchReturn, async (): Promise<boolean> => {
+    if (settingsStore.store.retroPauseMenuEnabled !== true) return false
+    if (!gameSessionManager.isRetroArchSession()) return false
+    return gameSessionManager.returnToRunningGame()
+  })
   ipcMain.handle(IPC.gameTrailerResolve, async (_e, value: unknown) => {
     const gameId = validatedShortString(value, 'trailer game ID')
     const game = libraryService.getGame(gameId)

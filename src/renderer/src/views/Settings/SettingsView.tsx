@@ -752,6 +752,8 @@ export function SettingsView(): JSX.Element {
     resetGameTitleMusicSettings,
     setGameCardPrimaryAction,
     setCloseLaunchersAfterGame,
+    retroPauseMenuEnabled,
+    setRetroPauseMenuEnabled,
     setNotificationsEnabled,
     setNotificationPosition,
     setNotificationMotion
@@ -2833,6 +2835,23 @@ export function SettingsView(): JSX.Element {
                       />
                     </div>
                   </div>
+                </SettingsSection>
+
+                <SettingsSection
+                  id="retro-pause-menu"
+                  icon={Gamepad2}
+                  title={t('settings.retroPauseMenu.title')}
+                  description={t('settings.section.retro-pause-menuBody')}
+                >
+                  <SettingsToggle
+                    id="retroPauseMenuEnabled"
+                    active={retroPauseMenuEnabled}
+                    title={t('settings.retroPauseMenu.toggle')}
+                    description={t('settings.retroPauseMenu.toggleBody')}
+                    defaultInactive
+                    onChange={(active) => void setRetroPauseMenuEnabled(active)}
+                    t={t}
+                  />
                 </SettingsSection>
               </div>
             )}

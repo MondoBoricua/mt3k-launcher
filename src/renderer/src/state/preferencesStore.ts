@@ -188,6 +188,8 @@ interface PreferencesState {
   setHardwareControlEnabled: (enabled: boolean) => Promise<void>
   setHardwareControlButton: (button: HardwareControlButton) => Promise<void>
   setHardwareControlHoldSeconds: (seconds: HardwareControlHoldSeconds) => Promise<void>
+  retroPauseMenuEnabled: boolean
+  setRetroPauseMenuEnabled: (enabled: boolean) => Promise<void>
 }
 
 export const THEME_OPTIONS: { id: ThemeId; label: string; premium?: true }[] = [
@@ -542,6 +544,7 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
   hardwareControlEnabled: false,
   hardwareControlButton: 'menu',
   hardwareControlHoldSeconds: 2,
+  retroPauseMenuEnabled: false,
   hydrated: false,
 
   hydrate: async () => {
@@ -691,6 +694,7 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
       hardwareControlEnabled: settings.hardwareControlEnabled ?? false,
       hardwareControlButton: settings.hardwareControlButton ?? 'menu',
       hardwareControlHoldSeconds: settings.hardwareControlHoldSeconds ?? 2,
+      retroPauseMenuEnabled: settings.retroPauseMenuEnabled === true,
       hydrated: true
     })
     return settings
@@ -1139,5 +1143,10 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
   setHardwareControlHoldSeconds: async (hardwareControlHoldSeconds) => {
     await window.api.settings.set({ hardwareControlHoldSeconds })
     set({ hardwareControlHoldSeconds })
+  },
+
+  setRetroPauseMenuEnabled: async (retroPauseMenuEnabled) => {
+    await window.api.settings.set({ retroPauseMenuEnabled })
+    set({ retroPauseMenuEnabled })
   }
 }))
