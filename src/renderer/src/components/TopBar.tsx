@@ -71,7 +71,8 @@ export function TopBar(): JSX.Element {
   useEffect(() => {
     if (
       ((!showFriendsHub || guestModeActive) && mainView === 'friends') ||
-      ((!showStoreTab || guestModeActive) && mainView === 'store')
+      ((!showStoreTab || guestModeActive) && mainView === 'store') ||
+      (guestModeActive && mainView === 'applications')
     ) {
       setMainView('home')
     }

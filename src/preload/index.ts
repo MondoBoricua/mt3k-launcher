@@ -297,6 +297,7 @@ const orbitApi = {
       pin?: string
     ): Promise<GuestModeVerifyResult> =>
       ipcRenderer.invoke(IPC.guestModeSetAllowedCollection, collectionId, pin),
+    lockSettings: (): Promise<GuestModeStatus> => ipcRenderer.invoke(IPC.guestModeLockSettings),
     onStatus: (callback: (status: GuestModeStatus) => void): (() => void) => {
       const listener = (_e: Electron.IpcRendererEvent, status: GuestModeStatus): void =>
         callback(status)

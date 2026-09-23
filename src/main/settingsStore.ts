@@ -100,6 +100,7 @@ const LEGACY_RETRO_ACHIEVEMENTS_API_KEY = 'retroAchievementsWebApiKey'
 const LEGACY_STEAM_GRID_DB_TOKEN = 'steamGridDbApiKey'
 const LEGACY_STEAM_WEB_API_KEY = 'steamWebApiKey'
 const GUEST_MODE_PIN_HASH = 'guestModePinHash'
+const GUEST_MODE_LOCKOUT = 'guestModeLockout'
 const legacySettingsStore = settingsStore as unknown as Store<Record<string, unknown>>
 
 const storedHomeLayout = legacySettingsStore.get('homeLayout')
@@ -140,9 +141,18 @@ export function publicSettingsSnapshot(): OrbitSettings {
   delete snapshot[LEGACY_RETRO_ACHIEVEMENTS_API_KEY]
   delete snapshot[LEGACY_STEAM_GRID_DB_TOKEN]
   delete snapshot[LEGACY_STEAM_WEB_API_KEY]
-  // The guest PIN hash is verified in the main process only.
+  // The guest PIN hash and lockout are owned by the main process only.
   delete snapshot[GUEST_MODE_PIN_HASH]
+  delete snapshot[GUEST_MODE_LOCKOUT]
   return snapshot as unknown as OrbitSettings
+}
+
+export function readGuestModeLockout(): unknown {
+  return legacySettingsStore.get(GUEST_MODE_LOCKOUT)
+}
+
+export function writeGuestModeLockout(state: { failedAttempts: number; lockedUntil: number | null }): void {
+  legacySettingsStore.set(GUEST_MODE_LOCKOUT, { ...state })
 }
 
 export function readGuestModePinHash(): unknown {

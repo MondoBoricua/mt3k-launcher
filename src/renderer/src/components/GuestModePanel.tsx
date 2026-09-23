@@ -31,7 +31,6 @@ export function GuestModePanel(): JSX.Element {
   const active = useGuestModeStore(isGuestModeActive)
   const requestPin = useGuestModeStore((state) => state.requestPin)
   const applyStatus = useGuestModeStore((state) => state.applyStatus)
-  const unlockSettings = useGuestModeStore((state) => state.unlockSettings)
   const collections = useLibraryCollectionsStore((state) => state.collections)
   const [busy, setBusy] = useState(false)
   const [feedback, setFeedback] = useState<PanelFeedback>(null)
@@ -60,14 +59,15 @@ export function GuestModePanel(): JSX.Element {
       })
       return
     }
-    const ok = status.hasPin
-      ? await requestPin({
+    // On success the main process issues the Settings unlock, so the owner stays inside.
+    await (status.hasPin
+      ? requestPin({
           titleKey: 'guestMode.pin.enableTitle',
           bodyKey: 'guestMode.pin.enableBody',
           mode: 'enter',
           submit: (pin) => withStatus(() => window.api.guestMode.enable(pin))
         })
-      : await requestPin({
+      : requestPin({
           titleKey: 'guestMode.pin.createTitle',
           bodyKey: 'guestMode.pin.createBody',
           mode: 'create',
@@ -77,9 +77,7 @@ export function GuestModePanel(): JSX.Element {
               if (!created.ok) return created
               return window.api.guestMode.enable(pin)
             })
-        })
-    // The owner just proved the PIN: keep Settings open until they leave it.
-    if (ok) unlockSettings()
+        }))
   }
 
   const setPin = async (): Promise<void> => {

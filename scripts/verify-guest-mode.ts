@@ -3,11 +3,17 @@ import {
   GUEST_MODE_ACTIONS,
   GUEST_MODE_LOCKOUT_MS,
   GUEST_MODE_MAX_FAILED_ATTEMPTS,
+  GUEST_SETTINGS_UNLOCK_TTL_MS,
+  allowedGameIdsFromCollections,
   attemptsLeft,
   createLockoutState,
+  createSettingsUnlock,
   isActionAllowed,
+  isLaunchAllowed,
   isLockedOut,
+  isSettingsUnlockLive,
   isValidGuestPin,
+  normalizeLockoutState,
   recordFailedAttempt,
   recordSuccessfulAttempt,
   settleLockout,
@@ -68,14 +74,64 @@ assert.deepEqual(visibleGames(games, ['epic:2', 'missing:9'], true), [{ id: 'epi
 assert.deepEqual(visibleGames(games, [], false), games, 'inactive guest mode shows everything')
 assert.notEqual(visibleGames(games, [], false), games, 'inactive still returns a fresh array')
 
-// Every action in both states: only launching survives guest mode.
+// Every action in both states: only launching survives guest mode, unless the
+// owner's main-issued Settings unlock is live.
 for (const action of GUEST_MODE_ACTIONS) {
   assert.equal(isActionAllowed(action, false), true, `${action} allowed while inactive`)
   assert.equal(isActionAllowed(action, true), action === 'launch', `${action} while active`)
+  assert.equal(isActionAllowed(action, true, true), true, `${action} while active and unlocked`)
+  assert.equal(isActionAllowed(action, false, true), true, `${action} inactive and unlocked`)
 }
 assert.deepEqual(
   [...GUEST_MODE_ACTIONS].sort(),
-  ['edit-metadata', 'hide', 'launch', 'open-friends', 'open-settings', 'open-store', 'uninstall']
+  [
+    'add-custom-game', 'change-settings', 'edit-collections', 'edit-metadata', 'hide', 'launch',
+    'launch-application', 'manage-retro', 'open-applications', 'open-backups', 'open-captures',
+    'open-friends', 'open-settings', 'open-store', 'restore-backup', 'uninstall'
+  ]
 )
 
-console.log('Guest mode checks passed: PIN validation, scrypt round trip, lockout window, visible games and action policy')
+// Launch resolution happens against the persisted collections, never renderer input.
+const collections = [
+  { id: 'kids', name: 'Kids', gameIds: ['steam:1', 'local:3', 7, ''], createdAt: 1 },
+  { id: 'adults', name: 'Adults', gameIds: ['epic:2'], createdAt: 2 },
+  null,
+  'garbage'
+]
+assert.deepEqual(allowedGameIdsFromCollections(collections, 'kids'), ['steam:1', 'local:3'])
+assert.deepEqual(allowedGameIdsFromCollections(collections, 'adults'), ['epic:2'])
+assert.deepEqual(allowedGameIdsFromCollections(collections, 'missing'), [], 'unknown collection allows nothing')
+assert.deepEqual(allowedGameIdsFromCollections(collections, undefined), [], 'no collection allows nothing')
+assert.deepEqual(allowedGameIdsFromCollections('nope', 'kids'), [], 'malformed store allows nothing')
+assert.deepEqual(allowedGameIdsFromCollections([{ id: 'kids', gameIds: 'steam:1' }], 'kids'), [])
+assert.equal(isLaunchAllowed('steam:1', ['steam:1'], true), true)
+assert.equal(isLaunchAllowed('epic:2', ['steam:1'], true), false, 'outside the allowed set')
+assert.equal(isLaunchAllowed('epic:2', [], true), false, 'empty set blocks every launch')
+assert.equal(isLaunchAllowed('epic:2', [], false), true, 'inactive launches anything')
+assert.equal(isLaunchAllowed('epic:2', [], true, true), true, 'the owner unlock launches anything')
+
+// Persisted lockout survives a restart and malformed values fail clean.
+const persisted = normalizeLockoutState({ failedAttempts: 3, lockedUntil: 5_000 })
+assert.deepEqual(persisted, { failedAttempts: 3, lockedUntil: 5_000 })
+assert.deepEqual(normalizeLockoutState(undefined), createLockoutState())
+assert.deepEqual(normalizeLockoutState('locked'), createLockoutState())
+assert.deepEqual(normalizeLockoutState({ failedAttempts: -1, lockedUntil: 'never' }), createLockoutState())
+assert.deepEqual(normalizeLockoutState({ failedAttempts: 2.5 }), createLockoutState())
+assert.deepEqual(normalizeLockoutState([]), createLockoutState())
+assert.equal(isLockedOut(normalizeLockoutState({ failedAttempts: 5, lockedUntil: 10_000 }), 9_999), true, 'a persisted lock still holds after a restart')
+assert.equal(attemptsLeft(normalizeLockoutState({ failedAttempts: 4, lockedUntil: null })), 1, 'attempts do not reset with a restart')
+
+// Settings unlock token: main-owned, ten minutes, only the issued token counts.
+const issuedAt = 50_000
+const unlock = createSettingsUnlock('token-a', issuedAt)
+assert.equal(unlock.expiresAt, issuedAt + GUEST_SETTINGS_UNLOCK_TTL_MS)
+assert.equal(GUEST_SETTINGS_UNLOCK_TTL_MS, 10 * 60_000)
+assert.equal(isSettingsUnlockLive(unlock, 'token-a', issuedAt), true)
+assert.equal(isSettingsUnlockLive(unlock, 'token-a', unlock.expiresAt - 1), true, 'live until the last millisecond')
+assert.equal(isSettingsUnlockLive(unlock, 'token-a', unlock.expiresAt), false, 'expired at the deadline')
+assert.equal(isSettingsUnlockLive(unlock, 'token-b', issuedAt), false, 'a different token never unlocks')
+assert.equal(isSettingsUnlockLive(unlock, null, issuedAt), false)
+assert.equal(isSettingsUnlockLive(null, 'token-a', issuedAt), false, 'locking clears the unlock')
+assert.equal(createSettingsUnlock('short', issuedAt, 1_000).expiresAt, issuedAt + 1_000)
+
+console.log('Guest mode checks passed: PIN validation, scrypt round trip, lockout window and persistence, visible games, launch resolution, action policy and the Settings unlock token')

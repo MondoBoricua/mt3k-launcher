@@ -8,6 +8,7 @@ import { useFocusScope } from '@renderer/hooks/useFocusScope'
 import { useT } from '@renderer/i18n/useT'
 import { CaptureFeedback, CaptureTile } from './CaptureShelf'
 import { FocusableButton } from './FocusableButton'
+import { isGuestModeActive, useGuestModeStore } from '@renderer/state/guestModeStore'
 
 export function CapturesPanel(): JSX.Element {
   const t = useT()
@@ -15,6 +16,7 @@ export function CapturesPanel(): JSX.Element {
   const closeButton = useRef<HTMLButtonElement>(null)
   const { items, loading, refresh, closePanel, openFolder } = useCapturesStore()
   const snapshot = useLibraryStore((s) => s.snapshot)
+  const readOnly = useGuestModeStore(isGuestModeActive)
   useBackHandler(closePanel)
   useFocusScope({ scopeRef: root, resolveFocusTarget: () => closeButton.current })
   useEffect(() => { void refresh() }, [refresh])
@@ -36,7 +38,7 @@ export function CapturesPanel(): JSX.Element {
         <div className="min-w-0 flex-1"><h1 className="text-3xl font-black">{t('captures.title')}</h1>
           <p className="mt-2 text-sm text-muted">{t('captures.body')}</p></div>
         <FocusableButton variant="ghost" disabled={loading} onClick={() => void refresh()}>{t('captures.refresh')}</FocusableButton>
-        <FocusableButton variant="ghost" onClick={() => void openFolder()}>{t('captures.openFolder')}</FocusableButton>
+        {!readOnly && <FocusableButton variant="ghost" onClick={() => void openFolder()}>{t('captures.openFolder')}</FocusableButton>}
         <FocusableButton ref={closeButton} onClick={closePanel}>{t('captures.close')}</FocusableButton>
       </header>
       <CaptureFeedback />

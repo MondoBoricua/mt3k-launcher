@@ -110,12 +110,16 @@ function sortAchievements(achievements: readonly GameAchievement[]): GameAchieve
 }
 
 const GUEST_GUARDED_MANAGE_ACTIONS: Record<string, GuestModeAction> = {
-  collections: 'edit-metadata',
+  favorite: 'edit-collections',
+  collections: 'edit-collections',
   metadata: 'edit-metadata',
   'launch-options': 'edit-metadata',
   uninstall: 'uninstall',
   'remove-custom': 'uninstall',
-  exclude: 'hide'
+  exclude: 'hide',
+  captures: 'open-captures',
+  'open-backups': 'open-backups',
+  'restore-backup': 'restore-backup'
 }
 
 export function GameDetailPanel({ game }: Props): JSX.Element {
@@ -839,8 +843,8 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
       onSelect: () => void handleRemove()
     })
   }
-  // Guest mode keeps launching and favourites; everything that edits or removes
-  // the library needs the owner (the main process rejects these too).
+  // Guest mode keeps launching; everything that edits, opens or removes
+  // library data needs the owner (the main process rejects these too).
   const visibleManageActions = manageActions.filter((action) => {
     const guarded = GUEST_GUARDED_MANAGE_ACTIONS[action.id]
     return guarded === undefined || isActionAllowed(guarded, guestModeActive)

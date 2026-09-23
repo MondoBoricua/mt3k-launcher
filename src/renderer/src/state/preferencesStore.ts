@@ -132,6 +132,8 @@ interface PreferencesState {
   notificationPosition: NotificationPosition
   notificationMotion: NotificationMotion
   hardwareControlEnabled: boolean
+  /** Persisted guest-mode switch, used to fail closed before the live status arrives. */
+  guestModeEnabled: boolean
   hardwareControlButton: HardwareControlButton
   hardwareControlHoldSeconds: HardwareControlHoldSeconds
   hydrated: boolean
@@ -542,6 +544,7 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
   notificationMotion: 'slide',
   launchProfilesEnabled: false,
   hardwareControlEnabled: false,
+  guestModeEnabled: false,
   hardwareControlButton: 'menu',
   hardwareControlHoldSeconds: 2,
   retroPauseMenuEnabled: false,
@@ -692,6 +695,7 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
       notificationMotion: settings.notificationMotion ?? 'slide',
       launchProfilesEnabled: settings.launchProfilesEnabled === true,
       hardwareControlEnabled: settings.hardwareControlEnabled ?? false,
+      guestModeEnabled: settings.guestModeEnabled === true,
       hardwareControlButton: settings.hardwareControlButton ?? 'menu',
       hardwareControlHoldSeconds: settings.hardwareControlHoldSeconds ?? 2,
       retroPauseMenuEnabled: settings.retroPauseMenuEnabled === true,

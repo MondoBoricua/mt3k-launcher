@@ -308,7 +308,8 @@ function validateRetroEmulatorInstall(value: unknown): RetroEmulatorInstallInput
 const GUEST_MODE_MANAGED_KEYS = [
   'guestModeEnabled',
   'guestModePinHash',
-  'guestModeAllowedCollectionId'
+  'guestModeAllowedCollectionId',
+  'guestModeLockout'
 ] as const
 
 function validatedOptionalPin(value: unknown): unknown {
@@ -748,8 +749,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }))
   })
   ipcMain.handle(IPC.capturesList, () => captureAction(listCaptures))
-  ipcMain.handle(IPC.capturesOpen, (_event, value: unknown) => captureAction(() => openCapture(value)))
-  ipcMain.handle(IPC.capturesOpenFolder, () => captureAction(openCapturesFolder))
+  ipcMain.handle(IPC.capturesOpen, (_event, value: unknown) => {
+    guestModeService.assertActionAllowed('open-captures')
+    return captureAction(() => openCapture(value))
+  })
+  ipcMain.handle(IPC.capturesOpenFolder, () => {
+    guestModeService.assertActionAllowed('open-captures')
+    return captureAction(openCapturesFolder)
+  })
   launchProfileService.initialize((event) => {
     if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(IPC.launchProfilesEvent, event)
   })
@@ -1076,6 +1083,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.startupVideoSelect, () => startupVideoService.select(mainWindow))
 
   ipcMain.handle(IPC.settingsSet, (_e, partial: unknown) => {
+    guestModeService.assertActionAllowed('change-settings')
     validateSettingsPartial(partial)
     for (const key of ['backgroundModeEnabled', 'startWithWindows', 'attractModeEnabled', 'captureShelfEnabled', 'launchProfilesEnabled'] as const) {
       if (key in partial && typeof partial[key] !== 'boolean') throw new Error(`Invalid ${key}`)
@@ -1203,6 +1211,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
   guestModeService.attach(mainWindow)
   ipcMain.handle(IPC.guestModeStatus, () => guestModeService.status())
+  ipcMain.handle(IPC.guestModeLockSettings, () => guestModeService.lockSettings())
   ipcMain.handle(IPC.guestModeSetup, (_e, pin: unknown, currentPin: unknown) =>
     guestModeService.setPin(validatedOptionalPin(pin), validatedOptionalPin(currentPin))
   )
@@ -1231,6 +1240,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.applicationsGet, () => applicationService.getSnapshot())
   ipcMain.handle(IPC.applicationsRefresh, () => applicationService.getSnapshot(true))
   ipcMain.handle(IPC.applicationsLaunch, async (_e, applicationIdValue: unknown) => {
+    guestModeService.assertActionAllowed('launch-application')
     const applicationId = validatedShortString(applicationIdValue, 'application ID', 160)
     const result = await applicationService.launch(applicationId, mainWindow)
     libraryRefreshScheduler.expectLauncherReturn(applicationId)
@@ -1573,6 +1583,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
 
   ipcMain.handle(IPC.customGameBeginImport, (_e, source: unknown) => {
+    guestModeService.assertActionAllowed('add-custom-game')
     if (!CUSTOM_GAME_IMPORT_SOURCES.includes(source as CustomGameImportSource)) {
       throw new Error('Invalid custom game import source')
     }
@@ -1601,11 +1612,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     libraryService.clearCustomGameSave(validatedShortString(draftId, 'custom game draft', 80))
   )
 
-  ipcMain.handle(IPC.customGameCommit, (_e, input: unknown) =>
-    libraryService.commitCustomGame(validateCustomGameCommit(input))
-  )
+  ipcMain.handle(IPC.customGameCommit, (_e, input: unknown) => {
+    guestModeService.assertActionAllowed('add-custom-game')
+    return libraryService.commitCustomGame(validateCustomGameCommit(input))
+  })
 
   ipcMain.handle(IPC.customGameSetLaunchArguments, (_e, value: unknown) => {
+    guestModeService.assertActionAllowed('edit-metadata')
     const input = validateCustomGameLaunchArguments(value)
     return libraryService.updateCustomGameLaunchArguments(
       input.gameId,
@@ -1635,15 +1648,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     libraryService.backupCustomGame(validatedShortString(gameId, 'custom game ID'))
   )
 
-  ipcMain.handle(IPC.customGameOpenBackups, (_e, gameId: unknown) =>
-    libraryService.openCustomGameBackups(validatedShortString(gameId, 'custom game ID'))
-  )
+  ipcMain.handle(IPC.customGameOpenBackups, (_e, gameId: unknown) => {
+    guestModeService.assertActionAllowed('open-backups')
+    return libraryService.openCustomGameBackups(validatedShortString(gameId, 'custom game ID'))
+  })
 
   ipcMain.handle(IPC.customGameListBackups, (_e, gameId: unknown) =>
     libraryService.listCustomGameBackups(validatedShortString(gameId, 'custom game ID'))
   )
 
   ipcMain.handle(IPC.customGameRestoreBackup, (_e, gameId: unknown, backupId: unknown) => {
+    guestModeService.assertActionAllowed('restore-backup')
     const gameIdValue = validatedShortString(gameId, 'custom game ID')
     const backupIdValue = validatedShortString(backupId, 'backup ID', 256)
     if (backupIdValue.includes('..') || backupIdValue.includes('/') || backupIdValue.includes('\\')) {
@@ -1657,37 +1672,49 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
 
   ipcMain.handle(IPC.settingsSaveBackupDirectoryGet, () => readSaveBackupDirectoryStatus())
-  ipcMain.handle(IPC.settingsSaveBackupDirectoryChoose, () =>
-    chooseSaveBackupDirectory(mainWindow)
-  )
-  ipcMain.handle(IPC.settingsSaveBackupDirectoryUseDefault, () => clearSaveBackupDirectory())
+  ipcMain.handle(IPC.settingsSaveBackupDirectoryChoose, () => {
+    guestModeService.assertActionAllowed('change-settings')
+    return chooseSaveBackupDirectory(mainWindow)
+  })
+  ipcMain.handle(IPC.settingsSaveBackupDirectoryUseDefault, () => {
+    guestModeService.assertActionAllowed('change-settings')
+    return clearSaveBackupDirectory()
+  })
 
   ipcMain.handle(IPC.retroLibraryStatusGet, () => libraryService.getRetroLibraryStatus())
   ipcMain.handle(IPC.retroLibraryRefresh, () => libraryService.refreshRetroLibrary())
-  ipcMain.handle(IPC.retroLibraryDirectoryAdd, () =>
-    libraryService.addRetroLibraryDirectory(mainWindow)
-  )
-  ipcMain.handle(IPC.retroLibraryDirectoryRemove, (_e, directory: unknown) =>
-    libraryService.removeRetroLibraryDirectory(
+  ipcMain.handle(IPC.retroLibraryDirectoryAdd, () => {
+    guestModeService.assertActionAllowed('manage-retro')
+    return libraryService.addRetroLibraryDirectory(mainWindow)
+  })
+  ipcMain.handle(IPC.retroLibraryDirectoryRemove, (_e, directory: unknown) => {
+    guestModeService.assertActionAllowed('manage-retro')
+    return libraryService.removeRetroLibraryDirectory(
       validatedShortString(directory, 'ROM directory', 32_768)
     )
-  )
-  ipcMain.handle(IPC.retroSystemDirectoryEnsure, (_e, systemId: unknown) =>
-    libraryService.ensureRetroSystemDirectory(validateRetroSystemId(systemId))
-  )
-  ipcMain.handle(IPC.retroSystemDirectoryOpen, (_e, systemId: unknown) =>
-    libraryService.openRetroSystemDirectory(mainWindow, validateRetroSystemId(systemId))
-  )
-  ipcMain.handle(IPC.retroEmulatorDownloadOpen, (_e, value: unknown) =>
-    libraryService.openRetroEmulatorDownload(validateRetroEmulatorDownload(value))
-  )
-  ipcMain.handle(IPC.retroEmulatorInstall, (_e, value: unknown) =>
-    libraryService.installRetroEmulator(mainWindow, validateRetroEmulatorInstall(value))
-  )
-  ipcMain.handle(IPC.retroEmulatorInstallCancel, () =>
-    libraryService.cancelRetroEmulatorInstall()
-  )
+  })
+  ipcMain.handle(IPC.retroSystemDirectoryEnsure, (_e, systemId: unknown) => {
+    guestModeService.assertActionAllowed('manage-retro')
+    return libraryService.ensureRetroSystemDirectory(validateRetroSystemId(systemId))
+  })
+  ipcMain.handle(IPC.retroSystemDirectoryOpen, (_e, systemId: unknown) => {
+    guestModeService.assertActionAllowed('manage-retro')
+    return libraryService.openRetroSystemDirectory(mainWindow, validateRetroSystemId(systemId))
+  })
+  ipcMain.handle(IPC.retroEmulatorDownloadOpen, (_e, value: unknown) => {
+    guestModeService.assertActionAllowed('manage-retro')
+    return libraryService.openRetroEmulatorDownload(validateRetroEmulatorDownload(value))
+  })
+  ipcMain.handle(IPC.retroEmulatorInstall, (_e, value: unknown) => {
+    guestModeService.assertActionAllowed('manage-retro')
+    return libraryService.installRetroEmulator(mainWindow, validateRetroEmulatorInstall(value))
+  })
+  ipcMain.handle(IPC.retroEmulatorInstallCancel, () => {
+    guestModeService.assertActionAllowed('manage-retro')
+    return libraryService.cancelRetroEmulatorInstall()
+  })
   ipcMain.handle(IPC.retroGameSetLaunchArguments, (_e, value: unknown) => {
+    guestModeService.assertActionAllowed('manage-retro')
     const input = validateRetroGameLaunchArguments(value)
     return libraryService.updateRetroGameLaunchArguments(
       input.gameId,
@@ -1727,6 +1754,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(IPC.gameLaunch, async (_e, gameIdValue: unknown) => {
     const gameId = validatedShortString(gameIdValue, 'game launch ID')
+    guestModeService.assertLaunchAllowed(gameId)
     const game = libraryService.getGame(gameId)
     if (!game) throw new Error('Game is not available')
     if (!game.installed) {

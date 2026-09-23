@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { scanCaptureDirectory, validateCaptureFile } from '../src/main/captures/captureFiles.ts'
+import { readCaptureImage, scanCaptureDirectory, validateCaptureFile } from '../src/main/captures/captureFiles.ts'
 import { shouldStartAttractMode, nextAttractIndex, attractDwellMs, normalizeAttractIdleMinutes, type AttractState } from '../src/shared/attractModePolicy.ts'
 import { normalizeCaptureTitle, captureTitleGuess, matchCaptureGame, captureKind, newestCaptures, isCapturePathContained } from '../src/shared/capturePolicy.ts'
 
@@ -91,6 +91,10 @@ try {
   await assert.rejects(validateCaptureFile(captureDir, external))
   await assert.rejects(validateCaptureFile(captureDir, link))
   assert.ok((await validateCaptureFile(captureDir, screenshot)).endsWith('Hades II 2026-09-14 21-03-11.png'))
+  const image = await readCaptureImage(captureDir, screenshot)
+  assert.equal(image.contentType, 'image/png')
+  assert.ok(image.bytes.length > 0, 'bytes are served from the validated descriptor')
+  await assert.rejects(readCaptureImage(captureDir, external), 'outside the folder is never read')
   const scanned = await scanCaptureDirectory(captureDir)
   assert.equal(scanned.length, 1)
   assert.equal(scanned[0].gameTitleGuess, 'Hades II')
@@ -99,6 +103,8 @@ try {
   await rm(screenshot)
   await symlink(external, screenshot)
   await assert.rejects(validateCaptureFile(captureDir, screenshot))
+  await assert.rejects(readCaptureImage(captureDir, screenshot), 'a swapped-in symlink is never read')
+  await assert.rejects(readCaptureImage(captureDir, link), 'a link inside the folder is never read')
   assert.deepEqual(await scanCaptureDirectory(captureDir, () => false), [])
   assert.deepEqual(await scanCaptureDirectory(join(sandbox, 'missing')), [])
 } finally { await rm(sandbox, { recursive: true, force: true }) }
