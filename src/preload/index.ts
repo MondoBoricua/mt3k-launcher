@@ -1,3 +1,4 @@
+import type { CaptureItem } from '../shared/capturePolicy'
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import {
@@ -94,6 +95,14 @@ import {
 } from '@shared/ipc'
 
 const orbitApi = {
+  attract: {
+    artwork: (): Promise<Record<string, string>> => ipcRenderer.invoke(IPC.attractArtwork)
+  },
+  captures: {
+    list: (): Promise<CaptureItem[]> => ipcRenderer.invoke(IPC.capturesList),
+    open: (path: string): Promise<void> => ipcRenderer.invoke(IPC.capturesOpen, path),
+    openFolder: (): Promise<void> => ipcRenderer.invoke(IPC.capturesOpenFolder)
+  },
   settings: {
     get: (): Promise<OrbitSettings> => ipcRenderer.invoke(IPC.settingsGet),
     set: (partial: Partial<OrbitSettings>): Promise<OrbitSettings> =>

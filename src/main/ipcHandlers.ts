@@ -1,3 +1,5 @@
+import { listCaptures, openCapture, openCapturesFolder } from './captures/captureLibrary'
+import { ATTRACT_IDLE_MINUTES } from '@shared/attractModePolicy'
 import { isLanguage } from '@shared/language'
 import { app, clipboard, ipcMain, shell, type BrowserWindow } from 'electron'
 import { spawn } from 'node:child_process'
@@ -100,7 +102,7 @@ import {
   requestGameInstall,
   requestGameUninstall
 } from './gameLauncher'
-import { artworkService, resolveImage } from './imageCache'
+import { artworkService, resolveImage, resolveCachedImage } from './imageCache'
 import { t } from './i18n'
 import { syncCoordinator } from './sync/syncCoordinator'
 import { storeService } from './store/storeService'
@@ -693,6 +695,22 @@ function findArtworkGame(gameId: string): LibraryGame | null {
 }
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
+  const captureAction = async <T>(action: () => Promise<T>): Promise<T> => {
+    try { return await action() }
+    catch (error) { console.warn('[captures] Request failed', error); throw error }
+  }
+  ipcMain.handle(IPC.attractArtwork, (): Record<string, string> => {
+    if (settingsStore.get('attractModeEnabled') !== true) return {}
+    const snapshot = libraryService.getSnapshot()
+    const excluded = new Set(snapshot.excludedGames.map((game) => game.id))
+    return Object.fromEntries(snapshot.games.filter((game) => !excluded.has(game.id)).flatMap((game) => {
+      const image = resolveCachedImage(game, 'horizontal')
+      return image ? [[game.id, image.url]] : []
+    }))
+  })
+  ipcMain.handle(IPC.capturesList, () => captureAction(listCaptures))
+  ipcMain.handle(IPC.capturesOpen, (_event, value: unknown) => captureAction(() => openCapture(value)))
+  ipcMain.handle(IPC.capturesOpenFolder, () => captureAction(openCapturesFolder))
   const mainWindowDisposers = new Set<() => void>()
   const disposeWithMainWindow = (dispose: () => void): void => {
     mainWindowDisposers.add(dispose)
@@ -992,9 +1010,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(IPC.settingsSet, (_e, partial: unknown) => {
     validateSettingsPartial(partial)
-    for (const key of ['backgroundModeEnabled', 'startWithWindows'] as const) {
+    for (const key of ['backgroundModeEnabled', 'startWithWindows', 'attractModeEnabled', 'captureShelfEnabled'] as const) {
       if (key in partial && typeof partial[key] !== 'boolean') throw new Error(`Invalid ${key}`)
     }
+    if ('attractModeIdleMinutes' in partial && !ATTRACT_IDLE_MINUTES.includes(partial.attractModeIdleMinutes as 2 | 5 | 10 | 15)) throw new Error('Invalid attract idle minutes')
     if ('startWithWindows' in partial) backgroundServiceManager.setStartWithWindows(partial.startWithWindows!)
     if (
       (partial.audioPreset === 'manual' || 'audioCuePresets' in partial) &&

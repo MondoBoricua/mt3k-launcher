@@ -1548,3 +1548,11 @@ export function resolveImage(game: LibraryGame, orientation: ImageOrientation): 
   if (customArtwork) return customArtwork
   return artworkService.resolve(game, orientation)
 }
+
+/** Idle showcase must not start provider/network work for missing artwork. */
+export function resolveCachedImage(game: LibraryGame, orientation: ImageOrientation): ResolvedImage | null {
+  const custom = customArtworkService.resolve(game.id, orientation)
+  if (custom) return custom
+  const entry = manifestEntries[artworkKey(game.id, orientation)]
+  return entry && isEntryUsable(entry) ? toResolved(entry) : null
+}

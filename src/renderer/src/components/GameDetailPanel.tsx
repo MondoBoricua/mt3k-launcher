@@ -1,3 +1,5 @@
+import { CaptureShelf } from './CaptureShelf'
+import { useCapturesStore } from '@renderer/state/capturesStore'
 import { type Language, languageLocale } from '@shared/language'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
@@ -105,6 +107,7 @@ function sortAchievements(achievements: readonly GameAchievement[]): GameAchieve
 
 export function GameDetailPanel({ game }: Props): JSX.Element {
   const t = useT()
+  const captureShelfEnabled = usePreferencesStore((s) => s.captureShelfEnabled)
   const reduceMotion = Boolean(useReducedMotion())
   const language = usePreferencesStore((state) => state.language)
   const showAchievements = usePreferencesStore((state) => state.showAchievements)
@@ -702,6 +705,8 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   }
 
   const manageActions: GameDetailActionMenuItem[] = [
+    ...(captureShelfEnabled ? [{ id: 'captures', label: t('captures.title'), icon: FolderOpen,
+      onSelect: () => void useCapturesStore.getState().openFolder() }] : []),
     {
       id: 'favorite',
       label: t(isFavorite ? 'details.favoriteRemove' : 'details.favoriteAdd'),
@@ -1093,6 +1098,8 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
               )}
             </div>
             </div>
+
+            {captureShelfEnabled && <CaptureShelf gameId={game.id} />}
 
             {(downloadActivity || installRequestState !== 'idle') && (
               <section

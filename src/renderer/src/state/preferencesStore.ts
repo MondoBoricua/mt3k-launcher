@@ -1,3 +1,4 @@
+import { normalizeAttractIdleMinutes } from '@shared/attractModePolicy'
 import { useNotificationStore } from './notificationStore'
 import { DEFAULT_LANGUAGE, normalizeLanguage, isLanguage } from '@shared/language'
 export { LANGUAGE_OPTIONS } from '@shared/language'
@@ -77,6 +78,10 @@ import {
 import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 
 interface PreferencesState {
+  attractModeEnabled: boolean
+  attractModeIdleMinutes: number
+  captureShelfEnabled: boolean
+  setShowcaseSettings: (partial: Partial<Pick<OrbitSettings, 'attractModeEnabled' | 'attractModeIdleMinutes' | 'captureShelfEnabled'>>) => Promise<void>
   theme: ThemeId
   cornerStyle: CornerStyleId
   profileAvatar: ProfileAvatarId
@@ -507,6 +512,13 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
   customUiAudioCues: {},
   showStoreTab: true,
   showFriendsHub: true,
+  attractModeEnabled: false,
+  attractModeIdleMinutes: 5,
+  captureShelfEnabled: false,
+  setShowcaseSettings: async (partial) => {
+    await window.api.settings.set(partial)
+    set(partial)
+  },
   showHomeBanners: true,
   showAchievements: true,
   backgroundTrailers: true,
@@ -646,6 +658,9 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
       audioCuePresets,
       customUiAudioCues: resolvedCustomUiAudioCues,
       showStoreTab: settings.showStoreTab,
+      attractModeEnabled: settings.attractModeEnabled === true,
+      attractModeIdleMinutes: normalizeAttractIdleMinutes(settings.attractModeIdleMinutes),
+      captureShelfEnabled: settings.captureShelfEnabled === true,
       showFriendsHub: settings.showFriendsHub ?? true,
       showHomeBanners: homeLayout === 'orbit' ? settings.showHomeBanners : false,
       showAchievements: settings.showAchievements,

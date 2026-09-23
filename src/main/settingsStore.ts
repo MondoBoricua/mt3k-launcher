@@ -1,3 +1,4 @@
+import { normalizeAttractIdleMinutes } from '@shared/attractModePolicy'
 import { DEFAULT_LANGUAGE, normalizeLanguage } from '@shared/language'
 import Store from 'electron-store'
 import { normalizeGeForceNowLaunchMode } from '@shared/geforceNow'
@@ -27,6 +28,9 @@ import {
 } from '@shared/launcherMusic'
 
 const defaults: OrbitSettings = {
+  attractModeEnabled: false,
+  attractModeIdleMinutes: 5,
+  captureShelfEnabled: false,
   backgroundModeEnabled: true,
   startWithWindows: false,
   theme: 'midnight',
@@ -108,6 +112,9 @@ export function publicSettingsSnapshot(): OrbitSettings {
   snapshot.theme = isThemeId(snapshot.theme) ? snapshot.theme : 'midnight'
   snapshot.cornerStyle = isCornerStyleId(snapshot.cornerStyle) ? snapshot.cornerStyle : 'theme'
   snapshot.homeLayout = isHomeLayoutId(snapshot.homeLayout) ? snapshot.homeLayout : 'orbit'
+  snapshot.attractModeEnabled = snapshot.attractModeEnabled === true
+  snapshot.captureShelfEnabled = snapshot.captureShelfEnabled === true
+  snapshot.attractModeIdleMinutes = normalizeAttractIdleMinutes(snapshot.attractModeIdleMinutes)
   snapshot.language = normalizeLanguage(snapshot.language)
   snapshot.textScale = normalizeTextScale(snapshot.textScale)
   snapshot.geForceNowLaunchMode = normalizeGeForceNowLaunchMode(snapshot.geForceNowLaunchMode)

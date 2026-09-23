@@ -279,7 +279,12 @@ async function startOrbitUi(): Promise<void> {
     electronApp.setAppUserModelId('com.orbit.launcher')
   }
 
-  protocol.handle('orbit-image', (request) => {
+  protocol.handle('orbit-image', async (request) => {
+    if (request.url.startsWith('orbit-image://captures/')) {
+      const { resolveCaptureImage } = await import('./captures/captureLibrary')
+      const capture = await resolveCaptureImage(request.url)
+      return capture ? net.fetch(pathToFileURL(capture).toString()) : new Response(null, { status: 404 })
+    }
     const fileName = decodeURIComponent(request.url.replace('orbit-image://', ''))
     if (fileName.includes('..') || fileName.includes('/') || fileName.includes('\\')) {
       return new Response(null, { status: 400 })
