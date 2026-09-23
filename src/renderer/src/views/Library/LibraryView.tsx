@@ -66,6 +66,7 @@ import {
   RETRO_SYSTEM_SWAY_ROTATION
 } from '@renderer/lib/retroSystemMotion'
 import { useLibraryCollectionsStore } from '@renderer/state/libraryCollectionsStore'
+import { isGuestModeActive, useGuestModeStore } from '@renderer/state/guestModeStore'
 import { useGeForceNowStore } from '@renderer/state/geForceNowStore'
 import { useGameDetailStore } from '@renderer/state/gameDetailStore'
 
@@ -253,6 +254,7 @@ export function LibraryView(): JSX.Element {
   const retroSystemColumns = Math.min(5, Math.max(3, gridColumns))
   const favoriteGameIds = useLibraryCollectionsStore((s) => s.favoriteGameIds)
   const collections = useLibraryCollectionsStore((s) => s.collections)
+  const guestModeActive = useGuestModeStore(isGuestModeActive)
   const preloadCardThreshold = gridColumns * 2
   const [query, setQuery] = useState('')
   const [xboxEntitlementFilter, setXboxEntitlementFilter] =
@@ -885,6 +887,7 @@ export function LibraryView(): JSX.Element {
                 </motion.button>
               )
             })}
+            {!guestModeActive && (
             <button
               ref={collectionButtonRef}
               data-focusable
@@ -896,6 +899,7 @@ export function LibraryView(): JSX.Element {
             >
               <FolderPlus size={16} />
             </button>
+            )}
           </div>
           <ControllerButtonHint
             button="rightTrigger"
@@ -992,7 +996,7 @@ export function LibraryView(): JSX.Element {
               </span>
             )}
           </button>
-          {activeCollection && (
+          {activeCollection && !guestModeActive && (
             <button
               ref={deleteCollectionButtonRef}
               data-focusable
@@ -1005,7 +1009,7 @@ export function LibraryView(): JSX.Element {
               <span className="hidden sm:inline">{t('library.collection.deleteShort')}</span>
             </button>
           )}
-          {source !== 'geforce-now' && (
+          {source !== 'geforce-now' && !guestModeActive && (
             <>
               <button
                 data-focusable

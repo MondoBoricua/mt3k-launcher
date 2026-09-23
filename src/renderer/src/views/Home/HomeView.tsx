@@ -1,4 +1,5 @@
 import { type Language, languageLocale } from '@shared/language'
+import { isGuestModeActive, useGuestModeStore } from '@renderer/state/guestModeStore'
 import {
   memo,
   useCallback,
@@ -115,6 +116,8 @@ function formatActivityDuration(seconds: number, language: Language): string {
   }).format(hours)} h`
 }
 
+const NO_STORE_PRODUCTS: StoreProduct[] = []
+
 export function HomeView(): JSX.Element {
   const containerRef = useAutoFocus<HTMLDivElement>()
   const t = useT()
@@ -124,7 +127,10 @@ export function HomeView(): JSX.Element {
   const account = useAuthStore((s) => s.account)
   const epicAccount = useEpicAuthStore((s) => s.account)
   const playStationAccount = usePlayStationStore((s) => s.account)
-  const storeProducts = useStoreStore((s) => s.snapshot.products)
+  const guestModeActive = useGuestModeStore(isGuestModeActive)
+  const allStoreProducts = useStoreStore((s) => s.snapshot.products)
+  // Guests never see store deals or wishlist banners; those lead outside the allowed games.
+  const storeProducts = guestModeActive ? NO_STORE_PRODUCTS : allStoreProducts
   const setMainView = useNavigationStore((s) => s.setMainView)
   const setLibrarySource = useLibraryFilterStore((s) => s.setSource)
   const setStorePage = useStoreNavigationStore((s) => s.setPage)
@@ -140,7 +146,8 @@ export function HomeView(): JSX.Element {
   const customHomeWallpaper = usePreferencesStore((state) => state.customHomeWallpaper)
   const pinnedBackdropGameId = usePreferencesStore((state) => state.pinnedBackdropGameId)
   const configuredShowHomeBanners = usePreferencesStore((state) => state.showHomeBanners)
-  const showHomeBanners = effectiveHomeLayout === 'orbit' && configuredShowHomeBanners
+  const showHomeBanners =
+    effectiveHomeLayout === 'orbit' && configuredShowHomeBanners && !guestModeActive
   const detailGameId = useGameDetailStore((state) => state.gameId)
   const setHomeTitleMusicGameId = useTitleMusicStore((state) => state.setHomeGameId)
   const clearHomeTitleMusicGameId = useTitleMusicStore((state) => state.clearHomeGameId)

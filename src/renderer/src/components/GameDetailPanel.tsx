@@ -61,6 +61,8 @@ import { useTitleMusicStore } from '@renderer/state/titleMusicStore'
 import { useDownloadStore } from '@renderer/state/downloadStore'
 import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 import { canRequestGameInstall, canRequestGameUninstall } from '@shared/gameInstallation'
+import { isActionAllowed, type GuestModeAction } from '@shared/guestModePolicy'
+import { isGuestModeActive, useGuestModeStore } from '@renderer/state/guestModeStore'
 import { clampLauncherProgress } from '@shared/launcherDownloads'
 import {
   AchievementOverviewSheet,
@@ -101,6 +103,15 @@ function sortAchievements(achievements: readonly GameAchievement[]): GameAchieve
       Number(b.unlocked) - Number(a.unlocked) ||
       (b.unlockedAt ?? 0) - (a.unlockedAt ?? 0)
   )
+}
+
+const GUEST_GUARDED_MANAGE_ACTIONS: Record<string, GuestModeAction> = {
+  collections: 'edit-metadata',
+  metadata: 'edit-metadata',
+  'launch-options': 'edit-metadata',
+  uninstall: 'uninstall',
+  'remove-custom': 'uninstall',
+  exclude: 'hide'
 }
 
 export function GameDetailPanel({ game }: Props): JSX.Element {
@@ -162,6 +173,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   const [favoriteBusy, setFavoriteBusy] = useState(false)
   const [cloudLaunchState, setCloudLaunchState] = useState<'idle' | 'launching' | 'error'>('idle')
   const [excludeState, setExcludeState] = useState<'idle' | 'saving' | 'error'>('idle')
+  const guestModeActive = useGuestModeStore(isGuestModeActive)
   const favoriteGameIds = useLibraryCollectionsStore((state) => state.favoriteGameIds)
   const toggleFavorite = useLibraryCollectionsStore((state) => state.toggleFavorite)
   const isFavorite = favoriteGameIds.includes(game.id)
@@ -811,6 +823,12 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
       onSelect: () => void handleRemove()
     })
   }
+  // Guest mode keeps launching and favourites; everything that edits or removes
+  // the library needs the owner (the main process rejects these too).
+  const visibleManageActions = manageActions.filter((action) => {
+    const guarded = GUEST_GUARDED_MANAGE_ACTIONS[action.id]
+    return guarded === undefined || isActionAllowed(guarded, guestModeActive)
+  })
 
   return (
     <>
@@ -1220,7 +1238,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
                 ref={manageActionsRef}
                 label={t('details.manageActions')}
                 icon={SlidersHorizontal}
-                items={manageActions}
+                items={visibleManageActions}
                 open={openActionMenu === 'manage'}
                 onOpenChange={(open) => setOpenActionMenu(open ? 'manage' : null)}
               />

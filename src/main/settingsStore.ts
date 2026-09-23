@@ -79,7 +79,8 @@ const defaults: OrbitSettings = {
   playstationRemotePlayPreference: 'auto',
   hardwareControlEnabled: false,
   hardwareControlButton: 'menu',
-  hardwareControlHoldSeconds: 2
+  hardwareControlHoldSeconds: 2,
+  guestModeEnabled: false
 }
 
 export const settingsStore = new Store<OrbitSettings>({
@@ -91,6 +92,7 @@ export const settingsStore = new Store<OrbitSettings>({
 const LEGACY_RETRO_ACHIEVEMENTS_API_KEY = 'retroAchievementsWebApiKey'
 const LEGACY_STEAM_GRID_DB_TOKEN = 'steamGridDbApiKey'
 const LEGACY_STEAM_WEB_API_KEY = 'steamWebApiKey'
+const GUEST_MODE_PIN_HASH = 'guestModePinHash'
 const legacySettingsStore = settingsStore as unknown as Store<Record<string, unknown>>
 
 const storedHomeLayout = legacySettingsStore.get('homeLayout')
@@ -128,7 +130,17 @@ export function publicSettingsSnapshot(): OrbitSettings {
   delete snapshot[LEGACY_RETRO_ACHIEVEMENTS_API_KEY]
   delete snapshot[LEGACY_STEAM_GRID_DB_TOKEN]
   delete snapshot[LEGACY_STEAM_WEB_API_KEY]
+  // The guest PIN hash is verified in the main process only.
+  delete snapshot[GUEST_MODE_PIN_HASH]
   return snapshot as unknown as OrbitSettings
+}
+
+export function readGuestModePinHash(): unknown {
+  return legacySettingsStore.get(GUEST_MODE_PIN_HASH)
+}
+
+export function writeGuestModePinHash(hash: string): void {
+  legacySettingsStore.set(GUEST_MODE_PIN_HASH, hash)
 }
 
 export function readLegacyRetroAchievementsApiKey(): unknown {

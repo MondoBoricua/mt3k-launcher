@@ -537,7 +537,38 @@ export interface OrbitSettings {
   hardwareControlEnabled: boolean
   hardwareControlButton: HardwareControlButton
   hardwareControlHoldSeconds: HardwareControlHoldSeconds
+  /** Guest / kid mode. Off by default; only the guest-mode IPC may change these keys. */
+  guestModeEnabled?: boolean
+  /** scrypt hash + salt of the guest PIN. Never leaves the main process. */
+  guestModePinHash?: string
+  /** Library collection whose games stay visible while guest mode is active. */
+  guestModeAllowedCollectionId?: string
 }
+
+export type GuestModeFailureReason =
+  | 'invalid-pin'
+  | 'wrong-pin'
+  | 'locked-out'
+  | 'no-pin'
+  | 'pin-exists'
+  | 'unknown-collection'
+
+export interface GuestModeStatus {
+  enabled: boolean
+  hasPin: boolean
+  allowedCollectionId?: string
+  /** Epoch milliseconds while PIN entry is refused after repeated failures. */
+  lockedUntil?: number
+  attemptsLeft: number
+}
+
+export type GuestModeVerifyResult =
+  | { ok: true; status: GuestModeStatus }
+  | {
+      ok: false
+      reason: GuestModeFailureReason
+      status: GuestModeStatus
+    }
 
 export type StoreLoginState = 'idle' | 'waiting-for-browser' | 'success' | 'error'
 
@@ -1916,6 +1947,13 @@ export const IPC = {
   backgroundServiceStatus: 'background-service:status',
   hardwareControlGetStatus: 'hardware-control:status:get',
   hardwareControlStatus: 'hardware-control:status',
+  guestModeStatus: 'guest-mode:status',
+  guestModeSetup: 'guest-mode:setup',
+  guestModeVerify: 'guest-mode:verify',
+  guestModeEnable: 'guest-mode:enable',
+  guestModeDisable: 'guest-mode:disable',
+  guestModeSetAllowedCollection: 'guest-mode:allowed-collection:set',
+  guestModeStatusUpdated: 'guest-mode:status:updated',
   controllerInputState: 'controller-input:state',
   imageResolve: 'image:resolve',
   imageArtworkSearchList: 'image:artwork-search:list',

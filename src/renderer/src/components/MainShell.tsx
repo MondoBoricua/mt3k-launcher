@@ -41,6 +41,8 @@ import { useOrbitPlusStore } from '@renderer/state/orbitPlusStore'
 import { orbitPlusHasFeature } from '@shared/ipc'
 import { useDownloadStore } from '@renderer/state/downloadStore'
 import { DownloadCenterPanel } from './DownloadCenterPanel'
+import { PinPadDialog } from './PinPadDialog'
+import { useGuestModeStore } from '@renderer/state/guestModeStore'
 
 const SESSION_SUMMARY_VISIBLE_MS = 6_000
 const RENDERER_HIBERNATION_DELAY_MS = 1_500
@@ -72,6 +74,10 @@ export function MainShell(): JSX.Element {
   const initStore = useStoreStore((s) => s.init)
   const initDownloads = useDownloadStore((state) => state.init)
   const downloadCenterOpen = useDownloadStore((state) => state.centerOpen)
+  const initGuestMode = useGuestModeStore((state) => state.init)
+  const pinRequest = useGuestModeStore((state) => state.pinRequest)
+  const guestLockedUntil = useGuestModeStore((state) => state.status.lockedUntil)
+  const resolvePinRequest = useGuestModeStore((state) => state.resolvePinRequest)
   const refreshStoreIfStale = useStoreStore((s) => s.refreshIfStale)
   const detailGameId = useGameDetailStore((s) => s.gameId)
   const launcherMusicEnabled = usePreferencesStore((state) => state.launcherMusic)
@@ -241,6 +247,10 @@ export function MainShell(): JSX.Element {
   }, [sessionSummary])
 
   useEffect(() => {
+    void initGuestMode()
+  }, [initGuestMode])
+
+  useEffect(() => {
     let active = true
     void initLibrary().then(() => {
       if (!active) return
@@ -265,12 +275,18 @@ export function MainShell(): JSX.Element {
   useEffect(() => {
     const shell = shellRef.current
     if (!shell) return
-    if (detailGame || downloadCenterOpen || launchOverlayVisible || updateStage === 'installing') {
+    if (
+      detailGame ||
+      downloadCenterOpen ||
+      launchOverlayVisible ||
+      pinRequest !== null ||
+      updateStage === 'installing'
+    ) {
       shell.setAttribute('inert', '')
     }
     else shell.removeAttribute('inert')
     return () => shell.removeAttribute('inert')
-  }, [detailGame, downloadCenterOpen, launchOverlayVisible, updateStage])
+  }, [detailGame, downloadCenterOpen, launchOverlayVisible, pinRequest, updateStage])
 
   useEffect(() => {
     let observer: MutationObserver | undefined
@@ -364,6 +380,20 @@ export function MainShell(): JSX.Element {
         <AnimatePresence>{detailGame && <GameDetailPanel key={detailGame.id} game={detailGame} />}</AnimatePresence>
         <AnimatePresence>
           {downloadCenterOpen && <DownloadCenterPanel key="download-center" />}
+        </AnimatePresence>
+        <AnimatePresence>
+          {pinRequest && (
+            <PinPadDialog
+              key={`pin-request-${pinRequest.id}`}
+              titleKey={pinRequest.titleKey}
+              bodyKey={pinRequest.bodyKey}
+              mode={pinRequest.mode}
+              lockedUntil={guestLockedUntil}
+              onSubmit={pinRequest.submit}
+              onCancel={() => resolvePinRequest(pinRequest.id, false)}
+              onSuccess={() => resolvePinRequest(pinRequest.id, true)}
+            />
+          )}
         </AnimatePresence>
         <AnimatePresence>
           {launchOverlayVisible && (
