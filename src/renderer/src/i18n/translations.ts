@@ -2220,7 +2220,34 @@ export const translations = {
     'ticker.connectedAs': 'Angemeldet als {name}',
     'ticker.controlsHint':
       '{previous} / {next} wechselt Kategorien · {confirm} wählt aus · {back} geht zurück',
-    'ticker.notConnected': 'Verbinde deinen Steam-Account in den Einstellungen für deine Bibliothek'
+    'ticker.notConnected': 'Verbinde deinen Steam-Account in den Einstellungen für deine Bibliothek',
+
+    'settings.retroPauseMenu.title': 'RetroArch-Pausenmenü',
+    'settings.section.retro-pause-menuBody': 'Speichern, laden und RetroArch mit dem Controller beenden',
+    'settings.retroPauseMenu.toggle': 'Pausenmenü, während RetroArch läuft',
+    'settings.retroPauseMenu.toggleBody': 'Wenn du MT3K Launcher während eines RetroArch-Spiels nach vorn holst, erscheinen Fortsetzen, Spielstand speichern, Spielstand laden, Screenshot, Zeitraffer und Beenden. Standardmäßig aus. Eigenständige Emulatoren bleiben unverändert.',
+    'retroPauseMenu.title': 'RetroArch',
+    'retroPauseMenu.resume': 'Fortsetzen',
+    'retroPauseMenu.saveState': 'Spielstand speichern',
+    'retroPauseMenu.loadState': 'Spielstand laden',
+    'retroPauseMenu.screenshot': 'Screenshot',
+    'retroPauseMenu.fastForward': 'Zeitraffer umschalten',
+    'retroPauseMenu.quit': 'Spiel beenden',
+    'retroPauseMenu.statusPlaying': 'Läuft',
+    'retroPauseMenu.statusPaused': 'Pausiert',
+    'retroPauseMenu.statusContentless': 'Kein Spiel geladen',
+    'retroPauseMenu.statusUnknown': 'Status unbekannt',
+    'retroPauseMenu.reply': 'RetroArch antwortete: {reply}',
+    'retroPauseMenu.error.timeout': 'RetroArch hat nicht rechtzeitig geantwortet.',
+    'retroPauseMenu.error.rejected': 'Dieser RetroArch-Befehl ist nicht erlaubt.',
+    'retroPauseMenu.error.disabled': 'Das RetroArch-Pausenmenü ist ausgeschaltet.',
+    'retroPauseMenu.error.notRetroarch': 'Diese Sitzung ist kein RetroArch-Spiel.',
+    'retroPauseMenu.error.unrecognized': 'RetroArch hat geantwortet, aber der Status ließ sich nicht lesen.',
+    'retroPauseMenu.error.returnFailed': 'Das Spielfenster konnte nicht nach vorn geholt werden.',
+    'retroPauseMenu.error.unreachable': 'RetroArch hat nicht geantwortet. Schalte die Netzwerkbefehle in RetroArch ein oder starte das Spiel erneut aus MT3K Launcher.',
+    'retroPauseMenu.sent': 'An RetroArch gesendet.',
+    'retroPauseMenu.working': 'Verbindung mit RetroArch…',
+    'retroPauseMenu.hint': 'Mit dem Stick bewegen und bestätigen. Zurück setzt das Spiel fort.'
   }
 } as const satisfies Record<Language, Record<keyof typeof english, string>>
 

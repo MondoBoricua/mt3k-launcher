@@ -25,6 +25,7 @@ import { GameLaunchSplash } from './GameLaunchSplash'
 import { SessionSummaryToast } from './SessionSummaryToast'
 import { AppUpdateBanner } from './AppUpdateBanner'
 import { AppUpdatePrompt } from './AppUpdatePrompt'
+import { RetroPauseMenu } from './RetroPauseMenu'
 import { useAppUpdateStore } from '@renderer/state/appUpdateStore'
 import { BottomStatusHud } from './BottomStatusHud'
 import type { GameLaunchStatus } from '@shared/ipc'
@@ -101,6 +102,7 @@ export function MainShell(): JSX.Element {
   const updateStage = useAppUpdateStore((state) => state.snapshot.stage)
   const updateBannerVisible = useAppUpdateStore((state) => state.bannerVisible)
   const updatePromptVisible = useAppUpdateStore((state) => state.promptVisible)
+  const retroPauseMenuEnabled = usePreferencesStore((state) => state.retroPauseMenuEnabled)
   const pendingSessionSummaryRef = useRef<GameLaunchStatus | null>(null)
   const shellRef = useRef<HTMLDivElement>(null)
   const runningGameId = launchStatus.phase === 'running' ? launchStatus.gameId : undefined
@@ -382,6 +384,7 @@ export function MainShell(): JSX.Element {
             />
           )}
         </AnimatePresence>
+        {retroPauseMenuEnabled && <RetroPauseMenu />}
         <AnimatePresence>
           {updateBannerVisible &&
             (updateStage === 'installing' ||

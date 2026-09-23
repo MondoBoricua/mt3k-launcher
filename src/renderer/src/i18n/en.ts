@@ -2204,5 +2204,32 @@ export const english = {
     'ticker.connectedAs': 'Signed in as {name}',
     'ticker.controlsHint':
       '{previous} / {next} to switch categories · {confirm} to select · {back} to go back',
-    'ticker.notConnected': 'Connect your Steam account in Settings to build your library'
+    'ticker.notConnected': 'Connect your Steam account in Settings to build your library',
+
+    'settings.retroPauseMenu.title': 'RetroArch pause menu',
+    'settings.section.retro-pause-menuBody': 'Save, load and quit RetroArch from the controller',
+    'settings.retroPauseMenu.toggle': 'Pause menu while RetroArch is running',
+    'settings.retroPauseMenu.toggleBody': 'When you bring MT3K Launcher forward during a RetroArch game, show Resume, save state, load state, screenshot, fast-forward and quit. Off by default. Standalone emulators stay as they are.',
+    'retroPauseMenu.title': 'RetroArch',
+    'retroPauseMenu.resume': 'Resume',
+    'retroPauseMenu.saveState': 'Save state',
+    'retroPauseMenu.loadState': 'Load state',
+    'retroPauseMenu.screenshot': 'Screenshot',
+    'retroPauseMenu.fastForward': 'Toggle fast-forward',
+    'retroPauseMenu.quit': 'Quit game',
+    'retroPauseMenu.statusPlaying': 'Playing',
+    'retroPauseMenu.statusPaused': 'Paused',
+    'retroPauseMenu.statusContentless': 'No game loaded',
+    'retroPauseMenu.statusUnknown': 'Status unknown',
+    'retroPauseMenu.reply': 'RetroArch replied: {reply}',
+    'retroPauseMenu.error.timeout': 'RetroArch did not answer in time.',
+    'retroPauseMenu.error.rejected': 'That RetroArch command is not allowed.',
+    'retroPauseMenu.error.disabled': 'The RetroArch pause menu is turned off.',
+    'retroPauseMenu.error.notRetroarch': 'This session is not a RetroArch game.',
+    'retroPauseMenu.error.unrecognized': 'RetroArch answered, but the status could not be read.',
+    'retroPauseMenu.error.returnFailed': 'The game window could not be brought forward.',
+    'retroPauseMenu.error.unreachable': 'RetroArch did not answer. Turn on network commands in RetroArch, or launch the game again from MT3K Launcher.',
+    'retroPauseMenu.sent': 'Sent to RetroArch.',
+    'retroPauseMenu.working': 'Talking to RetroArch…',
+    'retroPauseMenu.hint': 'Move with the stick and confirm to choose. Back resumes the game.'
   } as const

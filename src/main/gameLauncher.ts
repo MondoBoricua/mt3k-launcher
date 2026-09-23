@@ -14,6 +14,7 @@ import {
   windowsCommandLineArguments
 } from './gameLaunchElevationPolicy'
 import { prepareRetroFullscreen } from './retro/retroLaunchPreparation'
+import { ensureRetroArchNetworkCommands } from './retro/retroArchNetworkConfig'
 import { playStationRemotePlayService } from './playstation/remotePlay'
 import { getSteamAppsDirectories, getSteamInstallPath } from './steam/steamInstall'
 import {
@@ -393,6 +394,11 @@ export async function launchGame(game: LibraryGame): Promise<GameLaunchReceipt> 
     if (!romPath || !existsSync(romPath)) throw new Error('The ROM file is no longer available')
     if (retro.corePath && !existsSync(retro.corePath)) {
       throw new Error('The assigned RetroArch core is no longer available')
+    }
+    // Solo RetroArch, y solo si el usuario prendió el menú. El helper
+    // sale al instante cuando el toggle está apagado.
+    if (retro.emulatorId === 'retroarch') {
+      await ensureRetroArchNetworkCommands(executable)
     }
     const ensureFullscreenWithHotkey = await prepareRetroFullscreen(retro)
     const spawnedGamePid = await launchDetachedGame(

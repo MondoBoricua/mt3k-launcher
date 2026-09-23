@@ -66,6 +66,7 @@
     "verify:retro-ui": "electron scripts/verify-retro-systems-live.cjs",
     "verify:retro-provisioning": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-retro-provisioning.ts",
     "verify:retro-provisioning:live": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-retro-provisioning-live.ts",
+    "verify:retro-pause-menu": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-retro-pause-menu.ts",
     "verify:artwork": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-artwork-fallback.ts",
     "verify:artwork-search": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-steamgriddb-search.ts",
     "verify:artwork-resolution": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-artwork-resolution.ts",

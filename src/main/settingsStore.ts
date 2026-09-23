@@ -79,7 +79,9 @@ const defaults: OrbitSettings = {
   playstationRemotePlayPreference: 'auto',
   hardwareControlEnabled: false,
   hardwareControlButton: 'menu',
-  hardwareControlHoldSeconds: 2
+  hardwareControlHoldSeconds: 2,
+  // El menú de pausa nace apagado: sin toggle no hay UDP ni cambios al cfg.
+  retroPauseMenuEnabled: false
 }
 
 export const settingsStore = new Store<OrbitSettings>({

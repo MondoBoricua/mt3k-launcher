@@ -18,6 +18,11 @@ import {
 export const BACKGROUND_ARGUMENT = '--orbit-background'
 const LOGIN_NAME = 'ORBIT'
 
+export interface OrbitBackgroundModeOptions {
+  /** True solo con el toggle prendido y una sesión de RetroArch ya corriendo. */
+  retroArchPauseEligible?: () => boolean
+}
+
 /** The existing IPC names remain compatible; there is no independent service. */
 export class OrbitBackgroundMode {
   private readonly controller: NativeHardwareControl
@@ -41,7 +46,10 @@ export class OrbitBackgroundMode {
     }
   }
 
-  constructor(private readonly window: BrowserWindow) {
+  constructor(
+    private readonly window: BrowserWindow,
+    private readonly options: OrbitBackgroundModeOptions = {}
+  ) {
     this.controller = new NativeHardwareControl(window, settingsStore.store)
     this.controller.on('status', () => this.send())
     this.controller.on('trigger', () => void this.activate())
@@ -156,7 +164,21 @@ export class OrbitBackgroundMode {
     this.activationInFlight = true
     try { this.activationResult = await revealOrbitWindow(this.window) ? 'focused' : 'failed' }
     catch { this.activationResult = 'failed' }
-    finally { this.activationInFlight = false; this.activationAt = Date.now(); this.send() }
+    finally {
+      this.activationInFlight = false
+      this.activationAt = Date.now()
+      this.send()
+      // El menú se abre aquí, no en cada focus. Si el toggle está apagado
+      // o el juego no es RetroArch, retroArchPauseEligible responde false.
+      if (
+        this.activationResult === 'focused' &&
+        !this.window.isDestroyed() &&
+        !this.window.webContents.isDestroyed() &&
+        this.options.retroArchPauseEligible?.()
+      ) {
+        this.window.webContents.send(IPC.retroArchPauseRequested)
+      }
+    }
   }
   private updateTray(): void {
     this.tray?.setContextMenu(Menu.buildFromTemplate([

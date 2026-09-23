@@ -537,6 +537,8 @@ export interface OrbitSettings {
   hardwareControlEnabled: boolean
   hardwareControlButton: HardwareControlButton
   hardwareControlHoldSeconds: HardwareControlHoldSeconds
+  /** Menú de pausa de RetroArch. Apagado: no se toca el cfg ni se abre el menú. */
+  retroPauseMenuEnabled?: boolean
 }
 
 export type StoreLoginState = 'idle' | 'waiting-for-browser' | 'success' | 'error'
@@ -1568,6 +1570,8 @@ export interface GameLaunchStatus {
   returnTask?: 'backing-up' | 'backup-complete' | 'backup-failed' | 'tracking-stopped'
   failureReason?: GameLaunchFailureReason
   message?: string
+  /** True only while a confirmed RetroArch session is running. Standalone emulators stay false. */
+  retroArchSession?: boolean
 }
 
 export type StoreOfferSource = 'steam' | 'epic' | 'gog' | 'xbox' | 'instant-gaming'
@@ -1916,6 +1920,10 @@ export const IPC = {
   backgroundServiceStatus: 'background-service:status',
   hardwareControlGetStatus: 'hardware-control:status:get',
   hardwareControlStatus: 'hardware-control:status',
+  retroArchStatus: 'retro-arch:status',
+  retroArchCommand: 'retro-arch:command',
+  retroArchReturn: 'retro-arch:return',
+  retroArchPauseRequested: 'retro-arch:pause-requested',
   controllerInputState: 'controller-input:state',
   imageResolve: 'image:resolve',
   imageArtworkSearchList: 'image:artwork-search:list',

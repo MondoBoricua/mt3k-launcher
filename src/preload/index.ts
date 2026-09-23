@@ -92,6 +92,11 @@ import {
   type XboxConnectionSnapshot,
   type XboxLoginStatus
 } from '@shared/ipc'
+import type {
+  RetroArchCommandName,
+  RetroArchCommandResult,
+  RetroArchStatusSnapshot
+} from '@shared/retroArchCommands'
 
 const orbitApi = {
   settings: {
@@ -517,6 +522,17 @@ const orbitApi = {
     ): Promise<AchievementGuideResult> =>
       ipcRenderer.invoke(IPC.gameAchievementGuideResolve, gameId, achievementId),
     syncAchievements: (): Promise<void> => ipcRenderer.invoke(IPC.gameAchievementsSync)
+  },
+  retroArch: {
+    status: (): Promise<RetroArchStatusSnapshot> => ipcRenderer.invoke(IPC.retroArchStatus),
+    command: (name: RetroArchCommandName): Promise<RetroArchCommandResult> =>
+      ipcRenderer.invoke(IPC.retroArchCommand, name),
+    returnToGame: (): Promise<boolean> => ipcRenderer.invoke(IPC.retroArchReturn),
+    onPauseRequested: (callback: () => void): (() => void) => {
+      const listener = (): void => callback()
+      ipcRenderer.on(IPC.retroArchPauseRequested, listener)
+      return () => ipcRenderer.removeListener(IPC.retroArchPauseRequested, listener)
+    }
   },
   image: {
     getTokenStatus: (): Promise<SteamGridDbTokenStatus> =>
