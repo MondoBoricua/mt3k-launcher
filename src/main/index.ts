@@ -1,4 +1,5 @@
 import './legacyUserDataPath'
+import './diagnosticLogStartup'
 import { app, shell, protocol, net, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'

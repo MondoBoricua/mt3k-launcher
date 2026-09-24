@@ -2266,6 +2266,9 @@ export const english = {
     'settings.about.title': 'About MT3K Launcher',
     'settings.about.version': 'Version {version}',
     'settings.about.credit': 'Based on ORBIT by Luis Garcia. Free software under the GNU GPL v3.',
+    'settings.about.openLogFolder': 'Open log folder',
+    'settings.about.logPath': 'MT3K Launcher diagnostic log: {path}',
+    'settings.about.logFolderError': 'Could not access the log folder. Please try again.',
     'settings.onboarding.title': 'Onboarding',
     'settings.onboarding.body':
       'Run the first-time setup again without deleting accounts, libraries or cached artwork.',

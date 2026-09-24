@@ -873,6 +873,8 @@ export function SettingsView(): JSX.Element {
   const accountSignature = `${account?.steamId ?? ''}:${epicAccount?.accountId ?? ''}:${playStationAccount?.accountId ?? ''}:${xboxAccount?.xuid ?? ''}`
   const previousAccountSignature = useRef(accountSignature)
   const [version, setVersion] = useState('')
+  const [logPath, setLogPath] = useState('')
+  const [logFolderError, setLogFolderError] = useState(false)
   const [settings, setSettings] = useState<OrbitSettings | null>(null)
   const [achievementSyncError, setAchievementSyncError] = useState(false)
   const [retroAchievementsUsername, setRetroAchievementsUsername] = useState('')
@@ -1104,6 +1106,7 @@ export function SettingsView(): JSX.Element {
 
   useEffect(() => {
     void window.api.app.getVersion().then(setVersion)
+    void window.api.app.getLogPath().then(setLogPath).catch(() => setLogFolderError(true))
     void Promise.all([
       window.api.settings.get(),
       window.api.retroAchievements.credentials.get(),
@@ -3689,6 +3692,27 @@ export function SettingsView(): JSX.Element {
                     {t('settings.about.version', { version: version || '—' })}
                   </p>
                   <p className="mt-1 text-xs text-white/45">{t('settings.about.credit')}</p>
+                  <FocusableButton
+                    variant="ghost"
+                    className="mt-4"
+                    aria-describedby="diagnostic-log-path"
+                    onClick={() => {
+                      setLogFolderError(false)
+                      void window.api.app.openLogFolder()
+                        .then((opened) => setLogFolderError(!opened))
+                        .catch(() => setLogFolderError(true))
+                    }}
+                  >
+                    {t('settings.about.openLogFolder')}
+                  </FocusableButton>
+                  <p id="diagnostic-log-path" className="mt-2 break-all text-xs text-muted">
+                    {t('settings.about.logPath', { path: logPath || '—' })}
+                  </p>
+                  {logFolderError && (
+                    <p role="alert" className="mt-2 text-sm text-red-300">
+                      {t('settings.about.logFolderError')}
+                    </p>
+                  )}
                 </SettingsSection>
               </div>
             )}

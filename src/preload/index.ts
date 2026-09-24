@@ -718,6 +718,8 @@ const orbitApi = {
       ipcRenderer.invoke(IPC.systemPower, action)
   },
   app: {
+    getLogPath: (): Promise<string> => ipcRenderer.invoke(IPC.appLogPath),
+    openLogFolder: (): Promise<boolean> => ipcRenderer.invoke(IPC.appOpenLogFolder),
     getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.appVersion),
     updates: {
       get: (): Promise<AppUpdateSnapshot> => ipcRenderer.invoke(IPC.appUpdateGet),

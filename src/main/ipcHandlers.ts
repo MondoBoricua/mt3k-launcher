@@ -1,3 +1,5 @@
+import { mkdir } from 'node:fs/promises'
+import { diagnosticLog, diagnosticLogDirectory } from './diagnosticLogStartup'
 import { listCaptures, openCapture, openCapturesFolder } from './captures/captureLibrary'
 import { ATTRACT_IDLE_MINUTES } from '@shared/attractModePolicy'
 import { launchProfileService } from './launchProfileService'
@@ -1214,6 +1216,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
 
   ipcMain.handle(IPC.appVersion, () => getDisplayVersion())
+  ipcMain.handle(IPC.appLogPath, () => diagnosticLog.path)
+  ipcMain.handle(IPC.appOpenLogFolder, async () => {
+    guestModeService.assertActionAllowed('change-settings')
+    try {
+      await mkdir(diagnosticLogDirectory, { recursive: true })
+      const error = await shell.openPath(diagnosticLogDirectory)
+      if (error) throw new Error(error)
+      return true
+    } catch (error) {
+      console.warn('[diagnostic-log] Could not open log folder', error)
+      return false
+    }
+  })
   ipcMain.handle(IPC.appUpdateGet, () => appUpdateService.getSnapshot())
   ipcMain.handle(IPC.appUpdateCheck, () => appUpdateService.check(true))
   ipcMain.handle(IPC.appUpdateDownload, () => appUpdateService.download())

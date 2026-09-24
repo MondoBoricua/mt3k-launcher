@@ -1996,6 +1996,8 @@ export const IPC = {
   customApplicationRemove: 'applications:custom:remove',
   customApplicationCancel: 'applications:custom:cancel',
   appVersion: 'app:version',
+  appLogPath: 'app:log-path',
+  appOpenLogFolder: 'app:open-log-folder',
   appUpdateGet: 'app:update:get',
   appUpdateCheck: 'app:update:check',
   appUpdateDownload: 'app:update:download',
