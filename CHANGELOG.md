@@ -2,6 +2,15 @@
 
 MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
 
+## 0.1.4-mt3k.11
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.10.
+
+### Log de diagnóstico
+
+- **Registro de errores.** El proceso principal escribe un log en `%APPDATA%\ORBIT\logs\mt3k-launcher.log` (rota a los 2 MB, guarda un archivo anterior): versión, Windows, GPU y funciones activas al arrancar, más avisos, errores, excepciones no capturadas y caídas del renderer o de la GPU. Los tokens y claves se tachan antes de escribirse.
+- **Abrir carpeta de logs** en Configuración → Sistema → Acerca de, con la ruta a la vista. Si el launcher se cae, ese archivo es lo que hay que mandar.
+
 ## 0.1.4-mt3k.10
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.9.

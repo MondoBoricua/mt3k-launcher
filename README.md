@@ -39,6 +39,7 @@ Empezó como **ORBIT MT3K Edition**, un fork de ORBIT 0.1.4. En septiembre de 20
 | **Restaurar partidas y carpeta de copias**: restaura una copia desde la ficha del juego y manda las copias a tu carpeta de Google Drive u OneDrive. | 0.1.4-mt3k.10 |
 | **Modo vitrina y capturas**: arte de tus juegos cuando el launcher está inactivo, y las capturas de Game Bar dentro de cada juego. Apagados por defecto. | 0.1.4-mt3k.10 |
 | **Modo invitado**: PIN con el mando, solo los juegos de una colección, sin tienda ni ajustes. Apagado por defecto. | 0.1.4-mt3k.10 |
+| **Log de diagnóstico** en `%APPDATA%\ORBIT\logs`, con botón en Acerca de. Si algo falla, ese archivo es lo que se manda. | 0.1.4-mt3k.11 |
 
 El detalle por versión está en [CHANGELOG.md](CHANGELOG.md).
 
