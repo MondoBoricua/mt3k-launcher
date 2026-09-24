@@ -2282,6 +2282,9 @@ export const translations = {
     'settings.about.title': 'Über MT3K Launcher',
     'settings.about.version': 'Version {version}',
     'settings.about.credit': 'Basiert auf ORBIT von Luis Garcia. Freie Software unter der GNU GPL v3.',
+    'settings.about.openLogFolder': 'Protokollordner öffnen',
+    'settings.about.logPath': 'Diagnoseprotokoll von MT3K Launcher: {path}',
+    'settings.about.logFolderError': 'Der Protokollordner konnte nicht geöffnet werden. Bitte erneut versuchen.',
     'settings.onboarding.title': 'Onboarding',
     'settings.onboarding.body':
       'Führt die Ersteinrichtung erneut aus, ohne Konten, Bibliotheken oder gecachtes Artwork zu löschen.',

@@ -60,6 +60,8 @@ let settings = { ...usePreferencesStore.getState(), language: 'de', storeRegion:
 const emptyLibrary = { games: [], providerGames: [], excludedGames: [], recentGameIds: [], loadedAt: 0, isLoadingMetadata: false }
 const responses = {
   'app.getVersion': '0.1.3',
+  'app.getLogPath': 'C:/Users/test/AppData/Roaming/ORBIT/logs/mt3k-launcher.log',
+  'app.openLogFolder': true,
   'game.resolveTrailer': null, 'game.resolveTitleMusic': null, 'game.resolveAchievements': null,
   'store.search': { products: [] },
   'downloads.get': { revision: 0, checkedAt: 0, updatedAt: 0, activities: [] },
@@ -145,6 +147,7 @@ function Fixture() {
 createRoot(document.getElementById('root')).render(<Fixture />)
 window.settingsQA = {
   errors, calls,
+  setLogFolderResult: (result) => { responses['app.openLogFolder'] = result },
   savedScales,
   setScale: (value) => usePreferencesStore.getState().setTextScale(value),
   flushScale: flushTextScaleSave,
@@ -392,6 +395,36 @@ async function main() {
   }
   await window.loadFile(path.join(output, 'index.html'))
   await settle()
+  if (process.argv.includes('--diagnostic-log')) {
+    await js('settingsQA.setPage("system")')
+    await settle()
+    for (const language of ['en', 'de', 'es', 'ru']) {
+      await js(`settingsQA.setLanguage('${language}')`)
+      await settle()
+      await js('settingsQA.focus("#settings-about-header")')
+      await button(0)
+      await button(13)
+      assert.equal(await js('document.activeElement.getAttribute("aria-describedby")'), 'diagnostic-log-path')
+      const before = await js('settingsQA.calls.filter(n => n === "app.openLogFolder").length')
+      await button(0)
+      assert.equal(await js('settingsQA.calls.filter(n => n === "app.openLogFolder").length'), before + 1)
+      assert.match(await js('document.getElementById("diagnostic-log-path").textContent'), /mt3k-launcher\.log/)
+      assert.equal(await js('(() => { const e=document.getElementById("settings-about-panel"); return e.scrollWidth <= e.clientWidth + 1 })()'), true)
+      await fs.writeFile(path.join(output, `diagnostic-log-${language}.png`), (await window.webContents.capturePage()).toPNG())
+      await js('settingsQA.setLogFolderResult(false)')
+      await button(0)
+      assert.ok(await js('document.querySelector("#settings-about-panel [role=alert]")?.textContent.length > 0'))
+      await js('settingsQA.setLogFolderResult(true)')
+      await button(0)
+      assert.equal(await js('document.querySelector("#settings-about-panel [role=alert]")'), null)
+      await button(1)
+      assert.equal((await state()).focused, 'about')
+    }
+    assert.deepEqual(await js('settingsQA.errors'), [])
+    console.log('Diagnostic log Settings: four languages, controller open/down/activate/back, path and layout passed')
+    window.destroy()
+    return
+  }
   if (orbitHomeMode) {
     await js('settingsQA.setLayout("orbit"); settingsQA.setHomeBanners(true); settingsQA.showView("home")')
     await waitFor('settingsQA.state().homeStageMode === "banners"')
