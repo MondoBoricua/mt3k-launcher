@@ -1,9 +1,16 @@
 import { HowLongToBeatService, SearchModifier } from 'howlongtobeat-ts'
 import type { GameCompletionTimes, LibraryGame } from '@shared/ipc'
 import { fetchWithElectronNet } from './networkFetch'
+import {
+  completionTimesCacheMatches,
+  completionTimesFallbackQuery,
+  completionTimesQuery
+} from '@shared/completionTimesQuery'
 
 const POSITIVE_TTL_MS = 120 * 24 * 60 * 60 * 1000
-const NEGATIVE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+// HowLongToBeat answers an empty list when it throttles a burst of searches, which
+// looks exactly like "no such game". Keep negative answers short-lived.
+const NEGATIVE_TTL_MS = 24 * 60 * 60 * 1000
 
 const hltb = new HowLongToBeatService({
   minSimilarity: 0.72,
@@ -41,7 +48,9 @@ export class CompletionTimesService {
 
   resolve(game: LibraryGame, force = false): Promise<GameCompletionTimes | null> {
     const cached = game.metadata.completionTimes
-    if (!force && cached && isFresh(cached)) return Promise.resolve(cached)
+    if (!force && cached && isFresh(cached) && completionTimesCacheMatches(cached, game.name)) {
+      return Promise.resolve(cached)
+    }
 
     const current = this.inFlight.get(game.id)
     if (current) return current
@@ -54,12 +63,20 @@ export class CompletionTimesService {
   }
 
   private async fetch(game: LibraryGame): Promise<GameCompletionTimes | null> {
-    const result = await hltb.searchOne(game.name, { modifier: SearchModifier.HIDE_DLC })
+    const query = completionTimesQuery(game.name)
+    let result = await hltb.searchOne(query, { modifier: SearchModifier.HIDE_DLC })
     if (!result.success) return game.metadata.completionTimes ?? null
+    if (!result.data) {
+      const fallback = completionTimesFallbackQuery(game.name)
+      if (fallback) {
+        const retry = await hltb.searchOne(fallback, { modifier: SearchModifier.HIDE_DLC })
+        if (retry.success && retry.data) result = retry
+      }
+    }
 
     const fetchedAt = Date.now()
     if (!result.data) {
-      return { state: 'unavailable', provider: 'howlongtobeat', fetchedAt }
+      return { state: 'unavailable', provider: 'howlongtobeat', query, fetchedAt }
     }
 
     const entry = result.data
@@ -74,12 +91,13 @@ export class CompletionTimesService {
       sourceTitle: entry.name,
       sourceUrl: `https://howlongtobeat.com/game/${entry.id}`,
       confidence: entry.similarity,
+      query,
       fetchedAt
     }
 
     return hasEstimate(completionTimes)
       ? completionTimes
-      : { state: 'unavailable', provider: 'howlongtobeat', fetchedAt }
+      : { state: 'unavailable', provider: 'howlongtobeat', query, fetchedAt }
   }
 }
 

@@ -1059,6 +1059,8 @@ export interface GameCompletionTimes {
   sourceTitle?: string
   sourceUrl?: string
   confidence?: number
+  /** Cleaned name sent to the provider (see completionTimesQuery); lets a stale negative answer expire when the query changes. */
+  query?: string
   fetchedAt: number
 }
 

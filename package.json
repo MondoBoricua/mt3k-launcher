@@ -57,6 +57,7 @@
     "verify:dualsense": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-dualsense-monitor.ts",
     "verify:background-service": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-background-service.ts",
     "verify:update-suspension": "node --experimental-strip-types scripts/verify-update-suspension.ts",
+    "verify:completion-times": "node --experimental-strip-types scripts/verify-completion-times.ts",
     "verify:windows-startup": "node --experimental-strip-types scripts/verify-windows-startup.ts",
     "verify:background-mode": "node --experimental-strip-types scripts/verify-background-mode.ts",
     "verify:background-mode:live": "node scripts/verify-background-mode-live.cjs",

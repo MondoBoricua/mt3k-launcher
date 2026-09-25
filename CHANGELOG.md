@@ -2,6 +2,15 @@
 
 MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
 
+## 0.1.4-mt3k.12
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.11.
+
+### Arreglos
+
+- **HowLongToBeat con nombres de tienda.** Los títulos con ® o ™, como "LEGO® Batman™: Legacy of the Dark Knight" o "Call of Duty®: Modern Warfare® III", no devolvían estimado porque HowLongToBeat no encuentra el nombre con esos símbolos. Ahora se limpian antes de buscar (también las comillas tipográficas de "Tom Clancy’s"), y si no hay resultado se reintenta sin la etiqueta de plataforma ni el sufijo de edición ("- Edición Estándar (Windows)", "(PC)", "Ultimate Edition"). Comprobado contra los 187 títulos con símbolos de una biblioteca real: de 91 con estimado se pasa a 161. Los que quedan son títulos traducidos por la tienda ("La Orden caída", "Los Sims") y paquetes de contenido, que HowLongToBeat no tiene.
+- **"Sin estimado" dura menos.** HowLongToBeat devuelve una lista vacía cuando se le hacen muchas consultas seguidas, igual que cuando no conoce el juego. Esa respuesta se guardaba una semana; ahora un día, y los guardados con el nombre viejo se vuelven a consultar solos.
+
 ## 0.1.4-mt3k.11
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.10.
