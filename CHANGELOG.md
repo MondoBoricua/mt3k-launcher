@@ -2,6 +2,14 @@
 
 MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
 
+## 0.1.4-mt3k.15
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.14.
+
+### Arreglos
+
+- **HowLongToBeat no devolvía nada en la app instalada.** Desde mt3k.12 la búsqueda estaba arreglada en el código, pero el instalador se construye con el lockfile de npm, que fijaba la librería `howlongtobeat-ts` en 1.2.0; esa versión falla contra el HowLongToBeat actual con "Failed to obtain search results" (medido desde una Ally y desde una Mac con la misma red: 1.2.0 falla, 1.3.1 devuelve el juego). Ahora ambos lockfiles fijan 1.3.1. Además, cuando la consulta falla el launcher lo escribe en el log de diagnóstico en vez de callarse.
+
 ## 0.1.4-mt3k.14
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.13.

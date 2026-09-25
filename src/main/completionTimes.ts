@@ -56,7 +56,10 @@ export class CompletionTimesService {
     if (current) return current
 
     const request = this.fetch(game)
-      .catch(() => cached ?? null)
+      .catch((error: unknown) => {
+        console.warn(`[completion-times] lookup failed for "${game.name}":`, error)
+        return cached ?? null
+      })
       .finally(() => this.inFlight.delete(game.id))
     this.inFlight.set(game.id, request)
     return request
@@ -65,7 +68,10 @@ export class CompletionTimesService {
   private async fetch(game: LibraryGame): Promise<GameCompletionTimes | null> {
     const query = completionTimesQuery(game.name)
     let result = await hltb.searchOne(query, { modifier: SearchModifier.HIDE_DLC })
-    if (!result.success) return game.metadata.completionTimes ?? null
+    if (!result.success) {
+      console.warn(`[completion-times] HowLongToBeat search failed for "${query}": ${result.error ?? 'unknown error'}`)
+      return game.metadata.completionTimes ?? null
+    }
     if (!result.data) {
       const fallback = completionTimesFallbackQuery(game.name)
       if (fallback) {
