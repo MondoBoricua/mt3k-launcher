@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {
   communityUpdateAssetName,
+  communityAutoDownloadEnabled,
   communityPackageHelperCommandLine,
   legacyCommunityUpdateAssetName,
   wmiCreateProcessScript,
@@ -128,5 +129,12 @@ const script = wmiCreateProcessScript(`"C:\\O'Neil\\powershell.exe" -File "h"`)
 assert.ok(script.includes("CommandLine = '\"C:\\O''Neil\\powershell.exe\" -File \"h\"'"), 'single quotes are doubled inside the PowerShell literal')
 assert.ok(script.startsWith('$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create'))
 assert.ok(script.includes('[Console]::Out.Write([string]$r.ProcessId)'))
+
+
+// Community auto-download: manifest default until the user decides.
+assert.equal(communityAutoDownloadEnabled(undefined, false), false)
+assert.equal(communityAutoDownloadEnabled(undefined, true), true)
+assert.equal(communityAutoDownloadEnabled(true, false), true)
+assert.equal(communityAutoDownloadEnabled(false, true), false)
 
 console.log('MT3K community update policy checks passed')

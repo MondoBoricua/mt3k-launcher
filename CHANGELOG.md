@@ -2,6 +2,15 @@
 
 MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
 
+## 0.1.4-mt3k.14
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.13.
+
+### Arreglos
+
+- **Descarga automática de actualizaciones.** El interruptor de Configuración → Actualizaciones salía apagado con la etiqueta "activado por defecto" y no hacía nada: el manifiesto de esta edición lo forzaba a apagado. Ahora la etiqueta dice "apagado por defecto", que es la realidad, y el interruptor funciona: si lo enciendes, las releases nuevas se descargan solas y el launcher solo pide confirmación para instalar.
+- **Textos del panel de actualizaciones.** Ya no hablan de releases firmadas ni de un certificado de Windows; describen lo que hace esta edición: comprobar el SHA-256 que GitHub publica para el archivo.
+
 ## 0.1.4-mt3k.13
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.12.

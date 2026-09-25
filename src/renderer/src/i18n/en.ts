@@ -2204,6 +2204,9 @@ export const english = {
     'appUpdate.settings.releaseOnly': 'Enabled after installing an MT3K Launcher release',
     'appUpdate.settings.security':
       'Only the exact release asset is accepted. MT3K Launcher verifies its GitHub SHA-256 digest and the pinned Windows signing certificate before installation.',
+    'appUpdate.settings.bodyCommunity': 'MT3K Launcher checks this project\'s GitHub releases automatically and asks before downloading and installing; it never replaces itself with the official ORBIT release.',
+    'appUpdate.settings.securityCommunity': 'Only the exact release asset is accepted. MT3K Launcher verifies the SHA-256 digest GitHub publishes for the file before installation; MT3K releases are not code-signed.',
+    'appUpdate.verification.verifiedCommunity': 'Security check: SHA-256 verified',
     'appUpdate.error.release-unavailable':
       'GitHub could not be reached. Nothing was changed; MT3K Launcher will retry automatically.',
     'appUpdate.error.release-invalid':

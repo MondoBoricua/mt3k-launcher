@@ -392,6 +392,10 @@ export interface AppUpdateSnapshot {
   channel: 'stable' | 'beta'
   automaticChecksEnabled: boolean
   autoDownloadEnabled: boolean
+  /** True for MT3K community builds (unsigned, SHA-256 verified releases from the fork). */
+  community?: boolean
+  /** What the toggle means when the user never touched it. */
+  autoDownloadDefault?: boolean
   checkIntervalHours: number
   nextCheckAt?: number
   verification: AppUpdateVerification
@@ -533,6 +537,8 @@ export interface OrbitSettings {
   notificationPosition: NotificationPosition
   notificationMotion: NotificationMotion
   appUpdateAutoDownload: boolean
+  /** MT3K community edition: explicit choice for automatic downloads; unset means the release manifest default. */
+  appUpdateAutoDownloadCommunity?: boolean
   retroRomDirectories: string[]
   /** Explicit emulator choice per ROM system. Missing entries use automatic detection. */
   retroSystemEmulators: Partial<Record<RetroSystemId, string>>

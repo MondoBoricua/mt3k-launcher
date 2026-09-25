@@ -580,6 +580,9 @@ function validateSettingsPartial(value: unknown): asserts value is Partial<Orbit
   ) {
     throw new Error('Invalid game title music fade duration')
   }
+  if ('appUpdateAutoDownloadCommunity' in partial && typeof partial.appUpdateAutoDownloadCommunity !== 'boolean') {
+    throw new Error('Invalid community auto-download preference')
+  }
   if ('appUpdateAutoDownload' in partial && typeof partial.appUpdateAutoDownload !== 'boolean') {
     throw new Error('Invalid app update download preference')
   }
@@ -896,7 +899,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       backgroundServiceManager.prepareForAppUpdate(transactionId),
     recoverFromFailedInstall: (transactionId) =>
       backgroundServiceManager.recoverFromFailedAppUpdate(transactionId),
-    getAutoDownloadEnabled: () => settingsStore.store.appUpdateAutoDownload
+    getAutoDownloadEnabled: () => settingsStore.store.appUpdateAutoDownload,
+    getCommunityAutoDownloadOverride: () => settingsStore.store.appUpdateAutoDownloadCommunity
   })
   const appUpdateStartup = appUpdateService.start()
   backgroundServiceManager.start(appUpdateStartup)
@@ -1154,7 +1158,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if ('showAchievements' in partial && partial.showAchievements === true) {
       void libraryService.syncAchievements(true)
     }
-    if ('appUpdateAutoDownload' in partial) {
+    if ('appUpdateAutoDownload' in partial || 'appUpdateAutoDownloadCommunity' in partial) {
       appUpdateService.refreshPreferences()
     }
     if ('playstationRemotePlayPreference' in partial) {

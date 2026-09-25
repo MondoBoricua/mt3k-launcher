@@ -264,6 +264,14 @@ export function wmiCreateProcessScript(commandLine: string): string {
   return `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '${escaped}' }; if ($r.ReturnValue -ne 0) { exit (100 + [int]$r.ReturnValue) }; [Console]::Out.Write([string]$r.ProcessId); exit 0`
 }
 
+/** Community builds default to the manifest value (false: the prompt asks first) until the user flips the toggle. */
+export function communityAutoDownloadEnabled(
+  override: boolean | undefined,
+  manifestDefault: boolean
+): boolean {
+  return typeof override === 'boolean' ? override : manifestDefault
+}
+
 /** Asset names from before the MT3K Launcher rename. Releases still publish copies
  * under these names so builds up to 0.1.4-mt3k.5 can find their update. */
 export function legacyCommunityUpdateAssetName(

@@ -3625,7 +3625,10 @@ export function SettingsView(): JSX.Element {
                   onInstall={() => void installAppUpdate()}
                   onDefer={() => void deferAppUpdate()}
                   onAutoDownloadChange={(active) => {
-                    void window.api.settings.set({ appUpdateAutoDownload: active }).then(setSettings)
+                    const change = appUpdateSnapshot.community
+                      ? { appUpdateAutoDownloadCommunity: active }
+                      : { appUpdateAutoDownload: active }
+                    void window.api.settings.set(change).then(setSettings)
                   }}
                 />
                 <SystemUpdatesPanel
@@ -3815,7 +3818,9 @@ function OrbitUpdatesPanel({
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="max-w-3xl">
-          <p className="text-sm leading-relaxed text-muted">{t('appUpdate.settings.body')}</p>
+          <p className="text-sm leading-relaxed text-muted">
+            {t(snapshot.community ? 'appUpdate.settings.bodyCommunity' : 'appUpdate.settings.body')}
+          </p>
           <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white/35">
             <span>
               {t('appUpdate.settings.currentVersion', { version: snapshot.currentVersion })}
@@ -3923,7 +3928,8 @@ function OrbitUpdatesPanel({
           active={snapshot.autoDownloadEnabled}
           title={t('appUpdate.settings.autoDownloadTitle')}
           description={t('appUpdate.settings.autoDownloadBody')}
-          defaultActive
+          defaultActive={snapshot.autoDownloadDefault !== false}
+          defaultInactive={snapshot.autoDownloadDefault === false}
           disabled={unsupported}
           onChange={onAutoDownloadChange}
           t={t}
@@ -3955,7 +3961,13 @@ function OrbitUpdatesPanel({
                 ? t('appUpdate.settings.nextCheckPending')
                 : t('appUpdate.settings.releaseOnly')}
           </span>
-          <span>{t(`appUpdate.verification.${snapshot.verification}` as TranslationKey)}</span>
+          <span>
+            {t(
+              snapshot.community && snapshot.verification === 'verified'
+                ? 'appUpdate.verification.verifiedCommunity'
+                : (`appUpdate.verification.${snapshot.verification}` as TranslationKey)
+            )}
+          </span>
           <span>{t(`appUpdate.mode.${snapshot.installMode}` as TranslationKey)}</span>
         </div>
         {snapshot.releaseNotes && (
@@ -3967,7 +3979,7 @@ function OrbitUpdatesPanel({
 
       <div className="mt-4 flex items-start gap-3 text-xs leading-relaxed text-white/38">
         <ShieldCheck size={15} className="mt-0.5 shrink-0 text-emerald-300/70" />
-        <span>{t('appUpdate.settings.security')}</span>
+        <span>{t(snapshot.community ? 'appUpdate.settings.securityCommunity' : 'appUpdate.settings.security')}</span>
       </div>
     </SettingsSection>
   )

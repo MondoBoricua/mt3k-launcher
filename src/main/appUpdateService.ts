@@ -28,6 +28,7 @@ import {
   appUpdateDownloadRetryDelay,
   canRetryAppUpdateDownload,
   compareAppVersions,
+  communityAutoDownloadEnabled,
   communityPackageHelperCommandLine,
   compareCommunityVersions,
   isAllowedAppUpdateDownloadUrl,
@@ -74,6 +75,7 @@ interface AppUpdateServiceOptions {
   prepareForInstall: (transactionId: string) => Promise<void>
   recoverFromFailedInstall: (transactionId?: string) => Promise<void>
   getAutoDownloadEnabled: () => boolean
+  getCommunityAutoDownloadOverride?: () => boolean | undefined
 }
 
 type UpdaterCancellationToken = NonNullable<Parameters<AppUpdater['downloadUpdate']>[0]>
@@ -408,6 +410,8 @@ export class AppUpdateService {
       channel: this.manifest.channel,
       automaticChecksEnabled: supported,
       autoDownloadEnabled: supported && this.isAutoDownloadEnabled(),
+      community: this.community,
+      autoDownloadDefault: this.manifest.updates.autoDownload,
       checkIntervalHours: this.manifest.updates.checkIntervalHours,
       verification: this.defaultVerification(),
       canInstall: false,
@@ -575,6 +579,12 @@ export class AppUpdateService {
   }
 
   private isAutoDownloadEnabled(): boolean {
+    if (this.community) {
+      return communityAutoDownloadEnabled(
+        this.options.getCommunityAutoDownloadOverride?.(),
+        this.manifest.updates.autoDownload
+      )
+    }
     return this.manifest.updates.autoDownload && this.options.getAutoDownloadEnabled()
   }
 
