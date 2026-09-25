@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import {
   communityUpdateAssetName,
+  communityPackageHelperCommandLine,
   legacyCommunityUpdateAssetName,
+  wmiCreateProcessScript,
   compareCommunityVersions,
   parseCommunityAppUpdateRelease,
   parseGitHubAppUpdateRelease
@@ -106,5 +108,25 @@ const bothNames = parseCommunityAppUpdateRelease(
 )
 assert.equal(bothNames?.asset.name, 'MT3K-Launcher-Setup-0.1.4-mt3k.5-x64.exe', 'new asset name is preferred')
 assert.equal(bothNames?.asset.digest, 'd'.repeat(64))
+
+
+// Xbox Mode helper launch through WMI: exact quoting, no injection through paths.
+const commandLine = communityPackageHelperCommandLine({
+  powershellPath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  helperPath: 'C:\\Users\\Pana Gamer\\AppData\\Roaming\\ORBIT\\app-updates\\orbit-mt3k-package-update-x.ps1',
+  processId: 4242,
+  zipPath: 'C:\\Users\\Pana Gamer\\AppData\\Roaming\\ORBIT\\app-updates\\MT3K-Launcher-App-0.1.4-mt3k.13-x64.zip',
+  appDirectory: 'C:\\Users\\Pana Gamer\\AppData\\Local\\ORBIT-MT3K-XboxMode\\app',
+  packageRoot: 'C:\\Users\\Pana Gamer\\AppData\\Local\\ORBIT-MT3K-XboxMode',
+  logPath: 'C:\\Users\\Pana Gamer\\AppData\\Roaming\\ORBIT\\app-updates\\orbit-mt3k-package-update.log'
+})
+assert.match(commandLine, /^"C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\\Users\\Pana Gamer\\/u)
+assert.match(commandLine, / -ProcessId 4242 -ZipPath "[^"]+\.zip" -AppDir "[^"]+\\app" -PackageRoot "[^"]+XboxMode" -LogPath "[^"]+\.log"$/u)
+assert.throws(() => communityPackageHelperCommandLine({ powershellPath: 'p', helperPath: 'x" & calc', processId: 1, zipPath: 'z', appDirectory: 'a', packageRoot: 'r', logPath: 'l' }), /Unsafe path/u)
+assert.throws(() => communityPackageHelperCommandLine({ powershellPath: 'p', helperPath: 'h', processId: -1, zipPath: 'z', appDirectory: 'a', packageRoot: 'r', logPath: 'l' }), /Invalid process id/u)
+const script = wmiCreateProcessScript(`"C:\\O'Neil\\powershell.exe" -File "h"`)
+assert.ok(script.includes("CommandLine = '\"C:\\O''Neil\\powershell.exe\" -File \"h\"'"), 'single quotes are doubled inside the PowerShell literal')
+assert.ok(script.startsWith('$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create'))
+assert.ok(script.includes('[Console]::Out.Write([string]$r.ProcessId)'))
 
 console.log('MT3K community update policy checks passed')

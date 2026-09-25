@@ -2,6 +2,14 @@
 
 MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
 
+## 0.1.4-mt3k.13
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.12.
+
+### Arreglos
+
+- **Actualización dentro de la app en Xbox Mode.** Al pulsar *Update now*, el launcher descargaba y verificaba bien, pero el ayudante que cambia la carpeta de la app moría en cuanto la app se cerraba, sin llegar a escribir su log, y la app quedaba sin abrir hasta que caducaba la marca de instalación. Medido en una ROG Ally: cuando Xbox Mode arranca el launcher, su proceso vive dentro de un *job* de Windows y sus hijos directos se van con él. Ahora el ayudante se crea por WMI, fuera de ese job, y la app espera a tener su ID de proceso antes de cerrarse. Las versiones anteriores necesitan el instalador para llegar a esta.
+
 ## 0.1.4-mt3k.12
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.11.

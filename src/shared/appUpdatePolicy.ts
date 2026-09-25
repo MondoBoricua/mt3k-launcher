@@ -213,6 +213,57 @@ export function communityUpdateAssetName(version: string, kind: CommunityUpdateA
     : `MT3K-Launcher-Setup-${version}-x64.exe`
 }
 
+/**
+ * Command line handed to WMI (Win32_Process.Create) to start the Xbox Mode
+ * package update helper. Measured on a ROG Ally (2026-09-24): the launcher runs
+ * inside a Windows job object when Xbox Mode starts it, and a helper spawned
+ * directly from the app died with the app before writing its first log line.
+ * A process created by WMI belongs to the WMI provider host, not to that job.
+ */
+export function communityPackageHelperCommandLine(input: {
+  powershellPath: string
+  helperPath: string
+  processId: number
+  zipPath: string
+  appDirectory: string
+  packageRoot: string
+  logPath: string
+}): string {
+  const quote = (value: string): string => {
+    if (/["\r\n]/u.test(value)) throw new Error('Unsafe path for the update helper')
+    return `"${value}"`
+  }
+  if (!Number.isInteger(input.processId) || input.processId < 0) throw new Error('Invalid process id')
+  return [
+    quote(input.powershellPath),
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-WindowStyle',
+    'Hidden',
+    '-File',
+    quote(input.helperPath),
+    '-ProcessId',
+    String(input.processId),
+    '-ZipPath',
+    quote(input.zipPath),
+    '-AppDir',
+    quote(input.appDirectory),
+    '-PackageRoot',
+    quote(input.packageRoot),
+    '-LogPath',
+    quote(input.logPath)
+  ].join(' ')
+}
+
+/** PowerShell one-liner that asks WMI to create `commandLine` and prints the new process id. */
+export function wmiCreateProcessScript(commandLine: string): string {
+  const escaped = commandLine.replace(/'/gu, "''")
+  return `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '${escaped}' }; if ($r.ReturnValue -ne 0) { exit (100 + [int]$r.ReturnValue) }; [Console]::Out.Write([string]$r.ProcessId); exit 0`
+}
+
 /** Asset names from before the MT3K Launcher rename. Releases still publish copies
  * under these names so builds up to 0.1.4-mt3k.5 can find their update. */
 export function legacyCommunityUpdateAssetName(

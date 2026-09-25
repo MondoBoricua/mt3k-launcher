@@ -28,12 +28,14 @@ import {
   appUpdateDownloadRetryDelay,
   canRetryAppUpdateDownload,
   compareAppVersions,
+  communityPackageHelperCommandLine,
   compareCommunityVersions,
   isAllowedAppUpdateDownloadUrl,
   isValidAppUpdateContentRange,
   parseCommunityAppUpdateRelease,
   parseGitHubAppUpdateRelease,
   selectLatestBetaRelease,
+  wmiCreateProcessScript,
   type AppUpdateReleaseCandidate
 } from '@shared/appUpdatePolicy'
 import { fetchWithElectronNet } from './networkFetch'
@@ -100,6 +102,27 @@ function installMode(): AppUpdateInstallMode {
   if (!app.isPackaged) return 'development'
   if (process.platform !== 'win32') return 'unsupported'
   return process.windowsStore ? 'appx' : 'nsis'
+}
+
+/** Starts `commandLine` through WMI so it is not a child of this (job-bound) process; resolves the new pid. */
+function createProcessThroughWmi(powershellPath: string, commandLine: string): Promise<number> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(
+      powershellPath,
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', wmiCreateProcessScript(commandLine)],
+      { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }
+    )
+    let output = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString('utf8')
+    })
+    child.once('error', reject)
+    child.once('exit', (code) => {
+      const processId = Number.parseInt(output.trim(), 10)
+      if (code === 0 && Number.isInteger(processId) && processId > 0) resolvePromise(processId)
+      else reject(new Error(`WMI could not start the update helper (exit ${code})`))
+    })
+  })
 }
 
 function powershellExecutable(): string {
@@ -1476,31 +1499,32 @@ export class AppUpdateService {
       const logPath = this.updatePath('orbit-mt3k-package-update.log')
       await writeFile(helperPath, `\ufeff${COMMUNITY_PACKAGE_UPDATE_SCRIPT}`, 'utf8')
       executablePath = powershellExecutable()
-      child = spawn(
-        executablePath,
-        [
-          '-NoLogo',
-          '-NoProfile',
-          '-NonInteractive',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-WindowStyle',
-          'Hidden',
-          '-File',
-          helperPath,
-          '-ProcessId',
-          String(process.pid),
-          '-ZipPath',
-          updateFile,
-          '-AppDir',
-          this.communityPackage.appDirectory,
-          '-PackageRoot',
-          this.communityPackage.packageRoot,
-          '-LogPath',
-          logPath
-        ],
-        { detached: true, stdio: 'ignore', windowsHide: true }
-      )
+      // The Xbox Mode launcher lives in a job object; a direct child dies with the
+      // app, so WMI creates the helper outside the job and returns its process id.
+      const commandLine = communityPackageHelperCommandLine({
+        powershellPath: executablePath,
+        helperPath,
+        processId: process.pid,
+        zipPath: updateFile,
+        appDirectory: this.communityPackage.appDirectory,
+        packageRoot: this.communityPackage.packageRoot,
+        logPath
+      })
+      const helperProcessId = await createProcessThroughWmi(executablePath, commandLine)
+      this.installerLaunchConfirmed = true
+      await this.writePendingInstallConfirmation({
+        transactionId,
+        installerPath: executablePath,
+        processId: helperProcessId,
+        startedAt
+      }).catch((error) => {
+        console.warn(
+          '[app-update] community launch confirmation could not be persisted:',
+          error instanceof Error ? error.message : error
+        )
+      })
+      app.quit()
+      return
     } else {
       executablePath = updateFile
       child = spawn(updateFile, [], { detached: true, stdio: 'ignore' })
