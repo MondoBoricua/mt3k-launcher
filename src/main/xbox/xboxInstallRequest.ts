@@ -151,6 +151,7 @@ try {
   $operation = $manager.StartProductInstallAsync(
     $productId,
     '',
+    # clientId is a stable Store install attribution identifier, not a display label.
     'ORBIT',
     '',
     $options

@@ -122,7 +122,7 @@ function requestRawLine(pipeName: string, payload: string): Promise<string> {
 
 const expectedLoginItem = {
   name: 'ORBIT Background Service',
-  path: 'C:\\Program Files\\ORBIT\\ORBIT.exe',
+  path: 'C:\\Program Files\\ORBIT\\MT3KLauncher.exe',
   args: ['orbit-background-agent']
 }
 const enabledLoginItem = {
@@ -161,7 +161,7 @@ assert.deepEqual(
       executableWillLaunchAtLogin: true,
       launchItems: [
         { ...enabledLoginItem, scope: 'user' },
-        { ...enabledLoginItem, path: 'C:\\Old\\ORBIT.exe', scope: 'machine' }
+        { ...enabledLoginItem, path: 'C:\\Old\\MT3KLauncher.exe', scope: 'machine' }
       ]
     },
     expectedLoginItem
@@ -237,7 +237,7 @@ assert.deepEqual(
     {
       openAtLogin: true,
       executableWillLaunchAtLogin: true,
-      launchItems: [{ ...enabledLoginItem, path: 'C:\\Old\\ORBIT.exe' }]
+      launchItems: [{ ...enabledLoginItem, path: 'C:\\Old\\MT3KLauncher.exe' }]
     },
     expectedLoginItem
   ),
@@ -405,9 +405,9 @@ if (process.platform === 'win32') {
 assert.equal(ORBIT_BACKGROUND_SERVICE_LOGIN_ITEM_NAME, 'ORBIT Background Service')
 assert.equal(
   orbitBackgroundServiceLoginItemCommand(
-    'C:\\Program Files\\ORBIT\\ORBIT.exe'
+    'C:\\Program Files\\ORBIT\\MT3KLauncher.exe'
   ),
-  '"C:\\Program Files\\ORBIT\\ORBIT.exe" orbit-background-agent'
+  '"C:\\Program Files\\ORBIT\\MT3KLauncher.exe" orbit-background-agent'
 )
 const managerSource = readFileSync(
   new URL('../src/main/orbitBackgroundServiceManager.ts', import.meta.url),
@@ -484,14 +484,14 @@ assert.equal(
 )
 assert.equal(
   windowsCommandLineHasArgument(
-    '"C:\\Program Files\\ORBIT\\ORBIT.exe" ORBIT-BACKGROUND-AGENT',
+    '"C:\\Program Files\\ORBIT\\MT3KLauncher.exe" ORBIT-BACKGROUND-AGENT',
     ORBIT_AGENT_ARGUMENT
   ),
   true
 )
 assert.equal(
   windowsCommandLineHasArgument(
-    '"C:\\Program Files\\ORBIT\\ORBIT.exe" orbit-background-agent-shutdown',
+    '"C:\\Program Files\\ORBIT\\MT3KLauncher.exe" orbit-background-agent-shutdown',
     ORBIT_AGENT_ARGUMENT
   ),
   false
@@ -500,12 +500,12 @@ const processStartedAt = Date.now()
 assert.equal(
   windowsProcessIdentityMatches(
     {
-      executablePath: 'C:\\PROGRAM FILES\\ORBIT\\ORBIT.EXE',
-      commandLine: '"C:\\Program Files\\ORBIT\\ORBIT.exe" "orbit-background-agent"',
+      executablePath: 'C:\\PROGRAM FILES\\ORBIT\\MT3KLAUNCHER.EXE',
+      commandLine: '"C:\\Program Files\\ORBIT\\MT3KLauncher.exe" "orbit-background-agent"',
       startedAt: processStartedAt + 500
     },
     {
-      executablePath: 'C:\\Program Files\\ORBIT\\ORBIT.exe',
+      executablePath: 'C:\\Program Files\\ORBIT\\MT3KLauncher.exe',
       requiredArgument: ORBIT_AGENT_ARGUMENT,
       startedAt: processStartedAt
     }
@@ -515,12 +515,12 @@ assert.equal(
 assert.equal(
   windowsProcessIdentityMatches(
     {
-      executablePath: 'C:\\Program Files\\ORBIT\\ORBIT.exe',
-      commandLine: '"C:\\Program Files\\ORBIT\\ORBIT.exe" orbit-background-agent',
+      executablePath: 'C:\\Program Files\\ORBIT\\MT3KLauncher.exe',
+      commandLine: '"C:\\Program Files\\ORBIT\\MT3KLauncher.exe" orbit-background-agent',
       startedAt: processStartedAt + 60_000
     },
     {
-      executablePath: 'C:\\Program Files\\ORBIT\\ORBIT.exe',
+      executablePath: 'C:\\Program Files\\ORBIT\\MT3KLauncher.exe',
       requiredArgument: ORBIT_AGENT_ARGUMENT,
       startedAt: processStartedAt
     }

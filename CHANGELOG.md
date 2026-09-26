@@ -6,6 +6,13 @@ MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garci
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.15.
 
+### Mejoras
+
+- **Nombre del ejecutable.** La app ahora corre como `MT3KLauncher.exe`. El acceso directo sigue siendo **MT3K Launcher** y el instalador actualiza la instalación existente.
+- **Carpetas migradas automáticamente.** En el primer arranque, `%APPDATA%\ORBIT` pasa a `%APPDATA%\MT3K Launcher` y `Documents\ORBIT` a `Documents\MT3K Launcher`, incluyendo Documentos en OneDrive. Se conservan biblioteca, ajustes, almacenamiento del navegador, ROMs y emuladores, y se reescriben las rutas guardadas. Si no se puede mover una carpeta se conserva y se reintenta al próximo arranque; nunca se mezcla ni se borra una carpeta anterior cuando ambas existen. El log queda en `logs\mt3k-launcher.log` dentro de la carpeta de datos activa.
+- **Inicio de Windows y Xbox Mode.** Se renueva la entrada de inicio con el nombre y ejecutable nuevos. La identidad de Xbox Mode y la elección de home app se conservan; tras una actualización con el helper antiguo puede haber un reinicio automático para renovar el manifiesto.
+- **Compatibilidad temporal: retirar en mt3k.18.** Las versiones mt3k.16 y mt3k.17 incluyen un pequeño `ORBIT.exe` que abre `MT3KLauncher.exe` con los mismos argumentos y directorio de trabajo. Permite actualizar desde mt3k.15 y anteriores y arrancar registros antiguos de Xbox Mode. Se retira dos releases después de su introducción; no es una segunda instalación.
+
 ### Lossless Scaling (Configuración → Experiencia)
 
 - **Abre Lossless Scaling junto con el juego.** Viene **apagado**. Al activarlo, el launcher abre Lossless Scaling antes de lanzar un juego local (Steam, Epic, GOG, Xbox, EA, Ubisoft, retro o custom) y, si él lo abrió, lo cierra al terminar la sesión: primero pide cerrar su ventana y, si sigue vivo, lo termina a través del proceso que el propio launcher creó, nunca buscando un PID que Windows pudo haber reutilizado. El arranque de Lossless Scaling nunca retrasa el juego más de 3 segundos, y al salir del launcher se cierra la copia que abrió. Si ya lo tenías abierto, no lo toca ni al empezar ni al terminar. Idea de Ivan, suscriptor desde España.

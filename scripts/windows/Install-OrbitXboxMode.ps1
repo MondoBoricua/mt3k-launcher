@@ -28,9 +28,9 @@ $expectedGamingExtension = 'windows.gamingApp'
 $expectedGamingCapability = 'Microsoft.appCategory.gamingHome_8wekyb3d8bbwe'
 $minimumXboxModeVersion = [version]'10.0.26100.0'
 $diagnosticDirectory = if ($UpdateOnly) {
-  Join-Path $env:LOCALAPPDATA 'ORBIT\Logs'
+  Join-Path $env:LOCALAPPDATA 'MT3K Launcher\Logs'
 } else {
-  Join-Path $env:ProgramData 'ORBIT\Logs'
+  Join-Path $env:ProgramData 'MT3K Launcher\Logs'
 }
 $diagnosticPath = Join-Path $diagnosticDirectory $(if ($UpdateOnly) { 'xbox-mode-update-diagnostics.json' } else { 'xbox-mode-diagnostics.json' })
 
@@ -154,7 +154,7 @@ function Assert-OrbitManifestContract {
 
   $packageVersion = [version]$identity.GetAttribute('Version')
   $application = $Manifest.SelectSingleNode("/f:Package/f:Applications/f:Application[@Id='$expectedApplicationId']", $namespaceManager)
-  if (!$application -or $application.GetAttribute('Executable') -ne 'app\ORBIT.exe' -or $application.GetAttribute('EntryPoint') -ne 'Windows.FullTrustApplication') {
+  if (!$application -or $application.GetAttribute('Executable') -notin @('app\MT3KLauncher.exe', 'app\ORBIT.exe') -or $application.GetAttribute('EntryPoint') -ne 'Windows.FullTrustApplication') {
     throw 'The AppX does not contain the expected ORBIT full-trust application contract.'
   }
 
@@ -212,7 +212,6 @@ function Get-OrbitPackageContract {
       'AppxSignature.p7x',
       'CustomCapability.SCCD',
       'Public/registration.json',
-      'app/ORBIT.exe',
       'app/resources/release-manifest.json'
     )) {
       if (!$entries.ContainsKey($requiredEntry.ToLowerInvariant())) {
@@ -222,6 +221,8 @@ function Get-OrbitPackageContract {
 
     $manifest = ConvertTo-SafeXml (Read-ZipEntryText $entries['appxmanifest.xml'])
     $contract = Assert-OrbitManifestContract $manifest
+    $manifestExe = [string]@($manifest.Package.Applications.Application)[0].Executable
+    if (!$entries.ContainsKey($manifestExe.Replace('\', '/').ToLowerInvariant())) { throw 'Manifest executable is missing from archive' }
 
     $registration = Read-ZipEntryText $entries['public/registration.json'] | ConvertFrom-Json
     if (
@@ -347,7 +348,7 @@ function Assert-InstalledOrbitPackage {
   $manifest = ConvertTo-SafeXml (Get-Content -LiteralPath $manifestPath -Raw)
   $contract = Assert-OrbitManifestContract $manifest
   foreach ($requiredPath in @(
-    (Join-Path $Package.InstallLocation 'app\ORBIT.exe'),
+    (Join-Path $Package.InstallLocation ([string]@($manifest.Package.Applications.Application)[0].Executable)),
     (Join-Path $Package.InstallLocation 'Public\registration.json'),
     (Join-Path $Package.InstallLocation 'CustomCapability.SCCD')
   )) {

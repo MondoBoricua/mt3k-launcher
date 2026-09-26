@@ -89,7 +89,9 @@
     "install:xbox": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/Install-OrbitXboxMode.ps1",
     "cert:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/New-OrbitDevCertificate.ps1",
     "verify:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/Verify-OrbitRelease.ps1",
-    "verify:xbox": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/Verify-OrbitXboxPackage.ps1"
+    "verify:xbox": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/Verify-OrbitXboxPackage.ps1",
+    "verify:rename-migration": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-rename-migration.ts",
+    "verify:xbox-mode-startup": "node --experimental-strip-types scripts/verify-xbox-mode-startup.ts"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",

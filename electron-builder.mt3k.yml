@@ -5,9 +5,7 @@
 # here; the installer ships resources/xbox-mode and offers a Developer Mode
 # registration when setup finishes (see build/installer.nsh).
 #
-# Compatibility with installs from before the rename is deliberate:
-# appId, executableName (ORBIT.exe) and the data folder (%APPDATA%\ORBIT, pinned
-# in src/main/legacyUserDataPath.ts) keep their ORBIT-era values.
+# Keep appId for in-place NSIS upgrades; migrate folders at runtime.
 #   npx electron-builder --win nsis --x64 --config electron-builder.mt3k.yml --publish never
 appId: com.orbit.launcher
 productName: MT3K Launcher
@@ -54,6 +52,8 @@ extraResources:
   - from: scripts/windows/Register-Mt3kLauncherXboxMode.ps1
     to: xbox-mode/Register-Mt3kLauncherXboxMode.ps1
 
+afterPack: scripts/mt3k/include-legacy-stub.cjs
+
 asar: true
 asarUnpack:
   - node_modules/7zip-bin/**/*
@@ -67,8 +67,7 @@ win:
       arch:
         - x64
   icon: build/icon.ico
-  # Kept as ORBIT.exe: earlier builds, their update helper and the Xbox Mode manifest launch this name.
-  executableName: ORBIT
+  executableName: MT3KLauncher
   requestedExecutionLevel: asInvoker
   legalTrademarks: MT3K Launcher is a community gaming launcher based on ORBIT.
 

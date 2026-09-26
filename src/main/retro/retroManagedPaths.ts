@@ -1,9 +1,11 @@
+import { existsSync } from 'node:fs'
+import { documentsRoot } from '../renameMigrationPolicy'
 import { app } from 'electron'
 import { join } from 'node:path'
 import type { RetroSystemId } from '@shared/ipc'
 
 export function managedEmulatorDirectory(emulatorId: string): string {
-  return join(app.getPath('documents'), 'ORBIT', 'Emulators', emulatorId)
+  return join(documentsRoot(app.getPath('documents'), existsSync), 'Emulators', emulatorId)
 }
 
 function legacyManagedEmulatorDirectory(emulatorId: string): string {
@@ -19,7 +21,7 @@ export function managedRetroCoreDirectories(): string[] {
 }
 
 export function managedRomRootDirectory(): string {
-  return join(app.getPath('documents'), 'ORBIT', 'ROMs')
+  return join(documentsRoot(app.getPath('documents'), existsSync), 'ROMs')
 }
 
 export function managedRomSystemDirectory(systemId: RetroSystemId): string {

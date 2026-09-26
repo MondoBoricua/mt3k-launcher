@@ -8,18 +8,27 @@
 !macroend
 
 !macro orbitStopBackgroundService
+  Push $R6
   ; The executable can legitimately be absent after quarantine or a partially
   ; completed repair. In that case electron-builder's normal cleanup still runs.
-  IfFileExists "$INSTDIR\${PRODUCT_FILENAME}.exe" orbit_background_shutdown_start orbit_background_shutdown_done
+  ; Never ExecWait the transitional stub when the real launcher is available.
+  StrCpy $R6 "$INSTDIR\MT3KLauncher.exe"
+  IfFileExists "$R6" orbit_background_shutdown_start
+  StrCpy $R6 "$INSTDIR\${PRODUCT_FILENAME}.exe"
+  IfFileExists "$R6" orbit_background_shutdown_start
+  ; Before an upgrade, only the old executable may be installed.
+  StrCpy $R6 "$INSTDIR\ORBIT.exe"
+  IfFileExists "$R6" orbit_background_shutdown_start orbit_background_shutdown_done
   orbit_background_shutdown_start:
     ClearErrors
-    ExecWait '"$INSTDIR\${PRODUCT_FILENAME}.exe" orbit-background-agent-shutdown' $0
+    ExecWait '"$R6" orbit-background-agent-shutdown' $0
     IfErrors orbit_background_shutdown_failed
     StrCmp $0 0 orbit_background_shutdown_done
   orbit_background_shutdown_failed:
     SetErrorLevel 2
     Abort
   orbit_background_shutdown_done:
+  Pop $R6
 !macroend
 
 !macro orbitXboxModePowerShell
@@ -101,6 +110,7 @@
 !macroend
 
 !macro customUnInstall
+  Delete "$INSTDIR\ORBIT.exe" ; Transitional stub is also removed on uninstall.
   ${ifNot} ${isUpdated}
     ; Only remove an autostart value that points at this exact installation.
     ; A second ORBIT channel or moved install using the same value name is left intact.
@@ -110,6 +120,11 @@
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "ORBIT Background Service"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "ORBIT Background Service"
     orbit_background_cleanup_done:
+    ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "MT3K Launcher"
+    StrCmp $0 '"$INSTDIR\${PRODUCT_FILENAME}.exe" --orbit-background' 0 mt3k_startup_cleanup_done
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "MT3K Launcher"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "MT3K Launcher"
+    mt3k_startup_cleanup_done:
     ; Remove the Xbox Mode registration this installer staged. Registrations
     ; staged elsewhere (by hand, with -Stage) are left alone.
     Push $R8
