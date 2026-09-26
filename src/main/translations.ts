@@ -58,6 +58,9 @@ export const mainTranslations = {
     "Use this folder": "Use this folder",
     "The selected folder cannot be used for save backups.": "The selected folder cannot be used for save backups.",
     "The selected folder is not writable.": "The selected folder is not writable.",
+    "MT3K Launcher · Select LosslessScaling.exe": "MT3K Launcher · Select LosslessScaling.exe",
+    "Use Lossless Scaling": "Use Lossless Scaling",
+    "Select the LosslessScaling.exe file from your Lossless Scaling folder.": "Select the LosslessScaling.exe file from your Lossless Scaling folder.",
     "The game name must be between 1 and 120 characters.": "The game name must be between 1 and 120 characters."
   },
   "de": {
@@ -117,6 +120,9 @@ export const mainTranslations = {
     "Use this folder": "Diesen Ordner verwenden",
     "The selected folder cannot be used for save backups.": "Der gewählte Ordner kann nicht für Savegame-Backups verwendet werden.",
     "The selected folder is not writable.": "Der gewählte Ordner ist nicht beschreibbar.",
+    "MT3K Launcher · Select LosslessScaling.exe": "MT3K Launcher · LosslessScaling.exe auswählen",
+    "Use Lossless Scaling": "Lossless Scaling verwenden",
+    "Select the LosslessScaling.exe file from your Lossless Scaling folder.": "Wähle die Datei LosslessScaling.exe aus deinem Lossless-Scaling-Ordner.",
     "The game name must be between 1 and 120 characters.": "Der Spielname muss zwischen 1 und 120 Zeichen lang sein."
   },
   "es": {
@@ -176,6 +182,9 @@ export const mainTranslations = {
     "Use this folder": "Usar esta carpeta",
     "The selected folder cannot be used for save backups.": "La carpeta seleccionada no puede usarse para copias de partidas.",
     "The selected folder is not writable.": "La carpeta seleccionada no permite escritura.",
+    "MT3K Launcher · Select LosslessScaling.exe": "MT3K Launcher · Seleccionar LosslessScaling.exe",
+    "Use Lossless Scaling": "Usar Lossless Scaling",
+    "Select the LosslessScaling.exe file from your Lossless Scaling folder.": "Selecciona el archivo LosslessScaling.exe de tu carpeta de Lossless Scaling.",
     "The game name must be between 1 and 120 characters.": "El nombre del juego debe tener entre 1 y 120 caracteres."
   },
   "ru": {
@@ -235,6 +244,9 @@ export const mainTranslations = {
     "Use this folder": "Использовать эту папку",
     "The selected folder cannot be used for save backups.": "Выбранную папку нельзя использовать для резервных копий сохранений.",
     "The selected folder is not writable.": "В выбранную папку нельзя записывать.",
+    "MT3K Launcher · Select LosslessScaling.exe": "MT3K Launcher · Выбор LosslessScaling.exe",
+    "Use Lossless Scaling": "Использовать Lossless Scaling",
+    "Select the LosslessScaling.exe file from your Lossless Scaling folder.": "Выберите файл LosslessScaling.exe в папке Lossless Scaling.",
     "The game name must be between 1 and 120 characters.": "Название игры должно содержать от 1 до 120 символов."
   }
 } as const satisfies Record<Language, Record<string, string>>

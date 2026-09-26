@@ -32,6 +32,9 @@ const defaults: OrbitSettings = {
   attractModeIdleMinutes: 5,
   captureShelfEnabled: false,
   launchProfilesEnabled: false,
+  losslessScalingEnabled: false,
+  losslessScalingDefaultForGames: false,
+  losslessScalingCloseOnExit: true,
   backgroundModeEnabled: true,
   startWithWindows: false,
   theme: 'midnight',
@@ -120,6 +123,11 @@ export function publicSettingsSnapshot(): OrbitSettings {
   snapshot.homeLayout = isHomeLayoutId(snapshot.homeLayout) ? snapshot.homeLayout : 'orbit'
   snapshot.attractModeEnabled = snapshot.attractModeEnabled === true
   snapshot.captureShelfEnabled = snapshot.captureShelfEnabled === true
+  // Lossless Scaling is Windows-only: elsewhere the feature reads as off everywhere.
+  snapshot.losslessScalingEnabled =
+    process.platform === 'win32' && snapshot.losslessScalingEnabled === true
+  snapshot.losslessScalingDefaultForGames = snapshot.losslessScalingDefaultForGames === true
+  snapshot.losslessScalingCloseOnExit = snapshot.losslessScalingCloseOnExit !== false
   snapshot.attractModeIdleMinutes = normalizeAttractIdleMinutes(snapshot.attractModeIdleMinutes)
   snapshot.language = normalizeLanguage(snapshot.language)
   snapshot.textScale = normalizeTextScale(snapshot.textScale)

@@ -100,6 +100,11 @@ import {
   type XboxLoginStatus
 } from '@shared/ipc'
 import type {
+  LosslessScalingEvent,
+  LosslessScalingGameMode,
+  LosslessScalingStatus
+} from '@shared/losslessScalingPolicy'
+import type {
   RetroArchCommandName,
   RetroArchCommandResult,
   RetroArchStatusSnapshot
@@ -129,6 +134,19 @@ const orbitApi = {
       const listener = (_event: Electron.IpcRendererEvent, event: LaunchProfileEvent): void => callback(event)
       ipcRenderer.on(IPC.launchProfilesEvent, listener)
       return () => ipcRenderer.removeListener(IPC.launchProfilesEvent, listener)
+    }
+  },
+  losslessScaling: {
+    status: (): Promise<LosslessScalingStatus> => ipcRenderer.invoke(IPC.losslessScalingStatus),
+    choosePath: (): Promise<LosslessScalingStatus | null> => ipcRenderer.invoke(IPC.losslessScalingChoosePath),
+    clearPath: (): Promise<LosslessScalingStatus> => ipcRenderer.invoke(IPC.losslessScalingClearPath),
+    getGameMode: (gameId: string): Promise<LosslessScalingGameMode> => ipcRenderer.invoke(IPC.losslessScalingGameGet, gameId),
+    setGameMode: (gameId: string, mode: LosslessScalingGameMode): Promise<LosslessScalingGameMode> =>
+      ipcRenderer.invoke(IPC.losslessScalingGameSet, gameId, mode),
+    onEvent: (callback: (event: LosslessScalingEvent) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, event: LosslessScalingEvent): void => callback(event)
+      ipcRenderer.on(IPC.losslessScalingEvent, listener)
+      return () => ipcRenderer.removeListener(IPC.losslessScalingEvent, listener)
     }
   },
   settings: {

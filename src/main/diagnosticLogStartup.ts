@@ -59,7 +59,7 @@ void app.whenReady().then(async () => {
   try {
     const { settingsStore } = await import('./settingsStore')
     const toggles = ['launchProfilesEnabled', 'retroPauseMenuEnabled', 'attractModeEnabled',
-      'captureShelfEnabled', 'guestModeEnabled'] as const
+      'captureShelfEnabled', 'guestModeEnabled', 'losslessScalingEnabled'] as const
     await diagnosticLog.write('info', `[startup] features ${toggles.map(key => `${key}=${settingsStore.get(key) === true}`).join(' ')}`)
   } catch (error) {
     await diagnosticLog.write('warn', `[startup] settings unavailable ${describe(error)}`)

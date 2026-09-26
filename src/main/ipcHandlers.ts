@@ -3,6 +3,8 @@ import { diagnosticLog, diagnosticLogDirectory } from './diagnosticLogStartup'
 import { listCaptures, openCapture, openCapturesFolder } from './captures/captureLibrary'
 import { ATTRACT_IDLE_MINUTES } from '@shared/attractModePolicy'
 import { launchProfileService } from './launchProfileService'
+import { losslessScalingService } from './losslessScalingService'
+import { isLosslessScalingEligibleGame } from '@shared/losslessScalingPolicy'
 import { restoreRetroArchNetworkCommandsOnDisable } from './retro/retroArchNetworkConfig'
 import { isLanguage } from '@shared/language'
 import { app, clipboard, ipcMain, shell, type BrowserWindow } from 'electron'
@@ -393,6 +395,15 @@ function validateSettingsPartial(value: unknown): asserts value is Partial<Orbit
   }
   if ('saveBackupDirectory' in partial && partial.saveBackupDirectory !== undefined) {
     throw new Error('Use the save backup directory picker')
+  }
+  if ('losslessScalingPath' in partial) {
+    throw new Error('Use the Lossless Scaling file picker')
+  }
+  for (const key of ['losslessScalingEnabled', 'losslessScalingDefaultForGames', 'losslessScalingCloseOnExit'] as const) {
+    if (key in partial && typeof partial[key] !== 'boolean') throw new Error(`Invalid ${key}`)
+  }
+  if (partial.losslessScalingEnabled === true && process.platform !== 'win32') {
+    throw new Error('Lossless Scaling is only available on Windows')
   }
   if ('retroRomDirectories' in partial) {
     if (
@@ -792,6 +803,46 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       throw new Error('Invalid display request sender')
     }
   }
+  losslessScalingService.initialize((event) => {
+    if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(IPC.losslessScalingEvent, event)
+  })
+  const assertMainFrame = (event: Electron.IpcMainInvokeEvent): void => {
+    if (event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+      throw new Error('Invalid Lossless Scaling request sender')
+    }
+  }
+  const losslessScalingGameId = (value: unknown): string => {
+    const gameId = profileGameId(value)
+    const game = libraryService.getGame(gameId)
+    if (!game || !isLosslessScalingEligibleGame(game)) throw new Error('Lossless Scaling is only available for local games')
+    return gameId
+  }
+  ipcMain.handle(IPC.losslessScalingStatus, (event) => {
+    assertMainFrame(event)
+    return losslessScalingService.status()
+  })
+  ipcMain.handle(IPC.losslessScalingChoosePath, (event) => {
+    assertMainFrame(event)
+    guestModeService.assertActionAllowed('change-settings')
+    return losslessScalingService.choosePath(mainWindow)
+  })
+  ipcMain.handle(IPC.losslessScalingClearPath, (event) => {
+    assertMainFrame(event)
+    guestModeService.assertActionAllowed('change-settings')
+    return losslessScalingService.clearPath()
+  })
+  ipcMain.handle(IPC.losslessScalingGameGet, (event, id: unknown) => {
+    assertMainFrame(event)
+    return losslessScalingService.getGameMode(losslessScalingGameId(id))
+  })
+  ipcMain.handle(IPC.losslessScalingGameSet, (event, id: unknown, mode: unknown) => {
+    assertMainFrame(event)
+    guestModeService.assertActionAllowed('edit-metadata')
+    if (settingsStore.get('losslessScalingEnabled') !== true || process.platform !== 'win32') {
+      throw new Error('Lossless Scaling disabled')
+    }
+    return losslessScalingService.setGameMode(losslessScalingGameId(id), mode)
+  })
   ipcMain.handle(IPC.launchProfilesPending, (event) => {
     assertProfileSender(event)
     return launchProfileService.hasPendingRestore()
@@ -849,6 +900,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   const gameSessionManager = new GameSessionManager(mainWindow, {
     beforeLocalLaunch: (game) => launchProfileService.beforeLaunch(game.id),
     restoreLaunchProfile: () => launchProfileService.restore(),
+    startLaunchCompanions: (game) => losslessScalingService.beforeLaunch(game),
+    stopLaunchCompanions: () => void losslessScalingService.sessionEnded(),
     getLibraryGames: () => libraryService.getSnapshot().games,
     getGeForceNowMatches: () => currentGeForceNowSnapshot().matches,
     onGameConfirmed: (game, detectedAt, source) => libraryService.markGameStarted(game.id, detectedAt, source),

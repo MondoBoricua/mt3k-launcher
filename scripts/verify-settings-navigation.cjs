@@ -68,6 +68,7 @@ const responses = {
   'system.status.get': { platform: 'windows', state: 'ready', checkedAt: 0, battery: { present: false, charging: false, powerSource: 'ac' }, network: { connected: false, type: 'unknown' }, bluetooth: { available: false, enabled: false } },
   'retroAchievements.credentials.get': { configured: false },
   'launchProfiles.pending': null,
+  'losslessScaling.status': { supported: true, state: 'missing', source: 'none' },
   'settings.getSaveBackupDirectory': { configuredPath: undefined, effectivePath: 'C:\\Users\\test\\AppData\\Roaming\\ORBIT\\save-backups', isDefault: true },
   'steam.credentials.get': { configured: false },
   'playstation.refreshRemotePlayStatus': { apps: [], selectedApp: null },
@@ -1084,7 +1085,7 @@ async function main() {
     return
   }
   assert.deepEqual((await state()).expanded, [])
-  assert.equal((await state()).headers.length, 9, `experience headers: ${(await state()).headers.join(", ")}`)
+  assert.equal((await state()).headers.length, 10, `experience headers: ${(await state()).headers.join(", ")}`)
   await key('ArrowDown')
   assert.equal((await state()).focused, 'attract-mode', 'Down enters the first topic from the category')
   await key('ArrowDown')
@@ -1150,7 +1151,7 @@ async function main() {
       await js(`settingsQA.setPage('${page}')`)
       await settle()
       await waitFor('settingsQA.state().headers.length > 0')
-      assert.equal((await state()).headers.length, { appearance: 8, experience: 9, plus: 1, libraries: 6, hardware: 3, updates: 3, system: 4 }[page], `${page} headers: ${(await state()).headers.join(", ")}`)
+      assert.equal((await state()).headers.length, { appearance: 8, experience: 10, plus: 1, libraries: 6, hardware: 3, updates: 3, system: 4 }[page], `${page} headers: ${(await state()).headers.join(", ")}`)
       assert.equal((await state()).overflow, false, `${page} has no horizontal overflow`)
       for (const id of (await state()).headers) {
         await open(id)
@@ -1172,6 +1173,28 @@ async function main() {
   await click('store-region')
   await click('retro-achievements')
   assert.equal(await js('document.querySelector("#settings-retro-achievements-panel input").value'), 'Draft player')
+  // Lossless Scaling: only the switch while off; defaults, close option and detection once on.
+  await js('settingsQA.setPage("experience"); settingsQA.setLanguage("en")')
+  await settle()
+  await waitFor('settingsQA.state().headers.includes("lossless-scaling")')
+  await click('lossless-scaling')
+  const losslessToggles = () => js('[...document.querySelectorAll("#settings-lossless-scaling-panel [data-setting-toggle]")].map(e => e.dataset.settingToggle)')
+  assert.deepEqual(await losslessToggles(), ['losslessScalingEnabled'], 'Only the main switch while Lossless Scaling is off')
+  assert.match(await js('document.getElementById("settings-lossless-scaling-panel").textContent'), /paid Steam app/, 'The ownership hint is visible')
+  await js('document.querySelector("[data-setting-toggle=losslessScalingEnabled]").click()')
+  await settle()
+  assert.deepEqual(await losslessToggles(), ['losslessScalingEnabled', 'losslessScalingDefaultForGames', 'losslessScalingCloseOnExit'])
+  assert.equal(await js('document.querySelector("[data-setting-toggle=losslessScalingDefaultForGames]").getAttribute("aria-pressed")'), 'false', 'New games stay off by default')
+  assert.equal(await js('document.querySelector("[data-setting-toggle=losslessScalingCloseOnExit]").getAttribute("aria-pressed")'), 'true', 'Closing what the launcher started is on by default')
+  assert.match(await js('document.getElementById("settings-lossless-scaling-panel").textContent'), /LosslessScaling\.exe was not found/)
+  assert.equal((await state()).hiddenFocusable, 0)
+  await js('document.getElementById("settings-lossless-scaling-panel").scrollIntoView({ block: "center" })')
+  await settle()
+  await window.webContents.capturePage().then((image) => fs.writeFile(path.join(output, 'lossless-scaling-1920-en.png'), image.toPNG()))
+  await js('document.querySelector("[data-setting-toggle=losslessScalingEnabled]").click()')
+  await settle()
+  assert.deepEqual(await losslessToggles(), ['losslessScalingEnabled'], 'Turning it off hides the options again')
+  await key('Escape')
   await js('settingsQA.setPage("experience"); settingsQA.setLanguage("de")')
   await settle()
   await waitFor('settingsQA.state().headers.includes("sound")')
@@ -1197,7 +1220,7 @@ async function main() {
   await key('Escape')
   assert.equal((await state()).exited, 1, 'Back exits normally once the topic is closed')
   assert.deepEqual(await js('settingsQA.errors'), [])
-  console.log(`Settings: ${experienceOnly ? 'Experience topics' : 'all 28 topics'}, exclusive expansion, saving, draft retention, hidden focus, keyboard/controller/category/back navigation, and 720p/1080p layout passed.`)
+  console.log(`Settings: ${experienceOnly ? 'Experience topics' : 'all 29 topics'}, exclusive expansion, saving, draft retention, hidden focus, keyboard/controller/category/back navigation, and 720p/1080p layout passed.`)
   window.destroy()
 }
 

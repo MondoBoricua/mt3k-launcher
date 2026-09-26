@@ -40,6 +40,7 @@ Empezó como **ORBIT MT3K Edition**, un fork de ORBIT 0.1.4. En septiembre de 20
 | **Modo vitrina y capturas**: arte de tus juegos cuando el launcher está inactivo, y las capturas de Game Bar dentro de cada juego. Apagados por defecto. | 0.1.4-mt3k.10 |
 | **Modo invitado**: PIN con el mando, solo los juegos de una colección, sin tienda ni ajustes. Apagado por defecto. | 0.1.4-mt3k.10 |
 | **Log de diagnóstico** en `%APPDATA%\ORBIT\logs`, con botón en Acerca de. Si algo falla, ese archivo es lo que se manda. | 0.1.4-mt3k.11 |
+| **Lossless Scaling con tus juegos** (sugerido por Ivan, suscriptor del canal): abre Lossless Scaling al lanzar un juego local y lo cierra al terminar si lo abrió el launcher, con elección por juego. Necesitas tener Lossless Scaling de Steam; el escalado se configura dentro de él. Apagado por defecto. | 0.1.4-mt3k.16 |
 
 El detalle por versión está en [CHANGELOG.md](CHANGELOG.md).
 
@@ -139,6 +140,7 @@ MT3K Launcher es software libre bajo la [GNU GPL v3](LICENSE), con la [excepció
 
 - **ORBIT**, la base de este proyecto: © Luis Garcia. [Sitio oficial](https://www.getorbitlauncher.com/).
 - **MT3K Launcher**, los cambios y el nombre nuevo: © MT3K.
+- **Ivan (España)**: idea del acompañante de Lossless Scaling.
 - **Terceros**: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---

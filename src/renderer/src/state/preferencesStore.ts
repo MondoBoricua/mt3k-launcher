@@ -83,6 +83,9 @@ interface PreferencesState {
   captureShelfEnabled: boolean
   setShowcaseSettings: (partial: Partial<Pick<OrbitSettings, 'attractModeEnabled' | 'attractModeIdleMinutes' | 'captureShelfEnabled'>>) => Promise<void>
   launchProfilesEnabled: boolean
+  /** Windows-only; the main process reports false elsewhere. */
+  losslessScalingEnabled: boolean
+  losslessScalingDefaultForGames: boolean
   theme: ThemeId
   cornerStyle: CornerStyleId
   profileAvatar: ProfileAvatarId
@@ -543,6 +546,8 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
   notificationPosition: 'top-right',
   notificationMotion: 'slide',
   launchProfilesEnabled: false,
+  losslessScalingEnabled: false,
+  losslessScalingDefaultForGames: false,
   hardwareControlEnabled: false,
   guestModeEnabled: false,
   hardwareControlButton: 'menu',
@@ -694,6 +699,8 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
       notificationPosition: settings.notificationPosition ?? 'top-right',
       notificationMotion: settings.notificationMotion ?? 'slide',
       launchProfilesEnabled: settings.launchProfilesEnabled === true,
+      losslessScalingEnabled: settings.losslessScalingEnabled === true,
+      losslessScalingDefaultForGames: settings.losslessScalingDefaultForGames === true,
       hardwareControlEnabled: settings.hardwareControlEnabled ?? false,
       guestModeEnabled: settings.guestModeEnabled === true,
       hardwareControlButton: settings.hardwareControlButton ?? 'menu',

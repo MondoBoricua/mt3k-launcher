@@ -1,4 +1,5 @@
 import { LaunchProfileEditor } from './LaunchProfileEditor'
+import { LosslessScalingGameControl } from './LosslessScalingGameControl'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -737,6 +738,7 @@ export function GameMetadataEditor({ game, onClose }: Props): JSX.Element {
                   </p>
                 )}
                 {launchProfilesEnabled && <LaunchProfileEditor gameId={game.id} />}
+                <LosslessScalingGameControl game={game} />
                 <Field label={t('metadata.name')} manual={Boolean(game.nameOverride)}>
                   <input data-focusable data-metadata-field="name" aria-invalid={invalid('name')} autoComplete="off" maxLength={160} value={draft.name} onChange={(event) => set('name', event.target.value)} className={inputClass('name')} />
                 </Field>

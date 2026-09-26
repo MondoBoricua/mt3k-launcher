@@ -9,6 +9,7 @@
   "scripts": {
     "verify:diagnostic-log": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-diagnostic-log.ts",
     "verify:launch-profiles": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-launch-profiles.ts",
+    "verify:lossless-scaling": "node --experimental-strip-types --import ./scripts/register-typescript-resolver.mjs scripts/verify-lossless-scaling.ts",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",

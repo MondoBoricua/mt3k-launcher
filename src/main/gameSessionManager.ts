@@ -96,6 +96,10 @@ export interface CompletedGameSessionResult {
 export interface GameSessionCallbacks {
   beforeLocalLaunch?: (game: LibraryGame) => Promise<boolean>
   restoreLaunchProfile?: () => void
+  /** Companion apps (Lossless Scaling) that start with a local game. Must never reject. */
+  startLaunchCompanions?: (game: LibraryGame) => Promise<void>
+  /** Session ended (complete, error or cancelled): close companions the launcher started. */
+  stopLaunchCompanions?: () => void
   getLibraryGames?: () => readonly LibraryGame[]
   getGeForceNowMatches?: () => readonly GeForceNowLibraryMatch[]
   onGameConfirmed?: (game: LibraryGame, detectedAt: number, source?: 'local' | 'geforce-now') => void | Promise<void>
@@ -1211,6 +1215,11 @@ export class GameSessionManager extends EventEmitter {
         this.update({ phase: 'idle' })
         return
       }
+      await this.callbacks.startLaunchCompanions?.(game)
+      if (token !== this.activeToken) {
+        this.callbacks.stopLaunchCompanions?.()
+        return
+      }
       const receipt = await launchGame(game)
       if (receipt.spawnedGamePid) directlySpawnedGamePids.add(receipt.spawnedGamePid)
       // Guardamos el pid desde el arranque por si el handoff todavía no vio la ventana.
@@ -1599,6 +1608,7 @@ export class GameSessionManager extends EventEmitter {
     this.geForceNowLaunchIntent = undefined
     this.geForceNowSessionIdentity = undefined
     this.callbacks.restoreLaunchProfile?.()
+    this.callbacks.stopLaunchCompanions?.()
     this.status = { phase: 'idle' }
     this.removeAllListeners()
     return completed
@@ -2102,6 +2112,7 @@ export class GameSessionManager extends EventEmitter {
     // idle cierra la sesión bien; error también, por si el splash no llega a idle.
     if (shouldRestoreLaunchProfile(status.phase) && status.phase !== previous.phase) {
       this.callbacks.restoreLaunchProfile?.()
+      this.callbacks.stopLaunchCompanions?.()
     }
     if (status.phase === 'idle') {
       this.activeGame = null

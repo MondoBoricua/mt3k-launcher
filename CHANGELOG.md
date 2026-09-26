@@ -2,6 +2,17 @@
 
 MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
 
+## 0.1.4-mt3k.16
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.15.
+
+### Lossless Scaling (Configuración → Experiencia)
+
+- **Abre Lossless Scaling junto con el juego.** Viene **apagado**. Al activarlo, el launcher abre Lossless Scaling antes de lanzar un juego local (Steam, Epic, GOG, Xbox, EA, Ubisoft, retro o custom) y, si él lo abrió, lo cierra al terminar la sesión: primero pide cerrar la ventana y, si sigue vivo, lo termina por su PID. Si ya lo tenías abierto, no lo toca ni al empezar ni al terminar. Idea de Ivan, suscriptor desde España.
+- **Dos opciones más**: usarlo por defecto en los juegos (apagado) y cerrarlo al terminar el juego (encendido). Cada juego puede elegir *predeterminado*, *siempre* o *nunca* desde el editor del juego, pestaña *Overview*. Los juegos de tienda, Remote Play y GeForce NOW nunca lo usan.
+- **Detección.** Busca `LosslessScaling.exe` en tus bibliotecas de Steam (app 993090) y permite elegir el archivo a mano; solo se acepta un archivo que exista y se llame `LosslessScaling.exe`. Si no está al lanzar, el juego abre igual, queda una línea en el log de diagnóstico y sale un aviso.
+- **Qué no hace.** Lossless Scaling es una app de pago de THS en Steam y cada usuario necesita la suya. El launcher solo la abre y la cierra: el escalado se configura dentro de Lossless Scaling (un perfil del juego con *Auto scale* o su atajo). No inyecta nada, no pulsa atajos ni escribe en el registro. Solo en Windows.
+
 ## 0.1.4-mt3k.15
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.14.

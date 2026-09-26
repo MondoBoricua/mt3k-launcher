@@ -478,6 +478,14 @@ export interface OrbitSettings {
   attractModeIdleMinutes?: number
   captureShelfEnabled?: boolean
   launchProfilesEnabled?: boolean
+  /** Start Lossless Scaling with local games (Windows only). Off by default. */
+  losslessScalingEnabled?: boolean
+  /** Newly launched local games use Lossless Scaling unless the game says otherwise. */
+  losslessScalingDefaultForGames?: boolean
+  /** Close Lossless Scaling at session end when the launcher started it. */
+  losslessScalingCloseOnExit?: boolean
+  /** Manual LosslessScaling.exe override; only the main-process file picker may set it. */
+  losslessScalingPath?: string
   backgroundModeEnabled?: boolean
   startWithWindows?: boolean
   theme: ThemeId
@@ -1854,6 +1862,12 @@ export const IPC = {
   launchProfilesPending: "launchProfiles:pending",
   launchProfilesDiscard: "launchProfiles:discard",
   launchProfilesEvent: "launchProfiles:event",
+  losslessScalingStatus: 'losslessScaling:status',
+  losslessScalingChoosePath: 'losslessScaling:choose-path',
+  losslessScalingClearPath: 'losslessScaling:clear-path',
+  losslessScalingGameGet: 'losslessScaling:game:get',
+  losslessScalingGameSet: 'losslessScaling:game:set',
+  losslessScalingEvent: 'losslessScaling:event',
   launchProfilesError: "launchProfiles:error",
   steamLoginStart: 'steam:login:start',
   steamLoginCancel: 'steam:login:cancel',
