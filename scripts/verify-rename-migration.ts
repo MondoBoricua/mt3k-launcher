@@ -154,6 +154,90 @@ try {
     assert.equal(documentsRoot(docs, existsSync), kind === 'stale' ? legacy : modern)
     assert.equal(existsSync(legacy), kind !== 'empty')
   }
+  // Round 2: durable intent must never override the library markers on disk.
+  for (const intent of ['movePending', 'moved', 'rewriteDocuments'] as const) {
+    for (const blocked of [false, true]) {
+      const docs = join(root, `planted-${intent}-${blocked}`)
+      const data = join(root, `planted-data-${intent}-${blocked}`)
+      const legacy = join(docs, 'ORBIT'); const modern = join(docs, 'MT3K Launcher')
+      await fs.mkdir(join(legacy, 'ROMs'), { recursive: true })
+      await fs.mkdir(modern)
+      await fs.mkdir(join(data, 'migrations'), { recursive: true })
+      await fs.writeFile(join(legacy, 'ROMs', 'game.cfg'), legacy + '/ROMs')
+      if (blocked) await fs.writeFile(join(modern, 'cache'), 'preserve')
+      const settings = join(data, 'orbit-settings.json')
+      await fs.writeFile(settings, JSON.stringify({ corePath: legacy + '/ROMs' }))
+      const journalFile = join(data, 'migrations', 'documents-folder.json')
+      await fs.writeFile(journalFile, JSON.stringify({
+        version: 2, oldPath: legacy, newPath: modern, moved: false, complete: false,
+        rewritten: [], skipped: [], errors: [], rewrittenCount: 0, [intent]: true
+      }))
+      await migrateDocuments(docs, data, fs, log)
+      assert.equal(JSON.parse(await fs.readFile(settings, 'utf8')).corePath,
+        (blocked ? legacy : modern) + '/ROMs', `planted ${intent}: settings follow the library`)
+      assert.equal(JSON.parse(await fs.readFile(journalFile, 'utf8')).complete, !blocked)
+      assert.equal(documentsRoot(docs, existsSync), blocked ? legacy : modern)
+      assert.equal(existsSync(join(blocked ? legacy : modern, 'ROMs', 'game.cfg')), true)
+      if (blocked) {
+        await fs.unlink(join(modern, 'cache'))
+        await migrateDocuments(docs, data, fs, log)
+        assert.equal(JSON.parse(await fs.readFile(journalFile, 'utf8')).complete, true)
+        assert.equal(existsSync(legacy), false, 'retry removes empty target and moves the library')
+      }
+    }
+  }
+  // A real successful move can be followed by loss of destination markers.
+  const lostDocs = join(root, 'lost-markers'); const lostData = join(root, 'lost-data')
+  const lostOld = join(lostDocs, 'ORBIT'); const lostNew = join(lostDocs, 'MT3K Launcher')
+  await fs.mkdir(join(lostOld, 'ROMs'), { recursive: true }); await fs.mkdir(lostData)
+  const lostSettings = join(lostData, 'orbit-settings.json')
+  await fs.writeFile(lostSettings, JSON.stringify({ corePath: lostOld + '/ROMs' }))
+  await migrateDocuments(lostDocs, lostData, { ...fs, rename: async (a, b) => {
+    if (b === lostSettings) throw new Error('store locked after successful move')
+    return fs.rename(a, b)
+  } }, log)
+  const lostJournal = join(lostData, 'migrations', 'documents-folder.json')
+  assert.equal(JSON.parse(await fs.readFile(lostJournal, 'utf8')).moved, true)
+  assert.equal(JSON.parse(await fs.readFile(lostJournal, 'utf8')).complete, false)
+  await fs.rmdir(join(lostNew, 'ROMs'))
+  await fs.writeFile(join(lostNew, 'cache'), 'preserve')
+  await fs.mkdir(join(lostOld, 'ROMs'), { recursive: true })
+  await migrateDocuments(lostDocs, lostData, fs, log)
+  assert.equal(JSON.parse(await fs.readFile(lostSettings, 'utf8')).corePath, lostOld + '/ROMs')
+  assert.equal(JSON.parse(await fs.readFile(lostJournal, 'utf8')).complete, false)
+  assert.equal(documentsRoot(lostDocs, existsSync), lostOld)
+  // Remove only the known failed atomic-write fixture; the next retry can move.
+  await fs.unlink(join(lostData, 'orbit-settings.json.mt3k-migration.tmp'))
+  await fs.unlink(join(lostNew, 'cache'))
+  await migrateDocuments(lostDocs, lostData, fs, log)
+  assert.equal(JSON.parse(await fs.readFile(lostJournal, 'utf8')).complete, true)
+  assert.equal(existsSync(lostOld), false)
+  console.log('Round 2: planted movePending/moved/rewriteDocuments journals preserve the library and retry stale targets')
+  // Record the requested symlink type: POSIX itself ignores it, Windows does not.
+  for (const windows of [false, true]) {
+    const docs = join(root, `missing-link-${windows}`); const data = join(root, `missing-link-data-${windows}`)
+    const legacy = join(docs, 'ORBIT'); const modern = join(docs, 'MT3K Launcher')
+    await fs.mkdir(join(legacy, 'ROMs'), { recursive: true }); await fs.mkdir(data)
+    await fs.symlink(join(legacy, 'ROMs', 'unavailable'), join(legacy, 'cores'), 'junction')
+    const kinds: unknown[] = []
+    let deny = true
+    const linkFs = { ...fs, symlink: async (...args: Parameters<typeof fs.symlink>) => {
+      kinds.push(args[2])
+      if (deny) throw new Error('denied directory link recreation')
+      return fs.symlink(...args)
+    } }
+    await migrateDocuments(docs, data, linkFs, log, windows)
+    const journalFile = join(data, 'migrations', 'documents-folder.json')
+    assert.equal(JSON.parse(await fs.readFile(journalFile, 'utf8')).complete, false)
+    assert.equal(await fs.readlink(join(modern, 'cores')), join(legacy, 'ROMs', 'unavailable'))
+    deny = false
+    await migrateDocuments(docs, data, linkFs, log, windows)
+    assert.ok(kinds.length >= 2)
+    assert.ok(kinds.every(kind => kind === (windows ? 'junction' : 'dir')), 'unavailable directory target must not become a file symlink')
+    assert.equal(await fs.readlink(join(modern, 'cores')), join(modern, 'ROMs', 'unavailable'))
+    assert.equal(JSON.parse(await fs.readFile(journalFile, 'utf8')).complete, true)
+  }
+  console.log('Round 2: unavailable directory links keep their type; failed recreation remains retryable')
   const dualDocs = join(root, 'dual-docs'); const dualData = join(root, 'dual-profile', 'MT3K Launcher')
   const oldData = join(root, 'dual-profile', 'ORBIT')
   const oldDocs = join(dualDocs, 'ORBIT'); const newDocs = join(dualDocs, 'MT3K Launcher')
@@ -255,7 +339,11 @@ assert.ok(managerSource.includes("await this.control('repair')"))
 assert.ok(managerSource.includes('path: process.execPath'))
 const installer = await fs.readFile(new URL('../build/installer.nsh', import.meta.url), 'utf8')
 assert.ok(installer.indexOf('StrCpy $R6 "$INSTDIR\\MT3KLauncher.exe"') < installer.indexOf('StrCpy $R6 "$INSTDIR\\ORBIT.exe"'))
+assert.ok(installer.includes('GetAssemblyName($$env:MT3K_SHUTDOWN_EXE)'))
+assert.ok(installer.includes('StrCmp $0 10 orbit_background_shutdown_done'))
+assert.ok(installer.includes('StrCmp $0 0 orbit_background_shutdown_start orbit_background_shutdown_failed'))
 const workflow = await fs.readFile(new URL('../.github/workflows/build-windows.yml', import.meta.url), 'utf8')
+assert.ok(workflow.includes(String.raw`/out:build\mt3k-compat\ORBIT.exe scripts\mt3k\LegacyLauncher.cs`))
 for (const gate of ['run verify:rename-migration', 'pwsh -NoProfile -File scripts/windows/Verify-Mt3kRenameScripts.ps1']) {
   assert.ok(workflow.indexOf(gate) > 0 && workflow.indexOf(gate) < workflow.indexOf('Package unsigned NSIS installer'))
 }

@@ -9,16 +9,29 @@
 
 !macro orbitStopBackgroundService
   Push $R6
+  Push $R8
   ; The executable can legitimately be absent after quarantine or a partially
   ; completed repair. In that case electron-builder's normal cleanup still runs.
   ; Never ExecWait the transitional stub when the real launcher is available.
   StrCpy $R6 "$INSTDIR\MT3KLauncher.exe"
   IfFileExists "$R6" orbit_background_shutdown_start
-  StrCpy $R6 "$INSTDIR\${PRODUCT_FILENAME}.exe"
-  IfFileExists "$R6" orbit_background_shutdown_start
   ; Before an upgrade, only the old executable may be installed.
   StrCpy $R6 "$INSTDIR\ORBIT.exe"
-  IfFileExists "$R6" orbit_background_shutdown_start orbit_background_shutdown_done
+  IfFileExists "$R6" orbit_background_shutdown_inspect orbit_background_shutdown_done
+  orbit_background_shutdown_inspect:
+    ; The C# compatibility stub is a managed PE; the pre-rename Electron exe is
+    ; native. Inspect without executing it. A stub's exit 0 does not mean that
+    ; its child has stopped. Wait up to 10 seconds, and abort if still running.
+    ; An environment variable transports install paths without PowerShell quoting.
+    System::Call 'kernel32::SetEnvironmentVariableW(w "MT3K_SHUTDOWN_EXE", w "$R6") i .r0'
+    StrCmp $0 0 orbit_background_shutdown_failed
+    !insertmacro orbitXboxModePowerShell
+    nsExec::ExecToStack '"$R8" -NoProfile -NonInteractive -Command "try { $$null = [Reflection.AssemblyName]::GetAssemblyName($$env:MT3K_SHUTDOWN_EXE) } catch [System.BadImageFormatException] { exit 0 } catch { exit 2 }; for ($$i = 0; $$i -lt 100; $$i++) { if (!(Get-Process -Name MT3KLauncher -ErrorAction SilentlyContinue)) { exit 10 }; Start-Sleep -Milliseconds 100 }; if (Get-Process -Name MT3KLauncher -ErrorAction SilentlyContinue) { exit 2 }; exit 10"'
+    Pop $0
+    Pop $R8
+    System::Call 'kernel32::SetEnvironmentVariableW(w "MT3K_SHUTDOWN_EXE", p 0)'
+    StrCmp $0 10 orbit_background_shutdown_done
+    StrCmp $0 0 orbit_background_shutdown_start orbit_background_shutdown_failed
   orbit_background_shutdown_start:
     ClearErrors
     ExecWait '"$R6" orbit-background-agent-shutdown' $0
@@ -28,6 +41,7 @@
     SetErrorLevel 2
     Abort
   orbit_background_shutdown_done:
+  Pop $R8
   Pop $R6
 !macroend
 
