@@ -1,5 +1,7 @@
 import './legacyUserDataPath'
-import './diagnosticLogStartup'
+import { diagnosticLog, logReadyDiagnostics } from './diagnosticLogStartup'
+import * as migrationFs from 'node:fs/promises'
+import { migrateDocuments } from './renameMigrationPolicy'
 import { app, shell, protocol, net, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
@@ -249,6 +251,11 @@ function createWindow(registerIpcHandlers: (window: BrowserWindow) => void): Bro
 }
 
 async function startOrbitUi(): Promise<void> {
+  await migrateDocuments(app.getPath('documents'), app.getPath('userData'), migrationFs, message => { void diagnosticLog.write('warn', message) })
+  const { refreshLegacyXboxManifest } = await import('./xboxManifestRefresh')
+  if (await refreshLegacyXboxManifest()) return
+  void logReadyDiagnostics()
+
   const [
     { registerIpcHandlers },
     { getCacheDir },

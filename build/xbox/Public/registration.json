@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "product": "ORBIT",
+  "_compatibility": "product is validated by Install/Verify-OrbitXboxPackage; applicationId preserves the AUMID. Display name is MT3K Launcher.",
   "role": "gaming-home",
   "applicationId": "ORBIT",
   "version": "0.1.0.2",

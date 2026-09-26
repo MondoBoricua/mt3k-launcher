@@ -1,3 +1,4 @@
+import { userDataMigration } from './legacyUserDataPath'
 import { app } from 'electron'
 import { join } from 'node:path'
 import { release } from 'node:os'
@@ -54,7 +55,9 @@ app.on('child-process-gone', (_event, details) => {
 })
 void diagnosticLog.write('info', `[startup] MT3K Launcher ${getDisplayVersion()} Electron=${process.versions.electron} Chrome=${process.versions.chrome} windowsStore=${process.windowsStore === true} platform=${process.platform} osBuild=${release()}`)
 
-void app.whenReady().then(async () => {
+void diagnosticLog.write(userDataMigration.error || userDataMigration.status === 'both-exist-old-left-in-place' ? 'warn' : 'info', `[migration] userData ${JSON.stringify(userDataMigration)}`)
+
+export async function logReadyDiagnostics(): Promise<void> {
   // Load settings only after the early handlers are installed.
   try {
     const { settingsStore } = await import('./settingsStore')
@@ -69,4 +72,4 @@ void app.whenReady().then(async () => {
   } catch (error) {
     await diagnosticLog.write('warn', `[startup] GPU unavailable ${describe(error)}`)
   }
-}).catch(() => undefined)
+}

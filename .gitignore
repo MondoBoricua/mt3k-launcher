@@ -21,3 +21,5 @@ pnpm-lock.yaml
 resources/discord-social-sdk/win32-x64/discord_partner_sdk.dll
 website/
 graphify-out/
+
+build/mt3k-compat/

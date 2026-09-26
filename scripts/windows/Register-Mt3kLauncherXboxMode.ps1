@@ -21,6 +21,9 @@ param(
   [string]$Version,
   [string]$LogPath,
   [switch]$OnlyIfRegistered,
+  [switch]$RefreshManifestOnly,
+  [int]$WaitForProcessId,
+  [switch]$Relaunch,
   [switch]$Remove
 )
 $ErrorActionPreference = 'Stop'
@@ -36,7 +39,7 @@ function Write-Step([string]$Message) {
 function Stop-StagedOrbit {
   if (!(Test-Path -LiteralPath $Stage)) { return }
   $prefix = [System.IO.Path]::GetFullPath($Stage).TrimEnd('\') + '\'
-  Get-CimInstance Win32_Process -Filter "Name = 'ORBIT.exe'" |
+  Get-CimInstance Win32_Process -Filter "Name = 'ORBIT.exe' OR Name = 'MT3KLauncher.exe'" |
     Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase) } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
@@ -53,8 +56,8 @@ function Resolve-OrbitSource {
       (Join-Path $env:ProgramFiles 'ORBIT')
     )
   }
-  $found = $candidates | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path $_ 'ORBIT.exe')) } | Select-Object -First 1
-  if (!$found) { throw 'MT3K Launcher is not installed. Install MT3K-Launcher-Setup first, or pass -Source <folder with ORBIT.exe>.' }
+  $found = $candidates | Where-Object { $_ -and ((Test-Path -LiteralPath (Join-Path $_ 'MT3KLauncher.exe')) -or (Test-Path -LiteralPath (Join-Path $_ 'ORBIT.exe'))) } | Select-Object -First 1
+  if (!$found) { throw 'MT3K Launcher is not installed. Install MT3K-Launcher-Setup first, or pass -Source <folder with MT3KLauncher.exe or ORBIT.exe>.' }
   return [System.IO.Path]::GetFullPath($found)
 }
 
@@ -76,6 +79,37 @@ try {
     exit 3
   }
 
+  # In-place repair for the old updater/stub chain. Never remove the package or
+  # copy/delete its live app directory. The WMI caller exits before we register.
+  if ($RefreshManifestOnly) {
+    if ($existing.Count -ne 1) { throw 'Expected one existing Xbox Mode registration.' }
+    $Stage = $existing[0].InstallLocation
+    $manifestPath = Join-Path $Stage 'AppxManifest.xml'
+    [xml]$manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8
+    $application = @($manifest.Package.Applications.Application)[0]
+    $exe = @('MT3KLauncher.exe', 'ORBIT.exe') | Where-Object { Test-Path -LiteralPath (Join-Path $Stage "app\$_") } | Select-Object -First 1
+    if (!$exe) { throw 'No launcher executable in registered package.' }
+    if ($WaitForProcessId -gt 0) { Wait-Process -Id $WaitForProcessId -ErrorAction SilentlyContinue }
+    $originalManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8
+    try {
+      $application.SetAttribute('Executable', "app\$exe")
+      $manifest.Save($manifestPath)
+      Add-AppxPackage -Register $manifestPath
+      Write-Step "Xbox Mode manifest refreshed: app\$exe"
+    } catch {
+      # Keep the previous stub-compatible manifest on failure and retry next start.
+      [System.IO.File]::WriteAllText($manifestPath, $originalManifest, [System.Text.UTF8Encoding]::new($false))
+      if ($Relaunch) { Set-Content -LiteralPath (Join-Path $Stage 'manifest-refresh.failed') -Value 'retry on next manual launch' }
+      throw
+    } finally {
+      if ($Relaunch) {
+        $family = $existing[0].PackageFamilyName
+        Start-Process explorer.exe -ArgumentList "shell:AppsFolder\$family!ORBIT"
+      }
+    }
+    exit 0
+  }
+
   if (!$Remove) {
     # Validate everything before touching an existing registration.
     $devMode = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -ErrorAction SilentlyContinue
@@ -83,6 +117,8 @@ try {
       throw 'Developer Mode is off. Turn it on in Settings > System > For developers, then run this script again.'
     }
     $Source = Resolve-OrbitSource
+    $launcherExe = if (Test-Path -LiteralPath (Join-Path $Source 'MT3KLauncher.exe')) { 'MT3KLauncher.exe' } else { 'ORBIT.exe' }
+    if ([System.IO.Path]::GetFullPath($Source).StartsWith([System.IO.Path]::GetFullPath($Stage).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Use -RefreshManifestOnly for a staged source.' }
     if (!$AssetsRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'AppxManifest.xml'))) { $AssetsRoot = $PSScriptRoot }
     if ($AssetsRoot) {
       $manifestTemplate = Join-Path $AssetsRoot 'AppxManifest.xml'
@@ -123,6 +159,7 @@ try {
   $ns.AddNamespace('f', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10')
   $ns.AddNamespace('uap', 'http://schemas.microsoft.com/appx/manifest/uap/windows10')
   $ns.AddNamespace('uap3', 'http://schemas.microsoft.com/appx/manifest/uap/windows10/3')
+  $manifest.SelectSingleNode('/f:Package/f:Applications/f:Application', $ns).SetAttribute('Executable', "app\$launcherExe")
   $identity = $manifest.SelectSingleNode('/f:Package/f:Identity', $ns)
   $identity.SetAttribute('Name', $packageName)
   $identity.SetAttribute('Publisher', 'CN=MT3K Edition')
@@ -137,6 +174,8 @@ try {
   $extension.SetAttribute('Description', 'MT3K Launcher Gaming Home')
   $manifest.Save((Join-Path $Stage 'AppxManifest.xml'))
 
+  # product is a protocol discriminator checked by Install/Verify-OrbitXboxPackage;
+  # applicationId is the persistent AUMID. Neither is display copy.
   $registration = [ordered]@{ schemaVersion = 1; product = 'ORBIT'; role = 'gaming-home'; applicationId = 'ORBIT'; version = $packageVersion; channel = 'stable' }
   $registration | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Stage 'Public\registration.json') -Encoding UTF8
 

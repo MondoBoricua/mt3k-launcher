@@ -39,7 +39,7 @@ Empezó como **ORBIT MT3K Edition**, un fork de ORBIT 0.1.4. En septiembre de 20
 | **Restaurar partidas y carpeta de copias**: restaura una copia desde la ficha del juego y manda las copias a tu carpeta de Google Drive u OneDrive. | 0.1.4-mt3k.10 |
 | **Modo vitrina y capturas**: arte de tus juegos cuando el launcher está inactivo, y las capturas de Game Bar dentro de cada juego. Apagados por defecto. | 0.1.4-mt3k.10 |
 | **Modo invitado**: PIN con el mando, solo los juegos de una colección, sin tienda ni ajustes. Apagado por defecto. | 0.1.4-mt3k.10 |
-| **Log de diagnóstico** en `%APPDATA%\ORBIT\logs`, con botón en Acerca de. Si algo falla, ese archivo es lo que se manda. | 0.1.4-mt3k.11 |
+| **Log de diagnóstico** en `%APPDATA%\MT3K Launcher\logs`, con botón en Acerca de. Si algo falla, ese archivo es lo que se manda. | 0.1.4-mt3k.11 |
 
 El detalle por versión está en [CHANGELOG.md](CHANGELOG.md).
 
@@ -56,7 +56,7 @@ Requisitos: Windows 11 x64. Mando recomendado, teclado y ratón soportados.
 
 **Si la pantalla de actualización te dio error** en 0.1.4-mt3k.8 o una versión anterior, baja e instala `MT3K-Launcher-Setup` una vez. Esas versiones tenían un fallo que impedía actualizar desde la app; se arregló en 0.1.4-mt3k.9.
 
-**Si venías de ORBIT MT3K Edition:** actualiza desde la app o instala encima. Se conservan la biblioteca, los ajustes, la carpeta `Documentos\ORBIT` de emuladores y ROMs, y el registro de Xbox Mode. Por compatibilidad, el ejecutable sigue llamándose `ORBIT.exe` y los datos siguen en `%APPDATA%\ORBIT`. Las releases publican también copias `ORBIT-MT3K-*` de los mismos archivos para que las versiones anteriores encuentren la actualización.
+**Si venías de ORBIT MT3K Edition:** actualiza desde la app o instala encima. Desde mt3k.16, el proceso se llama `MT3KLauncher.exe`; el acceso directo sigue siendo **MT3K Launcher**. En el primer arranque se mueve `%APPDATA%\ORBIT` a `%APPDATA%\MT3K Launcher` (en desarrollo: `orbit` → `mt3k-launcher`) y `Documents\ORBIT` a `Documents\MT3K Launcher`, respetando Documentos redirigidos a OneDrive. Se actualizan las rutas guardadas de emuladores y ROMs. Si una carpeta está bloqueada se usa la anterior y se reintenta al próximo arranque; si ambas existen se prefiere la nueva sin borrar la anterior. El journal queda en `migrations\documents-folder.json` y el log en `%APPDATA%\MT3K Launcher\logs\mt3k-launcher.log` (en la carpeta anterior si no pudo moverse). La entrada de inicio de Windows se renueva y Xbox Mode conserva su elección de app; el primer arranque tras una actualización antigua puede reiniciarse una vez para refrescar el manifiesto. El pequeño `ORBIT.exe` de compatibilidad estará en mt3k.16 y mt3k.17 y se retirará en mt3k.18. Las releases mantienen las copias `ORBIT-MT3K-*` para actualizadores antiguos.
 
 **Detalles de esta build:**
 

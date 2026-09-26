@@ -128,7 +128,7 @@ try {
     }
   }
   $application = $manifest.SelectSingleNode("/f:Package/f:Applications/f:Application[@Id='ORBIT']", $namespaceManager)
-  if (!$application -or $application.Executable -ne 'app\ORBIT.exe' -or $application.EntryPoint -ne 'Windows.FullTrustApplication') {
+  if (!$application -or $application.Executable -notin @('app\MT3KLauncher.exe', 'app\ORBIT.exe') -or $application.EntryPoint -ne 'Windows.FullTrustApplication') {
     throw 'The ORBIT full-trust application declaration is invalid.'
   }
   $packageDisplayName = $manifest.SelectSingleNode('/f:Package/f:Properties/f:DisplayName', $namespaceManager)
@@ -150,7 +150,7 @@ try {
   foreach ($requiredPath in @(
     (Join-Path $inspectionDir 'CustomCapability.SCCD'),
     (Join-Path $inspectionDir 'Public\registration.json'),
-    (Join-Path $inspectionDir 'app\ORBIT.exe'),
+    (Join-Path $inspectionDir $application.Executable),
     (Join-Path $inspectionDir 'app\resources\release-manifest.json'),
     (Join-Path $inspectionDir 'app\resources\discord-social-sdk\License-Notices.txt'),
     (Join-Path $inspectionDir 'app\resources\discord-social-sdk\README.md'),
@@ -174,7 +174,7 @@ try {
     }
   }
 
-  $packagedApplicationPath = Join-Path $inspectionDir 'app\ORBIT.exe'
+  $packagedApplicationPath = Join-Path $inspectionDir $application.Executable
   $packagedApplicationSignature = Assert-OrbitSignedFile -Path $packagedApplicationPath -Profile $signingProfile
 
   $packagedRelease = Get-Content -LiteralPath (Join-Path $inspectionDir 'app\resources\release-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -266,7 +266,7 @@ try {
       },
       [ordered]@{
         role = 'packaged-application'
-        file = 'ORBIT.exe'
+        file = [System.IO.Path]::GetFileName($application.Executable)
         size = (Get-Item -LiteralPath $packagedApplicationPath).Length
         sha256 = (Get-FileHash -LiteralPath $packagedApplicationPath -Algorithm SHA256).Hash.ToLowerInvariant()
         signatureStatus = $packagedApplicationSignature.Status.ToString()

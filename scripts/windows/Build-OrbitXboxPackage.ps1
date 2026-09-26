@@ -129,7 +129,8 @@ try {
     Invoke-LocalNodeTool 'node_modules\electron-builder\out\cli\cli.js' @('--win', 'dir', '--x64', '--publish', 'never')
   }
 
-  if (!(Test-Path -LiteralPath (Join-Path $appOutDir 'ORBIT.exe'))) {
+  $launcherExe = @('MT3KLauncher.exe', 'ORBIT.exe') | Where-Object { Test-Path -LiteralPath (Join-Path $appOutDir $_) } | Select-Object -First 1
+  if (!$launcherExe) {
     throw "Missing packaged application: $appOutDir"
   }
 
@@ -160,6 +161,7 @@ try {
   $manifestNamespace.AddNamespace('f', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10')
   $manifestNamespace.AddNamespace('uap', 'http://schemas.microsoft.com/appx/manifest/uap/windows10')
   $manifestNamespace.AddNamespace('uap3', 'http://schemas.microsoft.com/appx/manifest/uap/windows10/3')
+  $stagedManifest.SelectSingleNode('/f:Package/f:Applications/f:Application', $manifestNamespace).SetAttribute('Executable', "app\$launcherExe")
   $stagedIdentity = $stagedManifest.SelectSingleNode('/f:Package/f:Identity', $manifestNamespace)
   if (!$stagedIdentity) { throw 'The staged Xbox manifest has no package identity.' }
   $stagedIdentity.SetAttribute('Version', $xboxPackageVersion.ToString())

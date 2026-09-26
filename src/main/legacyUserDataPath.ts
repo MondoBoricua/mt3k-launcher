@@ -1,12 +1,13 @@
 import { app } from 'electron'
-import { join } from 'path'
+import { join } from 'node:path'
+import { existsSync, renameSync } from 'node:fs'
+import { migrateUserData } from './renameMigrationPolicy'
 
-/**
- * MT3K Launcher keeps the data folder ORBIT created before the rename
- * (%APPDATA%\ORBIT when packaged, "orbit" in development), so libraries,
- * settings, caches and browser storage survive the update. index.ts imports
- * this module first because several services resolve userData at import time.
- */
-const LEGACY_USER_DATA_NAME = app.isPackaged ? 'ORBIT' : 'orbit'
-
-app.setPath('userData', join(app.getPath('appData'), LEGACY_USER_DATA_NAME))
+// First import in index.ts: move Chromium storage and every store together before
+// any consumer resolves userData. Never copy/delete; a failed move retries next run.
+export const userDataMigration = migrateUserData(
+  join(app.getPath('appData'), app.isPackaged ? 'ORBIT' : 'orbit'),
+  join(app.getPath('appData'), app.isPackaged ? 'MT3K Launcher' : 'mt3k-launcher'),
+  { existsSync, renameSync }
+)
+app.setPath('userData', userDataMigration.path)

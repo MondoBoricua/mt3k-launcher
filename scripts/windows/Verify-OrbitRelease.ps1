@@ -21,7 +21,9 @@ $installerPrefix = if ($releaseChannel -eq 'beta') { 'ORBIT-Beta-Setup' } else {
 $windowsFileVersion = [string]$releaseMetadata.windowsFileVersion
 $releaseSequence = [int]$releaseMetadata.releaseSequence
 $installerPath = Join-Path $releaseDir "$installerPrefix-$displayVersion-x64.exe"
-$applicationPath = Join-Path $releaseDir 'win-unpacked\ORBIT.exe'
+$launcherExe = @('MT3KLauncher.exe', 'ORBIT.exe') | Where-Object { Test-Path -LiteralPath (Join-Path $releaseDir "win-unpacked\$_") } | Select-Object -First 1
+if (!$launcherExe) { throw 'Missing launcher executable' }
+$applicationPath = Join-Path $releaseDir "win-unpacked\$launcherExe"
 $packagedManifestPath = Join-Path $releaseDir 'win-unpacked\resources\release-manifest.json'
 $releaseCertificatePath = Join-Path $releaseDir 'ORBIT-Code-Signing.cer'
 $releaseSigningMetadataPath = Join-Path $releaseDir 'code-signing.json'

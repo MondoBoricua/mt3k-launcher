@@ -44,3 +44,13 @@ export function startupLoginItemIsActive(
       (sameArguments(item.args, expected.args) || sameArguments(item.args, positional))
   )
 }
+
+/** Explicitly owned registry names only. Preserve disabled state during rename. */
+export function startupLoginItemsNeedingMigration(
+  items: readonly StartupLaunchItem[], expected: StartupLoginItemExpectation
+): StartupLaunchItem[] {
+  return items.filter(item =>
+    ['orbit', 'orbit background service', expected.name.toLowerCase()].includes(item.name.toLowerCase()) &&
+    (item.name.toLowerCase() !== expected.name.toLowerCase() || item.path.toLowerCase() !== expected.path.toLowerCase())
+  )
+}

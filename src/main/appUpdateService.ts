@@ -164,11 +164,19 @@ const COMMUNITY_PACKAGE_UPDATE_SCRIPT = String.raw`param(
   [string]$LogPath
 )
 $ErrorActionPreference = 'Stop'
+function Resolve-LauncherExe([string]$Root) {
+  foreach ($name in @('MT3KLauncher.exe', 'ORBIT.exe')) {
+    if (Test-Path -LiteralPath (Join-Path $Root $name)) { return $name }
+  }
+  return $null
+}
 function Write-UpdateLog([string]$Message) {
   Add-Content -LiteralPath $LogPath -Value ('{0:o} {1}' -f (Get-Date), $Message)
 }
 $previous = Join-Path $PackageRoot 'app.previous'
 $staging = Join-Path $PackageRoot 'app.update'
+$originalManifest = $null
+$swapped = $false
 try {
   Write-UpdateLog "waiting for ORBIT $ProcessId to exit"
   # Match only processes inside the app folder itself, never a sibling such as app2.
@@ -207,25 +215,41 @@ try {
   Write-UpdateLog 'extracting update archive'
   Expand-Archive -LiteralPath $ZipPath -DestinationPath $staging -Force
   $newRoot = $staging
-  if (-not (Test-Path -LiteralPath (Join-Path $newRoot 'ORBIT.exe'))) {
+  if (-not (Resolve-LauncherExe $newRoot)) {
     $inner = Get-ChildItem -LiteralPath $staging -Directory |
-      Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'ORBIT.exe') } |
+      Where-Object { Resolve-LauncherExe $_.FullName } |
       Select-Object -First 1
-    if (-not $inner) { throw 'ORBIT.exe is missing from the update archive' }
+    if (-not $inner) { throw 'MT3KLauncher.exe or ORBIT.exe is missing from the update archive' }
     $newRoot = $inner.FullName
   }
   if (-not (Test-Path -LiteralPath (Join-Path $newRoot 'resources\app.asar'))) {
     throw 'resources\app.asar is missing from the update archive'
   }
+  $originalManifest = Get-Content -LiteralPath (Join-Path $PackageRoot 'AppxManifest.xml') -Raw
   Write-UpdateLog 'swapping app folders'
   Rename-Item -LiteralPath $AppDir -NewName 'app.previous'
   try {
     Move-Item -LiteralPath $newRoot -Destination $AppDir
+    $swapped = $true
   } catch {
     Rename-Item -LiteralPath $previous -NewName (Split-Path -Leaf $AppDir)
     throw
   }
   if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+  # Update the existing loose manifest without removing the package identity.
+  $registrationScript = Join-Path $AppDir 'resources\xbox-mode\Register-Mt3kLauncherXboxMode.ps1'
+  if ((Test-Path -LiteralPath $registrationScript) -and ((Get-Content -LiteralPath $registrationScript -Raw) -match 'switch\]\$RefreshManifestOnly')) {
+    & $registrationScript -OnlyIfRegistered -RefreshManifestOnly -LogPath $LogPath
+    if ($LASTEXITCODE -ne 0) { throw 'Xbox Mode manifest refresh failed' }
+  } else {
+    # Older archives may not have the refresh switch; rewrite using the preferred
+    # executable and register directly, retaining the package name and AUMID.
+    $manifestPath = Join-Path $PackageRoot 'AppxManifest.xml'
+    [xml]$updatedManifest = Get-Content -LiteralPath $manifestPath -Raw
+    @($updatedManifest.Package.Applications.Application)[0].SetAttribute('Executable', ('app\' + (Resolve-LauncherExe $AppDir)))
+    $updatedManifest.Save($manifestPath)
+    Add-AppxPackage -Register $manifestPath
+  }
   try {
     Remove-Item -LiteralPath $previous -Recurse -Force
   } catch {
@@ -234,7 +258,14 @@ try {
   Write-UpdateLog 'update applied'
 } catch {
   Write-UpdateLog ('update failed: ' + $_.Exception.Message)
-  if (-not (Test-Path -LiteralPath $AppDir) -and (Test-Path -LiteralPath $previous)) {
+  if ($swapped -and (Test-Path -LiteralPath $previous)) {
+    Remove-Item -LiteralPath $AppDir -Recurse -Force
+    Rename-Item -LiteralPath $previous -NewName (Split-Path -Leaf $AppDir)
+    $manifestPath = Join-Path $PackageRoot 'AppxManifest.xml'
+    [System.IO.File]::WriteAllText($manifestPath, $originalManifest, [System.Text.UTF8Encoding]::new($false))
+    Add-AppxPackage -Register $manifestPath
+    Write-UpdateLog 'previous app and manifest restored'
+  } elseif (-not (Test-Path -LiteralPath $AppDir) -and (Test-Path -LiteralPath $previous)) {
     Rename-Item -LiteralPath $previous -NewName (Split-Path -Leaf $AppDir)
     Write-UpdateLog 'previous app folder restored'
   }

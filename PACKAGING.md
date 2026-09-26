@@ -62,7 +62,7 @@ The first Certum-signed AppX has a different Microsoft package family because an
 
 The installer refuses downgrades, treats an equal package version as an idempotent verification, restores the previous Developer Mode value after a clean first-install failure, and writes diagnostics atomically to `C:\ProgramData\ORBIT\Logs\xbox-mode-diagnostics.json`.
 
-For an existing Certum-signed Xbox Mode installation, ORBIT invokes the setup with `/ORBIT-UPDATE=1`. This hidden path requires an already installed package and already enabled Developer Mode; it never elevates or changes machine prerequisites or certificate trust. It force-closes the running AppX only for package deployment, launches the upgraded Gaming Home registration afterward, and writes per-user diagnostics to `%LOCALAPPDATA%\ORBIT\Logs\xbox-mode-update-diagnostics.json`. A failed update attempts to reopen the previous installed version.
+For an existing Certum-signed Xbox Mode installation, ORBIT invokes the setup with `/ORBIT-UPDATE=1`. This hidden path requires an already installed package and already enabled Developer Mode; it never elevates or changes machine prerequisites or certificate trust. It force-closes the running AppX only for package deployment, launches the upgraded Gaming Home registration afterward, and writes per-user diagnostics to `%LOCALAPPDATA%\MT3K Launcher\Logs\xbox-mode-update-diagnostics.json`. A failed update attempts to reopen the previous installed version.
 
 It deliberately does not write `GamingHomeApp` directly. Windows Settings remains the owner of the selected home app.
 
@@ -120,3 +120,11 @@ Keep these values stable across upgrades:
 - AppX application ID: `ORBIT`
 
 Changing the AppX publisher or identity breaks the existing upgrade line and must be treated as a migration, not a routine release change.
+
+## MT3K executable transition (mt3k.16–17)
+
+`electron-builder.mt3k.yml` builds `MT3KLauncher.exe` while retaining `com.orbit.launcher` for upgrades. CI compiles `scripts/mt3k/LegacyLauncher.cs` with the Windows .NET Framework compiler before electron-builder. Its `afterPack` hook copies the optional `ORBIT.exe` stub into `win-unpacked`, so both NSIS and the update ZIP contain it. Local packaging skips an absent stub; such archives must not be distributed to pre-mt3k.16 updaters. Remove the stub and hook in mt3k.18, two releases after introduction. No binaries are committed.
+
+The loose package retains `MT3K.OrbitGamingHome` and Application Id `ORBIT`. Registration resolves either executable and prefers the new name. `Public/registration.json` retains `product: ORBIT` because the signed-package installer and verification tools validate that protocol discriminator. The upstream signed package template remains upstream; the MT3K registration script fills its identity, display name and executable. Historical upstream release documentation retains its original names.
+
+Data and redirected Documents migration details and Windows acceptance steps are in `RENAME-REPORT.md`.

@@ -64,12 +64,22 @@ jobs:
         if: github.event_name != 'pull_request'
         run: npm run verify:discord
 
+      - name: Compile transitional ORBIT launcher stub
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/mt3k-compat | Out-Null
+          & C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /target:winexe /platform:x64 /out:build/mt3k-compat/ORBIT.exe scripts/mt3k/LegacyLauncher.cs
+          if ($LASTEXITCODE -ne 0) { throw 'Compatibility stub compilation failed' }
+
       - name: Package unsigned NSIS installer
         run: npx electron-builder --win nsis --x64 --config electron-builder.mt3k.yml --publish never
 
       - name: Package Xbox Mode app archive
         shell: pwsh
         run: |
+          foreach ($exe in 'MT3KLauncher.exe', 'ORBIT.exe') {
+            if (!(Test-Path "release/win-unpacked/$exe")) { throw "Missing $exe in update archive" }
+          }
           $version = node -p "require('./package.json').version"
           Compress-Archive -Path release/win-unpacked/* -DestinationPath "release/MT3K-Launcher-App-$version-x64.zip" -CompressionLevel Optimal
           # Builds up to 0.1.4-mt3k.5 look for the ORBIT-MT3K names when they check for updates.

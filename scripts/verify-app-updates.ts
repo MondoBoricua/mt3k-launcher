@@ -71,7 +71,7 @@ assert.equal(canRetryAppUpdateDownload({ stage: 'error', error: 'verification-fa
 assert.equal(canRetryAppUpdateDownload({ stage: 'available' }), false)
 assert.equal(
   isAllowedAppUpdateDownloadUrl(
-    'https://github.com/toonymak1993/orbit/releases/download/v1.0.0/ORBIT.exe'
+    'https://github.com/toonymak1993/orbit/releases/download/v1.0.0/MT3KLauncher.exe'
   ),
   true
 )
@@ -79,8 +79,8 @@ assert.equal(
   isAllowedAppUpdateDownloadUrl('https://release-assets.githubusercontent.com/download?id=42'),
   true
 )
-assert.equal(isAllowedAppUpdateDownloadUrl('https://example.com/ORBIT.exe'), false)
-assert.equal(isAllowedAppUpdateDownloadUrl('http://github.com/ORBIT.exe'), false)
+assert.equal(isAllowedAppUpdateDownloadUrl('https://example.com/MT3KLauncher.exe'), false)
+assert.equal(isAllowedAppUpdateDownloadUrl('http://github.com/MT3KLauncher.exe'), false)
 assert.deepEqual(
   nsisInstallerArguments({
     installDirectory: 'C:\\Users\\Orbit\\App',

@@ -1,3 +1,6 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { join } from 'node:path'
 import { t } from './i18n'
 import { app, Menu, powerMonitor, Tray, type BrowserWindow } from 'electron'
 import { IPC, type OrbitBackgroundServiceAction, type OrbitBackgroundServiceStatus } from '../shared/ipc'
@@ -8,7 +11,7 @@ import { OrbitBackgroundServiceManager } from './orbitBackgroundServiceManager'
 import { getOrbitBackgroundServiceLoginItemInstallation } from './orbitBackgroundServiceLoginItem'
 import { orbitServicePipeNames, requestOrbitPipe } from './orbitServiceProtocol'
 import { orbitStartsThroughXboxMode } from './xboxModeStartup'
-import { startupLoginItemIsActive, windowsLoginItemLookupPath } from './windowsStartupLoginItem'
+import { startupLoginItemIsActive, startupLoginItemsNeedingMigration, windowsLoginItemLookupPath } from './windowsStartupLoginItem'
 import {
   clearBackgroundAgentSuspension,
   readBackgroundAgentSuspension,
@@ -16,7 +19,7 @@ import {
 } from './orbitBackgroundServiceSuspension'
 
 export const BACKGROUND_ARGUMENT = '--orbit-background'
-const LOGIN_NAME = 'ORBIT'
+const LOGIN_NAME = 'MT3K Launcher'
 
 export interface OrbitBackgroundModeOptions {
   /** True solo con el toggle prendido y una sesión de RetroArch ya corriendo. */
@@ -69,6 +72,7 @@ export class OrbitBackgroundMode {
   private async initialize(reconciliation: Promise<void>): Promise<void> {
     if (process.platform === 'win32' && !process.windowsStore) {
       try {
+        await this.migrateLoginItem().catch(error => console.warn('[migration] Startup entry repair will retry', error))
         this.refreshLoginItem()
         const icon = await app.getFileIcon(process.execPath, { size: 'small' })
         if (this.disposed) return
@@ -131,6 +135,39 @@ export class OrbitBackgroundMode {
     app.setLoginItemSettings({ name: LOGIN_NAME, path: process.execPath, args, openAtLogin: enabled })
     this.refreshLoginItem()
     if (enabled !== this.startsWithWindows) throw new Error('Windows could not change MT3K Launcher startup. Check MT3K Launcher in Windows Startup Apps.')
+  }
+  private async migrateLoginItem(): Promise<void> {
+    // Electron only returns items whose executable matches the lookup path.
+    // Read our exact HKCU names first, then use Electron for argument/disabled-state readback.
+    const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    const script = String.raw`[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$key = Get-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue
+$result = @()
+if ($key) {
+  foreach ($name in @('ORBIT', 'ORBIT Background Service', 'MT3K Launcher')) {
+    $command = [string]$key.GetValue($name)
+    if ($command -match '^"([^"\r\n]+)"') { $result += $Matches[1] }
+    elseif ($command -match '^([^\s]+\.exe)(?:\s|$)') { $result += $Matches[1] }
+  }
+}
+ConvertTo-Json -InputObject $result -Compress`
+    const { stdout } = await promisify(execFile)(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 10_000 })
+    const paths: unknown = JSON.parse(stdout)
+    if (!Array.isArray(paths) || paths.some(p => typeof p !== 'string')) throw new Error('Invalid startup registry readback')
+    const args = app.isPackaged ? [BACKGROUND_ARGUMENT] : [app.getAppPath(), BACKGROUND_ARGUMENT]
+    const actual = { launchItems: [...new Set([process.execPath, ...paths as string[]])].flatMap(path =>
+      app.getLoginItemSettings({ path: windowsLoginItemLookupPath(path), args }).launchItems.filter(item => item.scope === 'user')) }
+    const stale = startupLoginItemsNeedingMigration(actual.launchItems, { name: LOGIN_NAME, path: process.execPath, args })
+    if (stale.length > 0) {
+      const current = actual.launchItems.find(item => item.name.toLowerCase() === LOGIN_NAME.toLowerCase() && item.path.toLowerCase() === process.execPath.toLowerCase())
+      const enabled = current?.enabled ?? stale.some(item => item.enabled)
+      app.setLoginItemSettings({ name: LOGIN_NAME, path: process.execPath, args, openAtLogin: enabled })
+      // Remove only per-user values; Electron's write API never edits HKLM.
+      for (const item of stale) {
+        if (item.name.toLowerCase() === LOGIN_NAME.toLowerCase()) continue
+        app.setLoginItemSettings({ name: item.name, path: item.path, args: [...item.args], openAtLogin: false })
+      }
+    }
   }
   private refreshLoginItem(): void {
     const args = app.isPackaged ? [BACKGROUND_ARGUMENT] : [app.getAppPath(), BACKGROUND_ARGUMENT]
