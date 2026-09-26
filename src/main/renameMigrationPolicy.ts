@@ -94,7 +94,7 @@ export function preferredLauncherExecutable(names: readonly string[]): string | 
 }
 
 type MigrationFs = Pick<typeof asyncFs, 'lstat' | 'rename' | 'readFile' | 'writeFile' | 'mkdir' | 'readdir' | 'rmdir' | 'stat' | 'readlink' | 'symlink' | 'unlink'>
-interface PendingLink { path: string; target: string; directory: boolean }
+interface PendingLink { path: string; target: string; directory?: boolean }
 interface Journal {
   links?: PendingLink[]
   rewriteDocuments?: boolean
@@ -187,12 +187,22 @@ export async function migrateDocuments(documents: string, userData: string, fs: 
         }
       } catch (error) { journal.errors.push(`${p}: ${String(error)}`) }
     }
+    const attemptedLinks = new Set<string>()
     const finishLink = async (link: PendingLink): Promise<void> => {
+      attemptedLinks.add(link.path)
+      // Revalidate even saved intents: older journals may contain a guessed type.
+      let directory: boolean | undefined
+      for (const target of [link.path, link.target]) {
+        const info = await fs.stat(target).catch(() => undefined)
+        if (info?.isDirectory()) { directory = true; break }
+        if (info?.isFile()) { directory = false; break }
+      }
+      if (directory === undefined) throw new Error('Cannot determine symlink target type; leaving link pending')
       const temporary = `${link.path}.mt3k-link.tmp`
       // Persist intent before replacing the link itself, including Windows
       // directory junctions, so a crash between unlink and rename resumes.
       await fs.unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error })
-      await fs.symlink(link.target, temporary, link.directory ? (windows ? 'junction' : 'dir') : 'file')
+      await fs.symlink(link.target, temporary, directory ? (windows ? 'junction' : 'dir') : 'file')
       if (await exists(link.path)) {
         if (!(await fs.lstat(link.path)).isSymbolicLink()) throw new Error('Refusing to replace a non-link')
         await fs.unlink(link.path)
@@ -208,21 +218,15 @@ export async function migrateDocuments(documents: string, userData: string, fs: 
       try { await finishLink(link) } catch (error) { journal.errors.push(`${link.path}: ${String(error)}`) }
     }
     const rewriteLink = async (p: string): Promise<void> => {
-      if (p.endsWith('.mt3k-link.tmp')) return
+      if (p.endsWith('.mt3k-link.tmp') || attemptedLinks.has(p)) return
       try {
         const target = await fs.readlink(p)
         if (!isAbsolute(target) && !win32.isAbsolute(target)) return
         let updated = target
         for (const [old, next] of prefixes) updated = rewritePathPrefixes(updated, old, next, windows)
         if (updated === target) return
-        // Prefer the original link's type while its target is still available.
-        // After the move it may dangle; inspect the rewritten target next. Node
-        // exposes no portable directory bit for a dangling symlink. Preserve
-        // directory semantics when neither target can be inspected, rather than
-        // silently downgrading a Windows junction to a file symlink.
-        const directory = await fs.stat(p).then(info => info.isDirectory(), () =>
-          fs.stat(updated).then(info => info.isDirectory(), () => true))
-        const link = { path: p, target: updated, directory }
+        // Persist the rewrite without guessing a dangling target's type.
+        const link = { path: p, target: updated }
         journal.links = [...journal.links?.filter(item => item.path !== p) ?? [], link]
         await atomicWrite(journalPath, JSON.stringify(journal, null, 2))
         await finishLink(link)

@@ -218,6 +218,7 @@ try {
     const docs = join(root, `missing-link-${windows}`); const data = join(root, `missing-link-data-${windows}`)
     const legacy = join(docs, 'ORBIT'); const modern = join(docs, 'MT3K Launcher')
     await fs.mkdir(join(legacy, 'ROMs'), { recursive: true }); await fs.mkdir(data)
+    await fs.mkdir(join(legacy, 'ROMs', 'unavailable'))
     await fs.symlink(join(legacy, 'ROMs', 'unavailable'), join(legacy, 'cores'), 'junction')
     const kinds: unknown[] = []
     let deny = true
@@ -233,11 +234,60 @@ try {
     deny = false
     await migrateDocuments(docs, data, linkFs, log, windows)
     assert.ok(kinds.length >= 2)
-    assert.ok(kinds.every(kind => kind === (windows ? 'junction' : 'dir')), 'unavailable directory target must not become a file symlink')
+    assert.ok(kinds.every(kind => kind === (windows ? 'junction' : 'dir')), 'verified directory target must not become a file symlink')
     assert.equal(await fs.readlink(join(modern, 'cores')), join(modern, 'ROMs', 'unavailable'))
     assert.equal(JSON.parse(await fs.readFile(journalFile, 'utf8')).complete, true)
   }
-  console.log('Round 2: unavailable directory links keep their type; failed recreation remains retryable')
+  console.log('Round 2: verified directory links keep their type; failed recreation remains retryable')
+  // Round 3: absent targets must remain untouched until their type is observable.
+  for (const windows of [false, true]) {
+    for (const directory of [false, true]) {
+      const docs = join(root, `dangling-${windows}-${directory}`)
+      const data = join(root, `dangling-data-${windows}-${directory}`)
+      const legacy = join(docs, 'ORBIT'); const modern = join(docs, 'MT3K Launcher')
+      await fs.mkdir(join(legacy, 'ROMs'), { recursive: true }); await fs.mkdir(data)
+      const original = join(legacy, 'ROMs', 'missing.cfg')
+      const updated = join(modern, 'ROMs', 'missing.cfg')
+      await fs.symlink(original, join(legacy, 'shot.cfg'), 'file')
+      const linkPath = join(modern, 'shot.cfg')
+      const originalInfo = await fs.lstat(join(legacy, 'shot.cfg'))
+      const kinds: unknown[] = []; const messages: string[] = []
+      const linkFs = { ...fs, symlink: async (...args: Parameters<typeof fs.symlink>) => {
+        kinds.push(args[2]); return fs.symlink(...args)
+      } }
+      const journalFile = join(data, 'migrations', 'documents-folder.json')
+      for (let attempt = 0; attempt < 2; attempt++) {
+        messages.length = 0
+        await migrateDocuments(docs, data, linkFs, message => messages.push(message), windows)
+        assert.deepEqual(kinds, [], 'unknown type must never reach symlink creation')
+        assert.equal(await fs.readlink(linkPath), original)
+        assert.equal((await fs.lstat(linkPath)).ino, originalInfo.ino, 'original link remains untouched')
+        const journal = JSON.parse(await fs.readFile(journalFile, 'utf8'))
+        assert.equal(journal.complete, false)
+        assert.deepEqual(journal.links, [{ path: linkPath, target: updated }])
+        assert.equal(journal.errors.length, 1, 'pending replay and walk must not duplicate the error')
+        assert.equal(messages.filter(message => message.includes('Cannot determine symlink target type')).length, 1)
+      }
+      // Old journals may have guessed directory=true; replay must inspect again.
+      const saved = JSON.parse(await fs.readFile(journalFile, 'utf8'))
+      saved.links[0].directory = true
+      await fs.writeFile(journalFile, JSON.stringify(saved))
+      await migrateDocuments(docs, data, linkFs, log, windows)
+      assert.deepEqual(kinds, [], 'saved guessed type cannot authorize replacement')
+      assert.equal(await fs.readlink(linkPath), original)
+      assert.equal(JSON.parse(await fs.readFile(journalFile, 'utf8')).complete, false)
+      if (directory) await fs.mkdir(updated)
+      else await fs.writeFile(updated, 'restored file')
+      await migrateDocuments(docs, data, linkFs, log, windows)
+      assert.deepEqual(kinds, [directory ? (windows ? 'junction' : 'dir') : 'file'])
+      assert.equal(await fs.readlink(linkPath), updated)
+      const journal = JSON.parse(await fs.readFile(journalFile, 'utf8'))
+      assert.equal(journal.complete, true)
+      assert.deepEqual(journal.links, [])
+      assert.deepEqual(journal.errors, [])
+    }
+  }
+  console.log('Round 3: dangling file links stay untouched and pending; restored targets select file/dir/junction from stat')
   const dualDocs = join(root, 'dual-docs'); const dualData = join(root, 'dual-profile', 'MT3K Launcher')
   const oldData = join(root, 'dual-profile', 'ORBIT')
   const oldDocs = join(dualDocs, 'ORBIT'); const newDocs = join(dualDocs, 'MT3K Launcher')
