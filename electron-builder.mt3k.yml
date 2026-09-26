@@ -9,7 +9,7 @@
 #   npx electron-builder --win nsis --x64 --config electron-builder.mt3k.yml --publish never
 appId: com.orbit.launcher
 productName: MT3K Launcher
-buildVersion: 0.1.4.0
+buildVersion: 0.1.4.16
 artifactName: MT3K-Launcher-Setup-${version}-${arch}.${ext}
 copyright: Copyright © 2026 MT3K. Based on ORBIT, © 2026 Luis Garcia. GPL-3.0.
 forceCodeSigning: false
@@ -85,7 +85,7 @@ nsis:
   runAfterFinish: true
   packElevateHelper: false
   differentialPackage: false
-  uninstallDisplayName: MT3K Launcher 0.1.4
+  uninstallDisplayName: MT3K Launcher 0.1.4-mt3k.16
   installerIcon: build/installerIcon.ico
   uninstallerIcon: build/uninstallerIcon.ico
   installerHeader: build/installerHeader.bmp
