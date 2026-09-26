@@ -3,6 +3,41 @@ import { pathToFileURL } from 'node:url'
 import type * as syncFs from 'node:fs'
 import type * as asyncFs from 'node:fs/promises'
 
+/** Trusted package manifest only. Strip comments so a documented example is not an opt-out.
+ * Require the capability AND both disabled properties; unreadable manifests fail closed. */
+export function hasUnvirtualizedResources(manifest: string): boolean {
+  const xml = manifest.replace(/<!--[\s\S]*?-->/g, '')
+  return /xmlns:rescap=["']http:\/\/schemas\.microsoft\.com\/appx\/manifest\/foundation\/windows10\/restrictedcapabilities["']/.test(xml)
+    && /xmlns:desktop6=["']http:\/\/schemas\.microsoft\.com\/appx\/manifest\/desktop\/windows10\/6["']/.test(xml)
+    && /<rescap:Capability\s[^>]*\bName=["']unvirtualizedResources["'][^>]*\/?>/.test(xml)
+    && ['FileSystemWriteVirtualization', 'RegistryWriteVirtualization'].every(name =>
+      new RegExp(`<desktop6:${name}>\\s*disabled\\s*</desktop6:${name}>`).test(xml))
+}
+
+export function needsXboxManifestRefresh(manifest: string, currentExecutable: string): boolean {
+  const executable = /<Application\s[^>]*Executable="([^"]+)"/i.exec(manifest)?.[1]
+  return !!executable && (!hasUnvirtualizedResources(manifest)
+    || executable.replace(/\\/g, '/').split('/').pop()?.toLowerCase() !== currentExecutable.toLowerCase())
+}
+
+export function canMigrateProfile(packageIdentity: boolean, manifest?: string): boolean {
+  return !packageIdentity || (manifest !== undefined && hasUnvirtualizedResources(manifest))
+}
+
+/** Never merge or copy a private profile. If rename fails, continue using its data. */
+export function recoverVirtualizedUserData(privatePath: string, realPath: string, allowed: boolean,
+  fs: Pick<typeof syncFs, 'existsSync' | 'renameSync'>
+): { path: string; status: string; error?: string } | undefined {
+  if (!allowed || fs.existsSync(realPath) || !fs.existsSync(privatePath)) return undefined
+  try {
+    fs.renameSync(privatePath, realPath)
+    return { path: realPath, status: 'recovered-private-profile' }
+  } catch (error) {
+    if (fs.existsSync(realPath)) return { path: realPath, status: 'concurrent-recovery', error: String(error) }
+    return { path: privatePath, status: 'private-profile-recovery-retry', error: String(error) }
+  }
+}
+
 const USER_MARKERS = ['orbit-settings.json', 'orbit-library-v2.json']
 const DOCUMENT_MARKERS = ['Emulators', 'ROMs']
 function hasMarker(root: string, markers: string[], exists: (path: string) => boolean): boolean {
@@ -10,8 +45,9 @@ function hasMarker(root: string, markers: string[], exists: (path: string) => bo
 }
 
 export function migrateUserData(oldPath: string, newPath: string,
-  fs: Pick<typeof syncFs, 'existsSync' | 'renameSync' | 'rmdirSync'>
+  fs: Pick<typeof syncFs, 'existsSync' | 'renameSync' | 'rmdirSync'>, allowed = true
 ): { path: string; status: string; error?: string } {
+  if (!allowed) return { path: oldPath, status: 'deferred-package-virtualization', error: 'Package AppData/HKCU opt-out missing or unreadable; userData and Documents migration deferred until manifest refresh and next start' }
   const oldExists = fs.existsSync(oldPath)
   const newExists = fs.existsSync(newPath)
   if (!oldExists) return { path: newPath, status: newExists ? 'new' : 'fresh' }

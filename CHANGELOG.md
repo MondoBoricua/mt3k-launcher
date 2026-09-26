@@ -8,6 +8,8 @@ Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.15.
 
 ### Mejoras
 
+- **Los mismos datos en Xbox Mode y escritorio.** Ambos accesos usan ahora la misma carpeta de datos, sin crear una copia privada; si ya se creó, se recupera automáticamente cuando falta la carpeta compartida.
+
 - **Nombre del ejecutable.** La app ahora corre como `MT3KLauncher.exe`. El acceso directo sigue siendo **MT3K Launcher** y el instalador actualiza la instalación existente.
 - **Carpetas migradas automáticamente.** En el primer arranque, `%APPDATA%\ORBIT` pasa a `%APPDATA%\MT3K Launcher` y `Documents\ORBIT` a `Documents\MT3K Launcher`, incluyendo Documentos en OneDrive. Se conservan biblioteca, ajustes, almacenamiento del navegador, ROMs y emuladores, y se reescriben las rutas guardadas. Si no se puede mover una carpeta se conserva y se reintenta al próximo arranque; nunca se mezcla ni se borra una carpeta anterior cuando ambas existen. El log queda en `logs\mt3k-launcher.log` dentro de la carpeta de datos activa.
 - **Inicio de Windows y Xbox Mode.** Se renueva la entrada de inicio con el nombre y ejecutable nuevos. La identidad de Xbox Mode y la elección de home app se conservan; tras una actualización con el helper antiguo puede haber un reinicio automático para renovar el manifiesto.

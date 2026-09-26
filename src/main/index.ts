@@ -1,4 +1,4 @@
-import './legacyUserDataPath'
+import { profileMigrationAllowed } from './legacyUserDataPath'
 import { diagnosticLog, logReadyDiagnostics } from './diagnosticLogStartup'
 import * as migrationFs from 'node:fs/promises'
 import { migrateDocuments } from './renameMigrationPolicy'
@@ -251,7 +251,7 @@ function createWindow(registerIpcHandlers: (window: BrowserWindow) => void): Bro
 }
 
 async function startOrbitUi(): Promise<void> {
-  await migrateDocuments(app.getPath('documents'), app.getPath('userData'), migrationFs, message => { void diagnosticLog.write('warn', message) })
+  if (profileMigrationAllowed) await migrateDocuments(app.getPath('documents'), app.getPath('userData'), migrationFs, message => { void diagnosticLog.write('warn', message) })
   const { refreshLegacyXboxManifest } = await import('./xboxManifestRefresh')
   if (await refreshLegacyXboxManifest()) return
   void logReadyDiagnostics()

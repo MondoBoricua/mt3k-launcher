@@ -1,3 +1,4 @@
+import { needsXboxManifestRefresh } from './renameMigrationPolicy'
 import { launchXboxManifestRefresh } from './xboxManifestRefreshPolicy'
 import { app } from 'electron'
 import { readFile, access, mkdir } from 'node:fs/promises'
@@ -20,8 +21,7 @@ export async function refreshLegacyXboxManifest(): Promise<boolean> {
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
     const manifest = await readFile(manifestPath, 'utf8')
     if (!/Name="MT3K\.OrbitGamingHome"/i.test(manifest)) return false
-    const executable = /<Application\s[^>]*Executable="([^"]+)"/i.exec(manifest)?.[1]
-    if (!executable || executable.replace(/\\/g, '/').split('/').pop()?.toLowerCase() === basename(process.execPath).toLowerCase()) return false
+    if (!needsXboxManifestRefresh(manifest, basename(process.execPath))) return false
     const script = join(process.resourcesPath, 'xbox-mode', 'Register-Mt3kLauncherXboxMode.ps1')
     await access(script)
     const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
