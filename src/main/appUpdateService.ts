@@ -270,7 +270,7 @@ try {
   # Update the existing loose manifest without removing the package identity.
   $registrationScript = Join-Path $AppDir 'resources\xbox-mode\Register-Mt3kLauncherXboxMode.ps1'
   if ((Test-Path -LiteralPath $registrationScript) -and ((Get-Content -LiteralPath $registrationScript -Raw -Encoding UTF8) -match 'switch\]\$RefreshManifestOnly')) {
-    & $registrationScript -OnlyIfRegistered -RefreshManifestOnly -LogPath $LogPath
+    & $registrationScript -OnlyIfRegistered -RefreshManifestOnly -AssetsRoot (Join-Path $AppDir 'resources\xbox-mode') -LogPath $LogPath
     if ($LASTEXITCODE -ne 0) { throw 'Xbox Mode manifest refresh failed' }
   } else {
     # Older archives may not have the refresh switch; rewrite using the preferred

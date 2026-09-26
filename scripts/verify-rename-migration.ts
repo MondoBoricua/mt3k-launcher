@@ -7,7 +7,7 @@ import * as syncFs from 'node:fs'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { migrateUserData, migrateDocuments, documentsRoot, rewritePathPrefixes, rewriteJsonPaths, preferredLauncherExecutable } from '../src/main/renameMigrationPolicy.ts'
+import { needsXboxManifestRefresh, canMigrateProfile, hasUnvirtualizedResources, recoverVirtualizedUserData, migrateUserData, migrateDocuments, documentsRoot, rewritePathPrefixes, rewriteJsonPaths, preferredLauncherExecutable } from '../src/main/renameMigrationPolicy.ts'
 import { startupLoginItemsNeedingMigration } from '../src/main/windowsStartupLoginItem.ts'
 
 const old = String.raw`C:\Users\Pana Gamer\OneDrive\Documents\ORBIT`
@@ -398,3 +398,46 @@ for (const gate of ['run verify:rename-migration', 'pwsh -NoProfile -File script
   assert.ok(workflow.indexOf(gate) > 0 && workflow.indexOf(gate) < workflow.indexOf('Package unsigned NSIS installer'))
 }
 console.log('Review regressions passed: incomplete journal, library markers, race, dual prefixes, residuals, symlinks, service isolation, Xbox marker, NSIS and CI')
+
+// Round 4: fail closed before either folder migration, and recover without merging.
+const optOut = await fs.readFile(new URL('../build/xbox/AppxManifest.xml', import.meta.url), 'utf8')
+assert.equal(hasUnvirtualizedResources(optOut), true)
+assert.equal(canMigrateProfile(false, undefined), true)
+assert.equal(canMigrateProfile(true, optOut), true)
+for (const manifest of [undefined, '', optOut.replace('unvirtualizedResources', 'other'),
+  optOut.replace('<desktop6:FileSystemWriteVirtualization>disabled', '<desktop6:FileSystemWriteVirtualization>enabled'),
+  '<!-- ' + optOut + ' -->']) assert.equal(canMigrateProfile(true, manifest), false)
+let blockedMoves = 0
+assert.equal(migrateUserData('old', 'new', { existsSync: () => true, renameSync: () => { blockedMoves++ }, rmdirSync: () => { blockedMoves++ } }, false).path, 'old')
+assert.equal(blockedMoves, 0)
+for (const allowed of [false, true]) for (const real of [false, true]) for (const cached of [false, true]) {
+  let moves = 0
+  const result = recoverVirtualizedUserData('private', 'real', allowed, {
+    existsSync: p => p === 'real' ? real : cached,
+    renameSync: (from, to) => { assert.equal(from, 'private'); assert.equal(to, 'real'); moves++ }
+  })
+  assert.equal(moves, Number(allowed && !real && cached))
+  assert.equal(result?.status === 'recovered-private-profile', allowed && !real && cached)
+}
+const recoveryRoot = await fs.mkdtemp(join(tmpdir(), 'mt3k-recovery-'))
+try {
+  const cached = join(recoveryRoot, 'private'); const real = join(recoveryRoot, 'real')
+  await fs.mkdir(cached); await fs.writeFile(join(cached, 'orbit-settings.json'), 'saved')
+  const failed = recoverVirtualizedUserData(cached, real, true, { ...syncFs, renameSync: () => { throw new Error('EXDEV') } })
+  assert.equal(failed?.path, cached); assert.equal(existsSync(real), false)
+  assert.equal(recoverVirtualizedUserData(cached, real, true, syncFs)?.status, 'recovered-private-profile')
+  assert.equal(await fs.readFile(join(real, 'orbit-settings.json'), 'utf8'), 'saved')
+  assert.equal(existsSync(cached), false)
+  assert.equal(recoverVirtualizedUserData(cached, real, true, syncFs), undefined)
+} finally { await fs.rm(recoveryRoot, { recursive: true, force: true }) }
+console.log('Round 4: package guard and private-profile recovery decisions passed')
+
+const currentManifest = optOut.replace('app\\ORBIT.exe', 'app\\MT3KLauncher.exe')
+assert.equal(needsXboxManifestRefresh(currentManifest, 'MT3KLauncher.exe'), false)
+assert.equal(needsXboxManifestRefresh(currentManifest.replace('unvirtualizedResources', 'other'), 'MT3KLauncher.exe'), true)
+assert.equal(needsXboxManifestRefresh(optOut, 'MT3KLauncher.exe'), true)
+const builder = await fs.readFile(new URL('../electron-builder.mt3k.yml', import.meta.url), 'utf8')
+assert.match(builder, /from: build\/xbox\/AppxManifest.xml\s+to: xbox-mode\/AppxManifest.xml/)
+const entry = await fs.readFile(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+assert.match(entry, /if \(profileMigrationAllowed\) await migrateDocuments/)
+console.log('Round 4: matching executable still refreshes old opt-out; template shipping and Documents guard verified')

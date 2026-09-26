@@ -73,6 +73,38 @@ function Resolve-PackageVersion([string]$OrbitRoot) {
   return '0.1.4.1'
 }
 
+function Resolve-ManifestTemplate {
+  if ($AssetsRoot) { return (Join-Path $AssetsRoot 'AppxManifest.xml') }
+  $shipped = Join-Path $PSScriptRoot 'AppxManifest.xml'
+  if (Test-Path -LiteralPath $shipped) { return $shipped }
+  return (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'build/xbox/AppxManifest.xml')
+}
+
+function New-LauncherManifest([string]$ManifestTemplate, [string]$LauncherExe,
+  [string]$PackageVersion, [string]$IdentityName = 'MT3K.OrbitGamingHome',
+  [string]$Publisher = 'CN=MT3K Edition', [string]$Architecture = 'x64') {
+  [xml]$manifest = Get-Content -LiteralPath $manifestTemplate -Raw -Encoding UTF8
+  $ns = [System.Xml.XmlNamespaceManager]::new($manifest.NameTable)
+  $ns.AddNamespace('f', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10')
+  $ns.AddNamespace('uap', 'http://schemas.microsoft.com/appx/manifest/uap/windows10')
+  $ns.AddNamespace('uap3', 'http://schemas.microsoft.com/appx/manifest/uap/windows10/3')
+  $manifest.SelectSingleNode('/f:Package/f:Applications/f:Application', $ns).SetAttribute('Executable', "app\$launcherExe")
+  $identity = $manifest.SelectSingleNode('/f:Package/f:Identity', $ns)
+  $identity.SetAttribute('Name', $IdentityName)
+  $identity.SetAttribute('Publisher', $Publisher)
+  $identity.SetAttribute('Version', $PackageVersion)
+  $identity.SetAttribute('ProcessorArchitecture', $Architecture)
+  $manifest.SelectSingleNode('/f:Package/f:Properties/f:DisplayName', $ns).InnerText = $displayName
+  $manifest.SelectSingleNode('/f:Package/f:Properties/f:PublisherDisplayName', $ns).InnerText = 'MT3K'
+  $manifest.SelectSingleNode('/f:Package/f:Properties/f:Description', $ns).InnerText = 'MT3K Launcher, a controller-first gaming launcher based on ORBIT'
+  $manifest.SelectSingleNode('//uap:VisualElements', $ns).SetAttribute('DisplayName', $displayName)
+  $manifest.SelectSingleNode('//uap:VisualElements', $ns).SetAttribute('Description', 'MT3K Launcher, a controller-first gaming launcher based on ORBIT')
+  $extension = $manifest.SelectSingleNode("//uap3:AppExtension[@Name='windows.gamingApp']", $ns)
+  $extension.SetAttribute('DisplayName', $displayName)
+  $extension.SetAttribute('Description', 'MT3K Launcher Gaming Home')
+  return ,$manifest
+}
+
 $refreshHandled = $false
 try {
   $existing = @(Get-AppxPackage -Name $packageName)
@@ -95,10 +127,10 @@ try {
       $manifestPath = Join-Path $Stage 'AppxManifest.xml'
       $originalManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8
       [xml]$manifest = $originalManifest
-      $application = @($manifest.Package.Applications.Application)[0]
+      $previousIdentity = $manifest.Package.Identity
       $exe = @('MT3KLauncher.exe', 'ORBIT.exe') | Where-Object { Test-Path -LiteralPath (Join-Path $Stage "app\$_") } | Select-Object -First 1
       if (!$exe) { throw 'No launcher executable in registered package.' }
-      $application.SetAttribute('Executable', "app\$exe")
+      $manifest = New-LauncherManifest (Resolve-ManifestTemplate) $exe $previousIdentity.Version $previousIdentity.Name $previousIdentity.Publisher $previousIdentity.ProcessorArchitecture
       $manifest.Save($manifestPath)
       Add-AppxPackage -Register $manifestPath
       $refreshSucceeded = $true
@@ -173,24 +205,7 @@ try {
   Copy-Item -Path (Join-Path $logos '*') -Destination (Join-Path $Stage 'assets') -Recurse -Force
   Copy-Item -LiteralPath $capability -Destination (Join-Path $Stage 'CustomCapability.SCCD') -Force
 
-  [xml]$manifest = Get-Content -LiteralPath $manifestTemplate -Raw -Encoding UTF8
-  $ns = [System.Xml.XmlNamespaceManager]::new($manifest.NameTable)
-  $ns.AddNamespace('f', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10')
-  $ns.AddNamespace('uap', 'http://schemas.microsoft.com/appx/manifest/uap/windows10')
-  $ns.AddNamespace('uap3', 'http://schemas.microsoft.com/appx/manifest/uap/windows10/3')
-  $manifest.SelectSingleNode('/f:Package/f:Applications/f:Application', $ns).SetAttribute('Executable', "app\$launcherExe")
-  $identity = $manifest.SelectSingleNode('/f:Package/f:Identity', $ns)
-  $identity.SetAttribute('Name', $packageName)
-  $identity.SetAttribute('Publisher', 'CN=MT3K Edition')
-  $identity.SetAttribute('Version', $packageVersion)
-  $manifest.SelectSingleNode('/f:Package/f:Properties/f:DisplayName', $ns).InnerText = $displayName
-  $manifest.SelectSingleNode('/f:Package/f:Properties/f:PublisherDisplayName', $ns).InnerText = 'MT3K'
-  $manifest.SelectSingleNode('/f:Package/f:Properties/f:Description', $ns).InnerText = 'MT3K Launcher, a controller-first gaming launcher based on ORBIT'
-  $manifest.SelectSingleNode('//uap:VisualElements', $ns).SetAttribute('DisplayName', $displayName)
-  $manifest.SelectSingleNode('//uap:VisualElements', $ns).SetAttribute('Description', 'MT3K Launcher, a controller-first gaming launcher based on ORBIT')
-  $extension = $manifest.SelectSingleNode("//uap3:AppExtension[@Name='windows.gamingApp']", $ns)
-  $extension.SetAttribute('DisplayName', $displayName)
-  $extension.SetAttribute('Description', 'MT3K Launcher Gaming Home')
+  $manifest = New-LauncherManifest $manifestTemplate $launcherExe $packageVersion
   $manifest.Save((Join-Path $Stage 'AppxManifest.xml'))
 
   # product is a protocol discriminator checked by Install/Verify-OrbitXboxPackage;

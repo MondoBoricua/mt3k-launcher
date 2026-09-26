@@ -107,6 +107,16 @@ try {
   $namespaceManager.AddNamespace('uap4', 'http://schemas.microsoft.com/appx/manifest/uap/windows10/4')
   $namespaceManager.AddNamespace('rescap', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities')
 
+  $namespaceManager.AddNamespace('desktop6', 'http://schemas.microsoft.com/appx/manifest/desktop/windows10/6')
+  if (!$manifest.SelectSingleNode("/f:Package/f:Capabilities/rescap:Capability[@Name='unvirtualizedResources']", $namespaceManager)) { throw 'AppData opt-out capability missing.' }
+  foreach ($property in 'FileSystemWriteVirtualization', 'RegistryWriteVirtualization') {
+    $node = $manifest.SelectSingleNode("/f:Package/f:Properties/desktop6:$property", $namespaceManager)
+    if (!$node -or $node.InnerText -cne 'disabled') { throw "Virtualization must be disabled: $property" }
+  }
+  foreach ($family in $manifest.Package.Dependencies.TargetDeviceFamily) {
+    if ([version]$family.MinVersion -lt [version]'10.0.18362.0') { throw 'Virtualization opt-out requires Windows 10 1903 or newer.' }
+  }
+
   $packageIdentity = $manifest.SelectSingleNode('/f:Package/f:Identity', $namespaceManager)
   if (
     $packageIdentity.Name -ne 'ORBIT.GamingHome' -or

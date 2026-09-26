@@ -4,8 +4,9 @@
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
   xmlns:uap4="http://schemas.microsoft.com/appx/manifest/uap/windows10/4"
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap uap3 uap4 rescap">
+  IgnorableNamespaces="uap uap3 uap4 rescap desktop6">
   <Identity
     Name="ORBIT.GamingHome"
     ProcessorArchitecture="x64"
@@ -16,6 +17,8 @@
     <PublisherDisplayName>Open Source Developer Luis Antonio Garcia Roque</PublisherDisplayName>
     <Description>Controller-first gaming launcher and library</Description>
     <Logo>assets\StoreLogo.png</Logo>
+    <desktop6:RegistryWriteVirtualization>disabled</desktop6:RegistryWriteVirtualization>
+    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
   </Properties>
   <Resources>
     <Resource Language="en-US" />
@@ -27,6 +30,7 @@
   </Dependencies>
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
     <uap4:CustomCapability Name="Microsoft.appCategory.gamingHome_8wekyb3d8bbwe" />
   </Capabilities>
   <Applications>
