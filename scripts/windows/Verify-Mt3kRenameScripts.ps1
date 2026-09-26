@@ -47,6 +47,40 @@ foreach ($case in @(
 }
 Write-Host 'PASS: C# source compiles; stub quoting preserves empty arguments, spaces, quotes and trailing backslashes'
 
+# Run the exact NSIS probe with process/sleep mocks in child PowerShell hosts.
+# No executable is launched by the probe; a framework assembly stands in for
+# the managed stub, and this host's native executable for pre-rename Electron.
+$installerText = Get-Content (Join-Path $root 'build/installer.nsh') -Raw
+$probe = [regex]::Match($installerText, 'nsExec::ExecToStack.*?-Command "([^"\r\n]+)"').Groups[1].Value.Replace('$$', '$')
+if (!$probe) { throw 'NSIS shutdown probe not found' }
+$probeFile = Join-Path ([IO.Path]::GetTempPath()) ('mt3k-shutdown-' + [guid]::NewGuid().ToString('N') + '.ps1')
+$previousExe = $env:MT3K_SHUTDOWN_EXE
+$hostExe = (Get-Process -Id $PID).Path
+try {
+  foreach ($case in @(
+    @{ Name = 'stub already stopped'; Exe = [object].Assembly.Location; Busy = 0; Exit = 10; Sleeps = 0 },
+    @{ Name = 'stub child stops'; Exe = [object].Assembly.Location; Busy = 3; Exit = 10; Sleeps = 3 },
+    @{ Name = 'stub child timeout'; Exe = [object].Assembly.Location; Busy = 101; Exit = 2; Sleeps = 100 },
+    @{ Name = 'real native ORBIT'; Exe = $hostExe; Busy = 101; Exit = 0; Sleeps = 0 },
+    @{ Name = 'unreadable executable'; Exe = $probeFile + '.missing'; Busy = 0; Exit = 2; Sleeps = 0 }
+  )) {
+    $env:MT3K_SHUTDOWN_EXE = $case.Exe
+    $mock = @'
+$script:calls = 0; $script:sleeps = 0
+function Get-Process { param($Name, $ErrorAction) if ($Name -ne 'MT3KLauncher') { throw 'Wrong process' }; $script:calls++; if ($script:calls -le BUSY) { [pscustomobject]@{ Id = 123 } } }
+function Start-Sleep { param($Milliseconds) if ($Milliseconds -ne 100) { throw 'Wrong interval' }; $script:sleeps++ }
+'@
+    $body = $mock.Replace('BUSY', [string]$case.Busy) + "`ntry {`n" + $probe + "`n} finally { Write-Output ('sleeps=' + `$script:sleeps) }"
+    [IO.File]::WriteAllText($probeFile, $body)
+    $output = & $hostExe -NoProfile -File $probeFile
+    if ($LASTEXITCODE -ne $case.Exit -or $output -notcontains ('sleeps=' + $case.Sleeps)) { throw "Shutdown probe failed: $($case.Name), exit=$LASTEXITCODE output=$output" }
+  }
+} finally {
+  $env:MT3K_SHUTDOWN_EXE = $previousExe
+  Remove-Item $probeFile -Force -ErrorAction SilentlyContinue
+}
+Write-Host 'PASS: NSIS stub probe skips shutdown, waits at most 10 seconds, fails on timeout and preserves native ORBIT shutdown'
+
 # Exercise the actual in-place refresh with AppX cmdlets mocked. This verifies
 # filesystem/XML behavior, not Windows deployment, package identity or WMI.
 $stageFixture = Join-Path ([System.IO.Path]::GetTempPath()) ('mt3k-manifest-' + [guid]::NewGuid().ToString('N'))

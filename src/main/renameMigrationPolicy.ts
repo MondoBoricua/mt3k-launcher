@@ -131,16 +131,17 @@ export async function migrateDocuments(documents: string, userData: string, fs: 
     }
     let oldExists = await exists(oldPath)
     let newExists = await exists(newPath)
-    const resuming = !journal.complete && (journal.moved || journal.movePending || journal.rewriteDocuments || (journal.version === undefined && await exists(journalPath) && newExists))
     let rewriteDocuments = newExists && !oldExists
     await fs.mkdir(join(userData, 'migrations'), { recursive: true })
-    if (oldExists && newExists && !resuming) {
+    if (oldExists && newExists) {
       const oldLibrary = (await Promise.all(DOCUMENT_MARKERS.map(m => exists(join(oldPath, m))))).some(Boolean)
       const newLibrary = (await Promise.all(DOCUMENT_MARKERS.map(m => exists(join(newPath, m))))).some(Boolean)
       if (oldLibrary && !newLibrary) {
         try { await fs.rmdir(newPath); newExists = false }
         catch { log('[migration] Stale Documents target retained; using legacy library and retrying next start') }
       } else log('[migration] WARNING: Both Documents folders exist; no merge, old folder left untouched')
+      // Journal intent is not evidence that the destination still holds the library.
+      rewriteDocuments = newLibrary
     }
     if (oldExists && !newExists) {
       if (!(await fs.stat(oldPath)).isDirectory()) throw new Error('Legacy Documents folder is not a directory')
@@ -149,7 +150,7 @@ export async function migrateDocuments(documents: string, userData: string, fs: 
       try { await fs.rename(oldPath, newPath); oldExists = false; newExists = true; journal.moved = true }
       catch (error) { journal.movePending = false; log(`[migration] Documents move failed; keeping old paths: ${String(error)}`) }
     }
-    rewriteDocuments = rewriteDocuments || (newExists && (resuming || !oldExists))
+    rewriteDocuments = newExists && (rewriteDocuments || !oldExists)
     const prefixes: [string, string][] = []
     if (rewriteDocuments) prefixes.push([oldPath, newPath])
     // Only rewrite Roaming paths when this run actually uses the new profile.
@@ -191,7 +192,7 @@ export async function migrateDocuments(documents: string, userData: string, fs: 
       // Persist intent before replacing the link itself, including Windows
       // directory junctions, so a crash between unlink and rename resumes.
       await fs.unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error })
-      await fs.symlink(link.target, temporary, link.directory ? 'junction' : 'file')
+      await fs.symlink(link.target, temporary, link.directory ? (windows ? 'junction' : 'dir') : 'file')
       if (await exists(link.path)) {
         if (!(await fs.lstat(link.path)).isSymbolicLink()) throw new Error('Refusing to replace a non-link')
         await fs.unlink(link.path)
@@ -203,6 +204,7 @@ export async function migrateDocuments(documents: string, userData: string, fs: 
       await atomicWrite(journalPath, JSON.stringify(journal, null, 2))
     }
     for (const link of [...journal.links ?? []]) {
+      if (!rewriteDocuments && [link.path, link.target].some(p => containsOldPathPrefix(p, newPath, windows))) continue
       try { await finishLink(link) } catch (error) { journal.errors.push(`${link.path}: ${String(error)}`) }
     }
     const rewriteLink = async (p: string): Promise<void> => {
@@ -213,9 +215,13 @@ export async function migrateDocuments(documents: string, userData: string, fs: 
         let updated = target
         for (const [old, next] of prefixes) updated = rewritePathPrefixes(updated, old, next, windows)
         if (updated === target) return
-        // Inspect the new target's type, never its contents. The old target may
-        // already be dangling because its parent directory was just renamed.
-        const directory = await fs.stat(updated).then(info => info.isDirectory(), () => false)
+        // Prefer the original link's type while its target is still available.
+        // After the move it may dangle; inspect the rewritten target next. Node
+        // exposes no portable directory bit for a dangling symlink. Preserve
+        // directory semantics when neither target can be inspected, rather than
+        // silently downgrading a Windows junction to a file symlink.
+        const directory = await fs.stat(p).then(info => info.isDirectory(), () =>
+          fs.stat(updated).then(info => info.isDirectory(), () => true))
         const link = { path: p, target: updated, directory }
         journal.links = [...journal.links?.filter(item => item.path !== p) ?? [], link]
         await atomicWrite(journalPath, JSON.stringify(journal, null, 2))
@@ -238,7 +244,7 @@ export async function migrateDocuments(documents: string, userData: string, fs: 
       if ((await fs.lstat(newPath)).isSymbolicLink()) await rewriteLink(newPath)
       else await walk(newPath)
     }
-    journal.complete = newExists && journal.errors.length === 0 && !(oldExists && !rewriteDocuments)
+    journal.complete = newExists && journal.errors.length === 0 && !journal.links?.length && !(oldExists && !rewriteDocuments)
     await atomicWrite(journalPath, JSON.stringify(journal, null, 2))
     log(`[migration] Documents ${JSON.stringify(journal)}`)
   } catch (error) { log(`[migration] Documents migration will retry: ${String(error)}`) }
