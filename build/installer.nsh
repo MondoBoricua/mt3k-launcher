@@ -11,6 +11,9 @@
   Push $R6
   ; The executable can legitimately be absent after quarantine or a partially
   ; completed repair. In that case electron-builder's normal cleanup still runs.
+  ; Never ExecWait the transitional stub when the real launcher is available.
+  StrCpy $R6 "$INSTDIR\MT3KLauncher.exe"
+  IfFileExists "$R6" orbit_background_shutdown_start
   StrCpy $R6 "$INSTDIR\${PRODUCT_FILENAME}.exe"
   IfFileExists "$R6" orbit_background_shutdown_start
   ; Before an upgrade, only the old executable may be installed.

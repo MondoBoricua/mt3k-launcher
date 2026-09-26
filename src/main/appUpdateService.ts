@@ -173,6 +173,37 @@ function Resolve-LauncherExe([string]$Root) {
 function Write-UpdateLog([string]$Message) {
   Add-Content -LiteralPath $LogPath -Value ('{0:o} {1}' -f (Get-Date), $Message)
 }
+function Move-AppDirectoryWithRetry([string]$From, [string]$To) {
+  for ($attempt = 1; $attempt -le 5; $attempt++) {
+    try { Move-Item -LiteralPath $From -Destination $To -ErrorAction Stop; return }
+    catch {
+      Write-UpdateLog ("app directory move attempt $attempt failed: " + $_.Exception.Message)
+      if ($attempt -eq 5) { throw }
+      Start-Sleep -Milliseconds 500
+    }
+  }
+}
+function Restore-PreviousApp {
+  if ($swapped -and (Test-Path -LiteralPath $previous)) {
+    # Never recursively delete the live/new tree: a sharing violation must leave
+    # both complete builds available. Quarantine it with bounded retries instead.
+    $failedApp = Join-Path $PackageRoot ('app.failed-' + [guid]::NewGuid().ToString('N'))
+    Move-AppDirectoryWithRetry $AppDir $failedApp
+    try { Move-AppDirectoryWithRetry $previous $AppDir }
+    catch {
+      Move-AppDirectoryWithRetry $failedApp $AppDir
+      throw
+    }
+    $manifestPath = Join-Path $PackageRoot 'AppxManifest.xml'
+    [System.IO.File]::WriteAllText($manifestPath, $originalManifest, [System.Text.UTF8Encoding]::new($false))
+    [xml]$restoredManifest = $originalManifest
+    if (Get-AppxPackage -Name $restoredManifest.Package.Identity.Name) { Add-AppxPackage -Register $manifestPath }
+    Write-UpdateLog 'previous app and manifest restored'
+  } elseif (-not (Test-Path -LiteralPath $AppDir) -and (Test-Path -LiteralPath $previous)) {
+    Move-AppDirectoryWithRetry $previous $AppDir
+    Write-UpdateLog 'previous app folder restored'
+  }
+}
 $previous = Join-Path $PackageRoot 'app.previous'
 $staging = Join-Path $PackageRoot 'app.update'
 $originalManifest = $null
@@ -225,7 +256,7 @@ try {
   if (-not (Test-Path -LiteralPath (Join-Path $newRoot 'resources\app.asar'))) {
     throw 'resources\app.asar is missing from the update archive'
   }
-  $originalManifest = Get-Content -LiteralPath (Join-Path $PackageRoot 'AppxManifest.xml') -Raw
+  $originalManifest = Get-Content -LiteralPath (Join-Path $PackageRoot 'AppxManifest.xml') -Raw -Encoding UTF8
   Write-UpdateLog 'swapping app folders'
   Rename-Item -LiteralPath $AppDir -NewName 'app.previous'
   try {
@@ -238,17 +269,17 @@ try {
   if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
   # Update the existing loose manifest without removing the package identity.
   $registrationScript = Join-Path $AppDir 'resources\xbox-mode\Register-Mt3kLauncherXboxMode.ps1'
-  if ((Test-Path -LiteralPath $registrationScript) -and ((Get-Content -LiteralPath $registrationScript -Raw) -match 'switch\]\$RefreshManifestOnly')) {
+  if ((Test-Path -LiteralPath $registrationScript) -and ((Get-Content -LiteralPath $registrationScript -Raw -Encoding UTF8) -match 'switch\]\$RefreshManifestOnly')) {
     & $registrationScript -OnlyIfRegistered -RefreshManifestOnly -LogPath $LogPath
     if ($LASTEXITCODE -ne 0) { throw 'Xbox Mode manifest refresh failed' }
   } else {
     # Older archives may not have the refresh switch; rewrite using the preferred
     # executable and register directly, retaining the package name and AUMID.
     $manifestPath = Join-Path $PackageRoot 'AppxManifest.xml'
-    [xml]$updatedManifest = Get-Content -LiteralPath $manifestPath -Raw
+    [xml]$updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8
     @($updatedManifest.Package.Applications.Application)[0].SetAttribute('Executable', ('app\' + (Resolve-LauncherExe $AppDir)))
     $updatedManifest.Save($manifestPath)
-    Add-AppxPackage -Register $manifestPath
+    if (Get-AppxPackage -Name $updatedManifest.Package.Identity.Name) { Add-AppxPackage -Register $manifestPath }
   }
   try {
     Remove-Item -LiteralPath $previous -Recurse -Force
@@ -258,20 +289,11 @@ try {
   Write-UpdateLog 'update applied'
 } catch {
   Write-UpdateLog ('update failed: ' + $_.Exception.Message)
-  if ($swapped -and (Test-Path -LiteralPath $previous)) {
-    Remove-Item -LiteralPath $AppDir -Recurse -Force
-    Rename-Item -LiteralPath $previous -NewName (Split-Path -Leaf $AppDir)
-    $manifestPath = Join-Path $PackageRoot 'AppxManifest.xml'
-    [System.IO.File]::WriteAllText($manifestPath, $originalManifest, [System.Text.UTF8Encoding]::new($false))
-    Add-AppxPackage -Register $manifestPath
-    Write-UpdateLog 'previous app and manifest restored'
-  } elseif (-not (Test-Path -LiteralPath $AppDir) -and (Test-Path -LiteralPath $previous)) {
-    Rename-Item -LiteralPath $previous -NewName (Split-Path -Leaf $AppDir)
-    Write-UpdateLog 'previous app folder restored'
-  }
+  try { Restore-PreviousApp }
+  catch { Write-UpdateLog ('rollback failed; retained app.previous for recovery: ' + $_.Exception.Message) }
 } finally {
   try {
-    [xml]$manifest = Get-Content -LiteralPath (Join-Path $PackageRoot 'AppxManifest.xml') -Raw
+    [xml]$manifest = Get-Content -LiteralPath (Join-Path $PackageRoot 'AppxManifest.xml') -Raw -Encoding UTF8
     $name = $manifest.Package.Identity.Name
     $applicationId = @($manifest.Package.Applications.Application)[0].Id
     $family = (Get-AppxPackage -Name $name | Select-Object -First 1).PackageFamilyName

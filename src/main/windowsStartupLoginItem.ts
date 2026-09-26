@@ -50,7 +50,7 @@ export function startupLoginItemsNeedingMigration(
   items: readonly StartupLaunchItem[], expected: StartupLoginItemExpectation
 ): StartupLaunchItem[] {
   return items.filter(item =>
-    ['orbit', 'orbit background service', expected.name.toLowerCase()].includes(item.name.toLowerCase()) &&
+    ['orbit', expected.name.toLowerCase()].includes(item.name.toLowerCase()) &&
     (item.name.toLowerCase() !== expected.name.toLowerCase() || item.path.toLowerCase() !== expected.path.toLowerCase())
   )
 }

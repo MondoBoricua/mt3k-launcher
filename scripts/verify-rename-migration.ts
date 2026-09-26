@@ -1,6 +1,9 @@
+import { launchXboxManifestRefresh } from '../src/main/xboxManifestRefreshPolicy.ts'
+import { getOrbitBackgroundServiceLoginItemInstallation } from '../src/main/orbitBackgroundServiceLoginItem.ts'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import * as fs from 'node:fs/promises'
+import * as syncFs from 'node:fs'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +17,10 @@ assert.equal(rewritePathPrefixes(old.toLowerCase(), old, next, true), next)
 assert.equal(rewritePathPrefixes(old.toLowerCase(), old, next, false), old.toLowerCase())
 assert.equal(rewritePathPrefixes(old.replaceAll('\\', '/') + '/a', old, next, true), next.replaceAll('\\', '/') + '/a')
 assert.equal(rewritePathPrefixes('file:///C:/Users/Pana%20Gamer/OneDrive/Documents/ORBIT/a', old, next, true), 'file:///C:/Users/Pana%20Gamer/OneDrive/Documents/MT3K%20Launcher/a')
+assert.equal(rewritePathPrefixes('file://C:/Users/Pana%20Gamer/OneDrive/Documents/ORBIT/a', old, next, true), 'file://C:/Users/Pana%20Gamer/OneDrive/Documents/MT3K%20Launcher/a')
+assert.equal(rewritePathPrefixes('C:/Users/Pana%20Gamer/OneDrive/Documents/ORBIT/a', old, next, true), 'C:/Users/Pana%20Gamer/OneDrive/Documents/MT3K%20Launcher/a')
+assert.equal(rewritePathPrefixes('file:///C:/Users/A/Documents/ORBIT/a', String.raw`C:\Users\A\Documents\ORBIT`, String.raw`C:\Users\A\Documents\MT3K Launcher`, true), 'file:///C:/Users/A/Documents/MT3K%20Launcher/a')
+for (const suffix of [',', ')']) assert.equal(rewritePathPrefixes(old + suffix, old, next, true), next + suffix)
 assert.equal(rewritePathPrefixes(old + '-other', old, next, true), old + '-other')
 const store = JSON.stringify({ emulatorPath: old + '\\Emulators\\a.exe', nested: [old, old.replaceAll('\\', '/')], untouched: 'ORBIT' })
 const rewritten = JSON.parse(rewriteJsonPaths(store, old, next, true))
@@ -26,12 +33,12 @@ for (const [oldExists, newExists, status, path] of [
   [true, true, 'both-exist-old-left-in-place', 'new'], [false, false, 'fresh', 'new']
 ] as const) {
   let calls = 0
-  const result = migrateUserData('old', 'new', { existsSync: p => p === 'old' ? oldExists : newExists, renameSync: () => { calls++ } })
+  const result = migrateUserData('old', 'new', { existsSync: p => p === 'old' ? oldExists : newExists, rmdirSync: () => undefined, renameSync: () => { calls++ } })
   assert.equal(result.status, status); assert.equal(result.path, path)
   assert.equal(calls, oldExists && !newExists ? 1 : 0)
 }
 for (const code of ['EPERM', 'EXDEV', 'EACCES', 'EBUSY']) {
-  const result = migrateUserData('old', 'new', { existsSync: p => p === 'old', renameSync: () => { throw new Error(code) } })
+  const result = migrateUserData('old', 'new', { existsSync: p => p === 'old', rmdirSync: () => undefined, renameSync: () => { throw new Error(code) } })
   assert.equal(result.path, 'old'); assert.equal(result.status, 'retry-next-start')
   assert.match(result.error!, new RegExp(code))
 }
@@ -90,11 +97,19 @@ try {
   assert.equal(documentsRoot(documents, existsSync), target)
   const journalPath = join(userData, 'migrations', 'documents-folder.json')
   assert.equal(JSON.parse(await fs.readFile(journalPath, 'utf8')).complete, false)
+  // Reappearance of ORBIT must not abandon the unfinished new tree.
+  await fs.mkdir(source, { recursive: true })
+  await fs.writeFile(join(source, 'untouched.cfg'), source)
   await migrateDocuments(documents, userData, fs, log)
+  assert.equal(JSON.parse(await fs.readFile(journalPath, 'utf8')).complete, false, 'undecodable and oversized configs must block completion')
+  await fs.unlink(join(target, 'bad.cfg'))
+  await fs.unlink(join(target, 'large.txt'))
+  await migrateDocuments(documents, userData, fs, log)
+  assert.equal(await fs.readFile(join(source, 'untouched.cfg'), 'utf8'), source)
   const journal = JSON.parse(await fs.readFile(journalPath, 'utf8'))
   assert.equal(journal.complete, true)
   assert.equal(journal.rewrittenCount, 2)
-  assert.equal(journal.skipped.length, 2)
+  assert.equal(journal.skipped.length, 0)
   assert.equal(JSON.parse(await fs.readFile(join(userData, 'orbit-settings.json'), 'utf8')).corePath, target + '/Emulators/core')
   assert.equal(await fs.readFile(join(target, 'Emulators', 'retroarch.cfg'), 'utf8'), `core_directory = "${target}/Emulators"`)
   const snapshot = await fs.readFile(journalPath, 'utf8')
@@ -102,12 +117,102 @@ try {
   assert.equal(await fs.readFile(journalPath, 'utf8'), snapshot, 'completed migration is a no-op')
   // Both directories: never merge or rewrite the old tree.
   const bothUserData = join(root, 'both-user'); await fs.mkdir(bothUserData)
-  await fs.mkdir(source)
+  await fs.mkdir(source, { recursive: true })
   await fs.writeFile(join(source, 'keep.cfg'), source)
   await migrateDocuments(documents, bothUserData, fs, log)
   assert.equal(await fs.readFile(join(source, 'keep.cfg'), 'utf8'), source)
   assert.equal(documentsRoot(documents, existsSync), target)
   assert.ok(logs.some(line => line.includes('Both Documents')))
+
+  // Both marker selection and double-start behavior run against the real fs.
+  for (const kind of ['empty', 'stale', 'real'] as const) {
+    const parent = join(root, `profile-${kind}`)
+    const legacy = join(parent, 'ORBIT'); const modern = join(parent, 'MT3K Launcher')
+    await fs.mkdir(legacy, { recursive: true }); await fs.mkdir(modern)
+    await fs.writeFile(join(legacy, 'orbit-library-v2.json'), '{}')
+    if (kind !== 'empty') await fs.writeFile(join(modern, kind === 'real' ? 'orbit-settings.json' : 'cache'), 'preserve')
+    const result = migrateUserData(legacy, modern, syncFs)
+    assert.equal(result.path, kind === 'stale' ? legacy : modern)
+    assert.equal(result.status, kind === 'empty' ? 'moved' : kind === 'stale' ? 'stale-target-old-library-retained' : 'both-exist-old-left-in-place')
+  }
+  let raced = false
+  const race = migrateUserData('legacy', 'modern', {
+    existsSync: p => p === 'legacy' ? !raced : raced,
+    rmdirSync: () => undefined,
+    renameSync: () => { raced = true; throw Object.assign(new Error('another process won'), { code: 'ENOENT' }) }
+  })
+  assert.equal(race.path, 'modern')
+  assert.equal(race.status, 'concurrent-move')
+  for (const kind of ['empty', 'stale', 'real'] as const) {
+    const docs = join(root, `docs-${kind}`); const data = join(root, `data-${kind}`)
+    const legacy = join(docs, 'ORBIT'); const modern = join(docs, 'MT3K Launcher')
+    await fs.mkdir(join(legacy, 'ROMs'), { recursive: true }); await fs.mkdir(modern); await fs.mkdir(data)
+    if (kind === 'real') await fs.mkdir(join(modern, 'Emulators'))
+    if (kind === 'stale') await fs.writeFile(join(modern, 'cache'), 'preserve')
+    assert.equal(documentsRoot(docs, existsSync), kind === 'real' ? modern : legacy)
+    for (let i = 0; i < 2; i++) await migrateDocuments(docs, data, fs, log)
+    assert.equal(documentsRoot(docs, existsSync), kind === 'stale' ? legacy : modern)
+    assert.equal(existsSync(legacy), kind !== 'empty')
+  }
+  const dualDocs = join(root, 'dual-docs'); const dualData = join(root, 'dual-profile', 'MT3K Launcher')
+  const oldData = join(root, 'dual-profile', 'ORBIT')
+  const oldDocs = join(dualDocs, 'ORBIT'); const newDocs = join(dualDocs, 'MT3K Launcher')
+  await fs.mkdir(join(oldDocs, 'ROMs'), { recursive: true }); await fs.mkdir(dualData, { recursive: true })
+  const dualStore = join(dualData, 'orbit-settings.json')
+  await fs.writeFile(dualStore, JSON.stringify({ roaming: oldData + '/artwork', documents: oldDocs + '/ROMs' }).replaceAll('/', '\\/'))
+  await fs.writeFile(join(oldDocs, 'paths.cfg'), oldData + '/artwork\n' + oldDocs + '/ROMs')
+  await fs.symlink(join(oldDocs, 'paths.cfg'), join(oldDocs, 'absolute.cfg'), 'file')
+  await fs.symlink(join(oldDocs, 'ROMs'), join(oldDocs, 'absolute-directory'), 'junction')
+  await fs.symlink('paths.cfg', join(oldDocs, 'relative.cfg'), 'file')
+  const outside = join(root, 'outside'); await fs.mkdir(outside)
+  await fs.writeFile(join(outside, 'untouched.cfg'), oldDocs)
+  await fs.symlink(outside, join(oldDocs, 'outside'), 'junction')
+  let interruptLink = true
+  const linkInterruptedFs = { ...fs, rename: async (from: Parameters<typeof fs.rename>[0], to: Parameters<typeof fs.rename>[1]) => {
+    if (String(to).endsWith('absolute-directory') && interruptLink) { interruptLink = false; throw new Error('interrupted link replacement') }
+    return fs.rename(from, to)
+  } }
+  await migrateDocuments(dualDocs, dualData, linkInterruptedFs, log)
+  const linkJournal = JSON.parse(await fs.readFile(join(dualData, 'migrations', 'documents-folder.json'), 'utf8'))
+  assert.equal(linkJournal.complete, false)
+  assert.equal(linkJournal.links.length, 1)
+  await migrateDocuments(dualDocs, dualData, fs, log)
+  assert.equal(JSON.parse(await fs.readFile(join(dualData, 'migrations', 'documents-folder.json'), 'utf8')).complete, true)
+  assert.deepEqual(JSON.parse(await fs.readFile(dualStore, 'utf8')), { roaming: dualData + '/artwork', documents: newDocs + '/ROMs' })
+  assert.equal(await fs.readlink(join(newDocs, 'absolute.cfg')), join(newDocs, 'paths.cfg'))
+  assert.equal((await fs.stat(join(newDocs, 'absolute-directory'))).isDirectory(), true)
+  assert.equal(await fs.readlink(join(newDocs, 'relative.cfg')), 'paths.cfg')
+  assert.equal(await fs.readFile(join(outside, 'untouched.cfg'), 'utf8'), oldDocs)
+  // Unhandled mixed separators must be reported, never silently completed.
+  const residual = oldDocs.replaceAll('\\', '/').replace('/ORBIT', '\\ORBIT') + '/ROMs'
+  await fs.writeFile(join(newDocs, 'mixed.cfg'), residual)
+  const dualJournal = join(dualData, 'migrations', 'documents-folder.json')
+  const pending = JSON.parse(await fs.readFile(dualJournal, 'utf8')); pending.complete = false
+  await fs.writeFile(dualJournal, JSON.stringify(pending))
+  await migrateDocuments(dualDocs, dualData, fs, log)
+  assert.equal(JSON.parse(await fs.readFile(dualJournal, 'utf8')).complete, false)
+  assert.match(JSON.parse(await fs.readFile(dualJournal, 'utf8')).errors.join(), /Unresolved old prefix/)
+  // A resumed new-only tree may have no recorded move (crash or manual rename).
+  const resumeDocs = join(root, 'resume-docs'); const resumeData = join(root, 'resume-data')
+  const resumeOld = join(resumeDocs, 'ORBIT'); const resumeNew = join(resumeDocs, 'MT3K Launcher')
+  await fs.mkdir(join(resumeNew, 'ROMs'), { recursive: true }); await fs.mkdir(resumeData)
+  await fs.writeFile(join(resumeNew, 'locked.cfg'), resumeOld + '/ROMs')
+  const lockedFs = { ...fs, rename: async (from: Parameters<typeof fs.rename>[0], to: Parameters<typeof fs.rename>[1]) => {
+    if (String(to).endsWith('locked.cfg')) throw new Error('locked config')
+    return fs.rename(from, to)
+  } }
+  await migrateDocuments(resumeDocs, resumeData, lockedFs, log)
+  await fs.mkdir(join(resumeOld, 'ROMs'), { recursive: true })
+  await migrateDocuments(resumeDocs, resumeData, fs, log)
+  assert.equal(await fs.readFile(join(resumeNew, 'locked.cfg'), 'utf8'), resumeNew + '/ROMs')
+  assert.equal(JSON.parse(await fs.readFile(join(resumeData, 'migrations', 'documents-folder.json'), 'utf8')).complete, true)
+  const linkDocs = join(root, 'link-docs'); const linkData = join(root, 'link-data')
+  await fs.mkdir(linkDocs); await fs.mkdir(linkData)
+  await fs.symlink(outside, join(linkDocs, 'ORBIT'), 'junction')
+  await migrateDocuments(linkDocs, linkData, fs, log)
+  assert.equal(existsSync(join(linkDocs, 'ORBIT')), false)
+  assert.equal((await fs.lstat(join(linkDocs, 'MT3K Launcher'))).isSymbolicLink(), true)
+  assert.equal(await fs.readFile(join(outside, 'untouched.cfg'), 'utf8'), oldDocs)
 } finally { await fs.rm(root, { recursive: true, force: true }) }
 
 // Ensure tested preference stays wired into the embedded PowerShell helper.
@@ -116,3 +221,42 @@ assert.ok(updater.includes("@('MT3KLauncher.exe', 'ORBIT.exe')"))
 assert.ok(updater.includes('Resolve-LauncherExe $newRoot'))
 assert.ok(updater.includes('-OnlyIfRegistered -RefreshManifestOnly'))
 console.log('Rename migration: prefixes, JSON, decision table, failures, resume, idempotence, text limits, startup and archive preference passed')
+
+const unrelatedService = { ...expected, name: 'ORBIT Background Service', path: 'C:\\Old\\ORBIT.exe', enabled: true, args: ['orbit-background-agent'] }
+const launcherRows = startupLoginItemsNeedingMigration([{ ...expected, name: 'ORBIT', enabled: false }, unrelatedService], expected)
+assert.equal(launcherRows.length, 1)
+assert.equal(launcherRows.some(item => item.enabled), false)
+assert.equal(startupLoginItemsNeedingMigration([unrelatedService], expected).length, 0)
+const refreshSource = await fs.readFile(new URL('../src/main/xboxManifestRefresh.ts', import.meta.url), 'utf8')
+assert.ok(refreshSource.includes("await access(join(root, 'app', 'manifest-refresh.failed'))"))
+assert.ok(!refreshSource.includes('unlink('))
+let quits = 0
+for (const stdout of ['', '0', 'invalid']) {
+  await assert.rejects(launchXboxManifestRefresh(async () => ({ stdout }), () => { quits++ }))
+}
+await assert.rejects(launchXboxManifestRefresh(async () => { throw new Error('WMI failed') }, () => { quits++ }))
+assert.equal(quits, 0)
+await launchXboxManifestRefresh(async () => ({ stdout: '12345\n' }), () => { quits++ })
+assert.equal(quits, 1)
+const servicePath = String.raw`C:\Program Files\MT3K Launcher\MT3KLauncher.exe`
+const lookups: string[] = []
+const serviceStatus = getOrbitBackgroundServiceLoginItemInstallation({
+  getLoginItemSettings: (options) => {
+    lookups.push(options!.path!)
+    return { openAtLogin: false, executableWillLaunchAtLogin: false, launchItems:
+      options!.path!.endsWith('ORBIT.exe"') ? [{ ...unrelatedService, scope: 'user' }] : [] } as never
+  }
+}, servicePath)
+assert.deepEqual(serviceStatus, { installation: 'repair-needed', reason: 'configuration-mismatch' })
+assert.ok(lookups.every(path => path.startsWith('"') && path.endsWith('"')))
+const managerSource = await fs.readFile(new URL('../src/main/orbitBackgroundServiceManager.ts', import.meta.url), 'utf8')
+assert.ok(managerSource.includes("status.reason === 'configuration-mismatch'"))
+assert.ok(managerSource.includes("await this.control('repair')"))
+assert.ok(managerSource.includes('path: process.execPath'))
+const installer = await fs.readFile(new URL('../build/installer.nsh', import.meta.url), 'utf8')
+assert.ok(installer.indexOf('StrCpy $R6 "$INSTDIR\\MT3KLauncher.exe"') < installer.indexOf('StrCpy $R6 "$INSTDIR\\ORBIT.exe"'))
+const workflow = await fs.readFile(new URL('../.github/workflows/build-windows.yml', import.meta.url), 'utf8')
+for (const gate of ['run verify:rename-migration', 'pwsh -NoProfile -File scripts/windows/Verify-Mt3kRenameScripts.ps1']) {
+  assert.ok(workflow.indexOf(gate) > 0 && workflow.indexOf(gate) < workflow.indexOf('Package unsigned NSIS installer'))
+}
+console.log('Review regressions passed: incomplete journal, library markers, race, dual prefixes, residuals, symlinks, service isolation, Xbox marker, NSIS and CI')

@@ -144,7 +144,7 @@ export class OrbitBackgroundMode {
 $key = Get-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue
 $result = @()
 if ($key) {
-  foreach ($name in @('ORBIT', 'ORBIT Background Service', 'MT3K Launcher')) {
+  foreach ($name in @('ORBIT', 'MT3K Launcher')) {
     $command = [string]$key.GetValue($name)
     if ($command -match '^"([^"\r\n]+)"') { $result += $Matches[1] }
     elseif ($command -match '^([^\s]+\.exe)(?:\s|$)') { $result += $Matches[1] }

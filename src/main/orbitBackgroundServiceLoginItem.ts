@@ -1,3 +1,5 @@
+import { win32 } from 'node:path'
+import { windowsLoginItemLookupPath } from './windowsStartupLoginItem'
 import type { App } from 'electron'
 import type { OrbitBackgroundServiceStatus } from '@shared/ipc'
 import { ORBIT_AGENT_ARGUMENT } from './orbitServiceProtocol'
@@ -41,12 +43,17 @@ export function getOrbitBackgroundServiceLoginItemInstallation(
   developmentAppPath?: string
 ): Pick<OrbitBackgroundServiceStatus, 'installation' | 'reason'> {
   const args = orbitBackgroundServiceLoginItemArguments(developmentAppPath)
-  const settings = electronApp.getLoginItemSettings({ path: executablePath, args })
+  const settings = electronApp.getLoginItemSettings({ path: windowsLoginItemLookupPath(executablePath), args })
+  const legacyPath = win32.join(win32.dirname(executablePath), 'ORBIT.exe')
+  const legacyItems = legacyPath.toLowerCase() === executablePath.toLowerCase() ? [] :
+    electronApp.getLoginItemSettings({ path: windowsLoginItemLookupPath(legacyPath), args }).launchItems
+  const launchItems = [...settings.launchItems, ...legacyItems]
+    .filter(item => item.name.toLowerCase() === ORBIT_BACKGROUND_SERVICE_LOGIN_ITEM_NAME.toLowerCase())
   return classifyWindowsLoginItem(
     {
       openAtLogin: settings.openAtLogin,
       executableWillLaunchAtLogin: settings.executableWillLaunchAtLogin,
-      launchItems: settings.launchItems.map((item) => ({
+      launchItems: launchItems.map((item) => ({
         name: item.name,
         path: item.path,
         args: [...item.args],

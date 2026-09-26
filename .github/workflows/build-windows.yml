@@ -37,6 +37,13 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Verify rename migration
+        run: npm run verify:rename-migration
+
+      - name: Verify Windows rename scripts
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/windows/Verify-Mt3kRenameScripts.ps1
+
       - name: Build renderer, preload and main
         run: npm run build
 
