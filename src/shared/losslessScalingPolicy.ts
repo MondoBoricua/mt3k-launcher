@@ -106,15 +106,155 @@ export function decideLosslessScalingStart(input: {
 
 export type LosslessScalingStopDecision = 'nothing' | 'forget' | 'close'
 
+/** Ownership is the spawned child handle, never a bare PID: once it exited, nothing is done. */
 export function decideLosslessScalingStop(input: {
-  startedPid: number | undefined
+  owned: boolean
+  exited: boolean
   closeOnExit: boolean
-  /** The PID still belongs to a LosslessScaling.exe process. */
-  stillOurs: boolean
 }): LosslessScalingStopDecision {
-  if (!input.startedPid) return 'nothing'
-  if (!input.closeOnExit || !input.stillOurs) return 'forget'
+  if (!input.owned) return 'nothing'
+  if (input.exited || !input.closeOnExit) return 'forget'
   return 'close'
+}
+
+export type LosslessScalingCloseMethod = 'none' | 'window-then-handle' | 'handle'
+
+/** A graceful WM_CLOSE needs the process start time so the script can refuse a reused PID;
+ * without it only the handle-based kill (immune to PID reuse) is used. */
+export function decideLosslessScalingCloseMethod(input: {
+  exited: boolean
+  startTicks: string | undefined
+}): LosslessScalingCloseMethod {
+  if (input.exited) return 'none'
+  return input.startTicks && /^\d{1,19}$/.test(input.startTicks) ? 'window-then-handle' : 'handle'
+}
+
+function assertPid(pid: number): void {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('Invalid process id')
+}
+
+/** PowerShell that prints the process start time (UTC ticks) for one PID. */
+export function losslessScalingStartTimeScript(pid: number): string {
+  assertPid(pid)
+  return `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($null -ne $p) { $p.StartTime.ToUniversalTime().Ticks }`
+}
+
+export function parseLosslessScalingStartTicks(output: string): string | undefined {
+  const value = output.trim()
+  return /^\d{1,19}$/.test(value) ? value : undefined
+}
+
+/** PowerShell that asks the main window to close, only if the PID still has the same start time. */
+export function losslessScalingCloseWindowScript(pid: number, startTicks: string): string {
+  assertPid(pid)
+  if (!/^\d{1,19}$/.test(startTicks)) throw new Error('Invalid process start time')
+  return `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
+    `if ($null -eq $p -or $p.ProcessName -ne 'LosslessScaling' -or $p.StartTime.ToUniversalTime().Ticks -ne ${startTicks}) { exit 3 }; ` +
+    `if ($p.MainWindowHandle -ne 0) { $null = $p.CloseMainWindow() }`
+}
+
+/** The minimal ChildProcess surface the launcher needs. */
+export interface CompanionChild {
+  readonly pid?: number
+  once(event: 'exit', listener: () => void): unknown
+  kill(): boolean
+}
+
+/**
+ * The launcher owns exactly the process it spawned, through its child handle.
+ * The 'exit' event invalidates ownership immediately; after it fired the PID is
+ * never used again, so a reused PID can never be closed by mistake.
+ */
+export class OwnedCompanionProcess {
+  private exitedFlag = false
+  private readonly exitWaiters = new Set<() => void>()
+  startTicks: string | undefined
+  /** Settles once the start time lookup finished (successfully or not). */
+  startTicksReady: Promise<void> = Promise.resolve()
+  private readonly child: CompanionChild
+  readonly session: number
+
+  constructor(child: CompanionChild, session: number) {
+    this.child = child
+    this.session = session
+    child.once('exit', () => {
+      this.exitedFlag = true
+      for (const resolve of this.exitWaiters) resolve()
+      this.exitWaiters.clear()
+    })
+  }
+
+  get exited(): boolean {
+    return this.exitedFlag
+  }
+
+  /** The PID, only while the process is still the one we started. */
+  get pid(): number | undefined {
+    const pid = this.child.pid
+    return !this.exitedFlag && pid !== undefined && Number.isSafeInteger(pid) && pid > 0 ? pid : undefined
+  }
+
+  /** Terminates through the handle (TerminateProcess on Windows); never by PID lookup. */
+  kill(): boolean {
+    if (this.exitedFlag) return false
+    try {
+      return this.child.kill()
+    } catch {
+      return false
+    }
+  }
+
+  whenExited(timeoutMs: number): Promise<boolean> {
+    if (this.exitedFlag) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer)
+        resolve(true)
+      }
+      const timer = setTimeout(() => {
+        this.exitWaiters.delete(done)
+        resolve(this.exitedFlag)
+      }, timeoutMs)
+      this.exitWaiters.add(done)
+    })
+  }
+}
+
+/** One generation per launch. Stale startup work must check `isCurrent` before spawning. */
+export class LosslessScalingLaunchTracker {
+  private generation = 0
+  private activeSession: number | undefined
+
+  begin(): number {
+    this.activeSession = ++this.generation
+    return this.activeSession
+  }
+
+  get active(): number | undefined {
+    return this.activeSession
+  }
+
+  isCurrent(session: number): boolean {
+    return this.activeSession === session
+  }
+
+  /** Ends one session, or whichever is active when no id is given. Returns the ended id. */
+  end(session?: number): number | undefined {
+    const target = session ?? this.activeSession
+    if (target !== undefined && this.activeSession === target) this.activeSession = undefined
+    return target
+  }
+}
+
+/** Resolves `true` when the work finished inside the budget, `false` on expiry. */
+export function withinBudget(work: Promise<unknown>, budgetMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), budgetMs)
+    work.then(
+      () => { clearTimeout(timer); resolve(true) },
+      () => { clearTimeout(timer); resolve(true) }
+    )
+  })
 }
 
 function windowsBaseName(path: string): string {
@@ -179,18 +319,24 @@ export function losslessScalingSteamCandidates(
 export function resolveLosslessScalingExecutable(input: {
   platform: string
   manualPath: string | undefined
-  steamCandidates: readonly string[]
-  isFile: (path: string) => boolean
+  /** The manual path exists and is a regular file. */
+  manualIsFile: boolean
+  /** First Steam candidate that exists; only looked up when the manual path is unusable. */
+  steamPath: string | undefined
 }): LosslessScalingStatus {
   const supported = input.platform === 'win32'
   const manualPath = input.manualPath?.trim() || undefined
   if (!supported) return { supported, state: 'missing', source: 'none', manualPath }
-  if (manualPath && isLosslessScalingExecutablePath(manualPath) && input.isFile(manualPath)) {
+  if (manualPath && isLosslessScalingExecutablePath(manualPath) && input.manualIsFile) {
     return { supported, state: 'found', source: 'manual', path: manualPath, manualPath }
   }
-  const steamPath = input.steamCandidates.find((candidate) => input.isFile(candidate))
-  if (steamPath) return { supported, state: 'found', source: 'steam', path: steamPath, manualPath }
+  if (input.steamPath) return { supported, state: 'found', source: 'steam', path: input.steamPath, manualPath }
   return { supported, state: 'missing', source: 'none', manualPath }
+}
+
+/** The Steam scan is skipped whenever a usable manual override exists. */
+export function needsLosslessScalingSteamScan(manualPath: string | undefined, manualIsFile: boolean): boolean {
+  return !(manualPath && isLosslessScalingExecutablePath(manualPath) && manualIsFile)
 }
 
 export function losslessScalingWorkingDirectory(executablePath: string): string {

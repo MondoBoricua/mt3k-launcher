@@ -96,10 +96,11 @@ export interface CompletedGameSessionResult {
 export interface GameSessionCallbacks {
   beforeLocalLaunch?: (game: LibraryGame) => Promise<boolean>
   restoreLaunchProfile?: () => void
-  /** Companion apps (Lossless Scaling) that start with a local game. Must never reject. */
-  startLaunchCompanions?: (game: LibraryGame) => Promise<void>
-  /** Session ended (complete, error or cancelled): close companions the launcher started. */
-  stopLaunchCompanions?: () => void
+  /** Companion apps (Lossless Scaling) started with a local game. Returns the companion
+   * launch session, if any. Failures are contained at the call site. */
+  startLaunchCompanions?: (game: LibraryGame) => Promise<number | undefined>
+  /** Session ended (complete, error or cancelled). Without an id, ends the active companion session. */
+  stopLaunchCompanions?: (session?: number) => void
   getLibraryGames?: () => readonly LibraryGame[]
   getGeForceNowMatches?: () => readonly GeForceNowLibraryMatch[]
   onGameConfirmed?: (game: LibraryGame, detectedAt: number, source?: 'local' | 'geforce-now') => void | Promise<void>
@@ -1215,9 +1216,9 @@ export class GameSessionManager extends EventEmitter {
         this.update({ phase: 'idle' })
         return
       }
-      await this.callbacks.startLaunchCompanions?.(game)
+      const companionSession = await this.startCompanions(game)
       if (token !== this.activeToken) {
-        this.callbacks.stopLaunchCompanions?.()
+        this.stopCompanions(companionSession)
         return
       }
       const receipt = await launchGame(game)
@@ -1608,7 +1609,7 @@ export class GameSessionManager extends EventEmitter {
     this.geForceNowLaunchIntent = undefined
     this.geForceNowSessionIdentity = undefined
     this.callbacks.restoreLaunchProfile?.()
-    this.callbacks.stopLaunchCompanions?.()
+    this.stopCompanions()
     this.status = { phase: 'idle' }
     this.removeAllListeners()
     return completed
@@ -2098,6 +2099,24 @@ export class GameSessionManager extends EventEmitter {
     focusExternalProcess(pid, ensureFullscreenWithHotkey)
   }
 
+  /** Optional companions must never abort or fail a game launch. */
+  private async startCompanions(game: LibraryGame): Promise<number | undefined> {
+    try {
+      return await this.callbacks.startLaunchCompanions?.(game)
+    } catch (error) {
+      console.warn('[launch-companions] Startup failed; launching the game anyway:', error)
+      return undefined
+    }
+  }
+
+  private stopCompanions(session?: number): void {
+    try {
+      this.callbacks.stopLaunchCompanions?.(session)
+    } catch (error) {
+      console.warn('[launch-companions] Cleanup failed:', error)
+    }
+  }
+
   private releaseLaunchShield(minimize: boolean): void {
     if (this.mainWindow.isDestroyed()) return
     this.mainWindow.setAlwaysOnTop(false)
@@ -2112,7 +2131,7 @@ export class GameSessionManager extends EventEmitter {
     // idle cierra la sesión bien; error también, por si el splash no llega a idle.
     if (shouldRestoreLaunchProfile(status.phase) && status.phase !== previous.phase) {
       this.callbacks.restoreLaunchProfile?.()
-      this.callbacks.stopLaunchCompanions?.()
+      this.stopCompanions()
     }
     if (status.phase === 'idle') {
       this.activeGame = null

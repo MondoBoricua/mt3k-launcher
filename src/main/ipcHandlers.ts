@@ -163,6 +163,8 @@ import { validateGameMetadataUpdate } from './library/gameMetadataInput'
 import { runSystemPowerAction } from './systemPower'
 import { canRequestGameInstall } from '@shared/gameInstallation'
 
+const LOSSLESS_SCALING_QUIT_BUDGET_MS = 3_000
+
 const SYSTEM_POWER_ACTIONS: readonly SystemPowerAction[] = ['sleep', 'restart', 'shutdown']
 const SYSTEM_SETTINGS_TARGETS: Record<SystemSettingsTarget, string> = {
   power: 'ms-settings:batterysaver',
@@ -804,7 +806,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   }
   losslessScalingService.initialize((event) => {
-    if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(IPC.losslessScalingEvent, event)
+    try {
+      if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(IPC.losslessScalingEvent, event)
+    } catch (error) {
+      console.warn('[lossless-scaling] Could not deliver the notice:', error)
+    }
+  })
+  // Normal quit: give companion cleanup (pending startup + owned copies) a bounded, awaited window.
+  let losslessScalingQuitReady = false
+  app.on('will-quit', (event) => {
+    if (losslessScalingQuitReady || !losslessScalingService.hasPendingWork()) return
+    event.preventDefault()
+    void losslessScalingService.shutdown(LOSSLESS_SCALING_QUIT_BUDGET_MS).finally(() => {
+      losslessScalingQuitReady = true
+      app.quit()
+    })
   })
   const assertMainFrame = (event: Electron.IpcMainInvokeEvent): void => {
     if (event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
@@ -901,7 +917,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     beforeLocalLaunch: (game) => launchProfileService.beforeLaunch(game.id),
     restoreLaunchProfile: () => launchProfileService.restore(),
     startLaunchCompanions: (game) => losslessScalingService.beforeLaunch(game),
-    stopLaunchCompanions: () => void losslessScalingService.sessionEnded(),
+    stopLaunchCompanions: (session) => void losslessScalingService.sessionEnded(session),
     getLibraryGames: () => libraryService.getSnapshot().games,
     getGeForceNowMatches: () => currentGeForceNowSnapshot().matches,
     onGameConfirmed: (game, detectedAt, source) => libraryService.markGameStarted(game.id, detectedAt, source),
@@ -1193,6 +1209,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const next = { ...publicSettingsSnapshot(), ...partial }
     settingsStore.set(next)
     if ('launchProfilesEnabled' in partial) launchProfileService.preferencesChanged()
+    if (Object.keys(partial).some((key) => key.startsWith('losslessScaling'))) losslessScalingService.invalidateDiscovery()
     if (retroPauseTurningOff) void restoreRetroArchNetworkCommandsOnDisable()
     if (languageChanged) {
       geForceNowCatalogService.refreshIfStale()
