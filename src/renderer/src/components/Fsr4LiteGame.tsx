@@ -91,7 +91,12 @@ export function useFsr4LiteGame(gameId: string | null): {
       .then((next) => { if (active) setView(next) })
       .catch(() => { if (active) setView(null) })
     const stop = window.api.fsr4Lite.onEvent((event: Fsr4LiteEvent) => {
-      if (!active || event.gameId !== gameId || event.kind !== 'session') return
+      if (!active || event.gameId !== gameId) return
+      if (event.kind === 'repair') {
+        setView((current) => current ? { ...current, phase: 'broken' } : current)
+        return
+      }
+      if (event.kind !== 'session') return
       setView((current) => current ? { ...current, sessionStatus: event.status, resolution: event.resolution } : current)
     })
     return () => {

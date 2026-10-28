@@ -533,15 +533,23 @@ export function resolveGameExecutable(input: {
   return selected
 }
 
-/** Carpetas de redist que el widget no recorre. Engine y Content sí se recorren. */
+/**
+ * Solo redist. Support se recorre: ahí puede estar el anti-cheat o el widget.
+ * Engine y Content también se recorren.
+ */
 const WALK_SKIP_DIRS = new Set([
-  '_commonredist', '__redist', 'redist', 'redistributables', 'directx', 'support', 'prerequisites'
+  '_commonredist', '__redist', 'redist', 'redistributables', 'directx', 'prerequisites'
 ])
 
 export function walkDirectoryDecision(name: string, depth: number): 'skip' | 'descend' | 'depth-limit' {
   if (WALK_SKIP_DIRS.has(name.toLowerCase())) return 'skip'
   if (depth >= FSR4_WALK_MAX_DEPTH) return 'depth-limit'
   return 'descend'
+}
+
+/** Una carpeta que no se pudo leer, o el tope de archivos, cierra el escaneo. */
+export function scanIsIncomplete(input: { unreadableDirectory: boolean, fileCapHit: boolean }): boolean {
+  return input.unreadableDirectory || input.fileCapHit
 }
 
 export function assessFsr4Target(input: {
@@ -1132,6 +1140,24 @@ export function sessionLogIsFresh(logMtimeMs: number, sessionStartedAt: number):
   return Number.isFinite(logMtimeMs) && sessionStartedAt > 0 && logMtimeMs > sessionStartedAt
 }
 
+/** La última marca que decide gana. Una negativa después de «Lite» no se queda en activo. */
+function lastDecisiveStatus(text: string): 'active' | 'not-lite' | null {
+  const markers: { index: number, status: 'active' | 'not-lite' }[] = []
+  const pushAll = (pattern: RegExp, status: 'active' | 'not-lite'): void => {
+    const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`
+    const re = new RegExp(pattern.source, flags)
+    let match: RegExpExecArray | null
+    while ((match = re.exec(text))) markers.push({ index: match.index, status })
+  }
+  pushAll(/ffxProvider_FSR4Lite_Int8/g, 'active')
+  pushAll(/can't run any fsr 4 model|doesn't support fsr 4/gi, 'not-lite')
+  // DriverStore y el DLL cerca: es el FSR del driver, no el Lite nuestro.
+  pushAll(/driverstore[\s\S]{0,240}amdxcffx64\.dll|amdxcffx64\.dll[\s\S]{0,240}driverstore|driverstore[\s\S]{0,240}amdvkffx64\.dll|amdvkffx64\.dll[\s\S]{0,240}driverstore/gi, 'not-lite')
+  if (markers.length === 0) return null
+  markers.sort((left, right) => left.index - right.index)
+  return markers[markers.length - 1].status
+}
+
 export function parseOptiScalerSessionLog(log: string | null | undefined): {
   status: Fsr4SessionStatus
   resolution?: string
@@ -1141,13 +1167,26 @@ export function parseOptiScalerSessionLog(log: string | null | undefined): {
   const text = log.length > FSR4_LOG_READ_CAP ? log.slice(-FSR4_LOG_READ_CAP) : log
   const line = lastResolution(text)
   const resolution = line || undefined
-  const lite = text.includes('ffxProvider_FSR4Lite_Int8')
-  const driver = /driverstore/i.test(text) && /amdxcffx64\.dll|amdvkffx64\.dll/i.test(text)
-  const cannot = /can't run any fsr 4 model|doesn't support fsr 4/i.test(text)
-  if (lite && !driver) return { status: 'active', resolution }
-  if (driver || cannot) return { status: 'not-lite', resolution }
+  const decisive = lastDecisiveStatus(text)
+  if (decisive === 'active') return { status: 'active', resolution }
+  if (decisive === 'not-lite') return { status: 'not-lite', resolution }
   if (!/optiscaler/i.test(text)) return { status: 'not-loaded' }
   return { status: 'unknown', resolution }
+}
+
+/**
+ * Si el log es más viejo que la sesión, el badge anterior no se queda.
+ * Se pone unknown. Solo un log nuevo se parsea.
+ */
+export function sessionObservation(input: {
+  logMtimeMs: number | null
+  sessionStartedAt: number | null
+  logText: string | null
+}): { status: Fsr4SessionStatus, resolution?: string } {
+  if (input.logMtimeMs == null || input.sessionStartedAt == null || !sessionLogIsFresh(input.logMtimeMs, input.sessionStartedAt)) {
+    return { status: 'unknown' }
+  }
+  return parseOptiScalerSessionLog(input.logText)
 }
 
 export function shouldRefreshOptiScaler(input: {
@@ -1361,7 +1400,11 @@ export function assessReFrameworkArchiveEntries(
   return dll ? { ok: true } : { ok: false, reason: 'layout' }
 }
 
-/** Content-Length manda: si el servidor lo dice, lo recibido tiene que coincidir y no pasarse del tope. */
+/**
+ * Si el servidor manda Content-Length, lo recibido tiene que coincidir y no pasarse del tope.
+ * Si no lo manda, el tamaño no se puede comprobar: igual se respeta el tope.
+ * El digest de OptiScaler se mira aparte; no se perdona porque falte el largo.
+ */
 export function acceptDownloadSize(input: {
   received: number
   contentLength: number | null
@@ -1375,6 +1418,15 @@ export function acceptDownloadSize(input: {
   if (input.received !== input.contentLength) return false
   if (input.expectedSize != null && input.expectedSize > 0 && input.contentLength !== input.expectedSize) return false
   return true
+}
+
+/** Después de los redirects, la URL final tiene que seguir siendo https. */
+export function finalDownloadUrlIsHttps(url: string): boolean {
+  try {
+    return new URL(url).protocol === 'https:'
+  } catch {
+    return false
+  }
 }
 
 export type Fsr4UpdateSkip =
@@ -1407,7 +1459,422 @@ export function launcherMayUpdate(input: {
   return 'ok'
 }
 
-/** Un candado para install, uninstall, opciones y el actualizador. Quien lo tiene, no lo suelta a medias. */
+export function digestsEqual(left: Fsr4FileDigest | null | undefined, right: Fsr4FileDigest | null | undefined): boolean {
+  if (!left || !right) return false
+  return left.size === right.size && left.sha256.toLowerCase() === right.sha256.toLowerCase()
+}
+
+export type FsNodeKind = 'missing' | 'dir' | 'file' | 'dir-link' | 'file-link' | 'hardlink' | 'other'
+
+/** Un enlace de carpeta no es un enlace de archivo. El nlink de un directorio no cuenta. */
+export function classifyListedNode(node: {
+  isSymbolicLink: boolean
+  isDirectory: boolean
+  isFile: boolean
+  nlink: number
+  targetIsDirectory: boolean
+} | null): FsNodeKind {
+  if (!node) return 'missing'
+  if (node.isSymbolicLink) return node.targetIsDirectory ? 'dir-link' : 'file-link'
+  if (node.isDirectory) return 'dir'
+  if (node.isFile && node.nlink > 1) return 'hardlink'
+  if (node.isFile) return 'file'
+  return 'other'
+}
+
+/**
+ * La raíz del juego puede ser un junction (Steam mueve librerías así).
+ * Se acepta si al resolverla sigue siendo una carpeta y cae en su propia raíz real.
+ */
+export function rootedDirectoryAllowed(input: {
+  kind: FsNodeKind
+  realPath: string | null
+  installRootReal: string
+}): boolean {
+  if (input.kind !== 'dir' && input.kind !== 'dir-link') return false
+  if (!input.realPath) return false
+  return gameDirWithinInstall(input.realPath, input.installRootReal)
+}
+
+export interface ResolvedPathFs {
+  lstat: (absolute: string) => Promise<{ isSymbolicLink(): boolean, isDirectory(): boolean, isFile(): boolean, nlink: number } | null>
+  stat: (absolute: string) => Promise<{ isDirectory(): boolean } | null>
+  realpath: (absolute: string) => Promise<string>
+  join: (dir: string, name: string) => string
+}
+
+/**
+ * Camina cada tramo. Un junction o symlink de carpeta se permite si su realpath
+ * queda dentro de la raíz real. Un symlink de archivo o un hard link se niega.
+ * Una ruta que se sale, también.
+ */
+export async function resolveUnderRoot(input: ResolvedPathFs & {
+  rootReal: string
+  relative: string
+}): Promise<string> {
+  const safe = safeRelativePath(input.relative)
+  if (!safe) throw new Fsr4LiteFailure('bad-path')
+  if (safe.split('/')[0]?.toLowerCase() === FSR4_WIDGET_META_DIR) throw new Fsr4LiteFailure('bad-path')
+  let current = input.rootReal
+  const parts = safe.split('/')
+  for (let index = 0; index < parts.length; index += 1) {
+    const next = input.join(current, parts[index])
+    const listed = await input.lstat(next)
+    if (!listed) {
+      let dest = current
+      for (const part of parts.slice(index)) dest = input.join(dest, part)
+      return dest
+    }
+    const link = listed.isSymbolicLink()
+    const followed = link ? await input.stat(next) : null
+    const kind = classifyListedNode({
+      isSymbolicLink: link,
+      isDirectory: listed.isDirectory(),
+      isFile: listed.isFile(),
+      nlink: listed.nlink,
+      targetIsDirectory: followed?.isDirectory() === true
+    })
+    if (kind === 'file-link' || kind === 'hardlink' || kind === 'other') throw new Fsr4LiteFailure('symlink')
+    const real = await input.realpath(next)
+    if (!gameDirWithinInstall(real, input.rootReal)) throw new Fsr4LiteFailure('symlink')
+    if (kind === 'dir' || kind === 'dir-link') {
+      current = real
+      if (index === parts.length - 1) return real
+      continue
+    }
+    if (kind === 'file') {
+      if (index !== parts.length - 1) throw new Fsr4LiteFailure('bad-path')
+      return next
+    }
+    throw new Fsr4LiteFailure('symlink')
+  }
+  return current
+}
+
+function digestMap(value: unknown): Record<string, Fsr4FileDigest> {
+  if (!value || typeof value !== 'object') return {}
+  const out: Record<string, Fsr4FileDigest> = {}
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (!safeRelativePath(key) || !item || typeof item !== 'object') continue
+    const size = (item as { size?: unknown }).size
+    const sha256 = (item as { sha256?: unknown }).sha256
+    if (typeof size === 'number' && Number.isFinite(size) && typeof sha256 === 'string' && /^[0-9a-f]{64}$/i.test(sha256)) {
+      out[key] = { size, sha256 }
+    }
+  }
+  return out
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new Fsr4LiteFailure('manifest')
+  const out: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') throw new Fsr4LiteFailure('manifest')
+    const safe = safeRelativePath(item)
+    if (!safe) throw new Fsr4LiteFailure('manifest')
+    out.push(safe)
+  }
+  return out
+}
+
+/**
+ * Un manifiesto viejo (formatVersion 1, sin state) con todos los backups es committed.
+ * Si le falta un backup, queda pending: no se inventan listas vacías pa' borrar la metadata.
+ */
+export function normalizeStoredManifest(
+  raw: unknown,
+  backupExists: (relative: string) => boolean
+): Fsr4LiteManifest {
+  if (!raw || typeof raw !== 'object') throw new Fsr4LiteFailure('manifest')
+  const row = raw as Partial<Fsr4LiteManifest>
+  if (row.formatVersion !== 1 || typeof row.proxyName !== 'string' || !row.proxyName) {
+    throw new Fsr4LiteFailure('manifest')
+  }
+  const createdFiles = stringList(row.createdFiles)
+  const createdDirs = stringList(row.createdDirs)
+  const replacedFiles = stringList(row.replacedFiles)
+  const preexisting = Array.isArray(row.reframeworkPreexisting)
+    ? row.reframeworkPreexisting.filter((item): item is string => typeof item === 'string')
+    : []
+  const explicit = row.state
+  let state: Fsr4ManifestState
+  let legacy = false
+  if (explicit === 'committed') state = 'committed'
+  else if (explicit === 'pending') state = 'pending'
+  else if (explicit == null) {
+    // Sin state: committed solo si cada reemplazo tiene backup. Si no, está incompleto.
+    state = replacedFiles.every((relative) => backupExists(relative)) ? 'committed' : 'pending'
+    legacy = true
+  } else {
+    state = 'pending'
+  }
+  const backedUpFiles = Array.isArray(row.backedUpFiles)
+    ? stringList(row.backedUpFiles)
+    : legacy
+      ? replacedFiles.filter((relative) => backupExists(relative))
+      : []
+  const copiedCreates = Array.isArray(row.copiedCreates)
+    ? stringList(row.copiedCreates)
+    : legacy
+      ? createdFiles
+      : []
+  return {
+    formatVersion: 1,
+    state,
+    gameId: typeof row.gameId === 'string' ? row.gameId : '',
+    proxyName: row.proxyName,
+    optiBuild: typeof row.optiBuild === 'string' ? row.optiBuild : '',
+    fsrVersion: typeof row.fsrVersion === 'string' ? row.fsrVersion : FSR4_VERSION_LABEL,
+    renderScale: isFsr4RenderScale(row.renderScale) ? row.renderScale : 'game',
+    overlay: row.overlay === true,
+    graphicsApi: isFsr4GraphicsApi(row.graphicsApi) ? row.graphicsApi : FSR4_DEFAULT_GRAPHICS_API,
+    hasFsr2Dll: row.hasFsr2Dll === true,
+    noUpscaler: row.noUpscaler === true,
+    reframeworkVersion: typeof row.reframeworkVersion === 'string' ? row.reframeworkVersion : '',
+    reframeworkAdded: row.reframeworkAdded === true,
+    reframeworkPreexisting: preexisting,
+    createdFiles,
+    createdDirs,
+    replacedFiles,
+    createdDigests: digestMap(row.createdDigests),
+    writtenDigests: digestMap(row.writtenDigests),
+    backupDigests: digestMap(row.backupDigests),
+    backedUpFiles,
+    copiedCreates,
+    installedAt: typeof row.installedAt === 'string' ? row.installedAt : ''
+  }
+}
+
+/** Instalación de antes del journal: no hay huellas. Se restaura por la lista, no por el hash. */
+export function manifestIsLegacyCommitted(manifest: Fsr4LiteManifest): boolean {
+  return manifest.state === 'committed'
+    && Object.keys(manifest.createdDigests).length === 0
+    && Object.keys(manifest.writtenDigests).length === 0
+    && Object.keys(manifest.backupDigests).length === 0
+}
+
+/** Anota el backup antes de tocar el archivo del juego. */
+export function journalBackup(manifest: Fsr4LiteManifest, relative: string, digest: Fsr4FileDigest): Fsr4LiteManifest {
+  const safe = safeRelativePath(relative)
+  if (!safe) throw new Fsr4LiteFailure('bad-path')
+  const backedUpFiles = manifest.backedUpFiles.some((item) => item.toLowerCase() === safe.toLowerCase())
+    ? manifest.backedUpFiles
+    : [...manifest.backedUpFiles, safe]
+  return {
+    ...manifest,
+    backedUpFiles,
+    backupDigests: { ...manifest.backupDigests, [safe]: digest }
+  }
+}
+
+/**
+ * Anota la copia ANTES de hacerla. El digest es el del origen;
+ * después de copiar se confirma con el archivo en disco.
+ */
+export function journalCopyIntent(
+  manifest: Fsr4LiteManifest,
+  file: { path: string, action: 'create' | 'replace' },
+  digest: Fsr4FileDigest
+): Fsr4LiteManifest {
+  const safe = safeRelativePath(file.path)
+  if (!safe) throw new Fsr4LiteFailure('bad-path')
+  const writtenDigests = { ...manifest.writtenDigests, [safe]: digest }
+  const createdDigests = file.action === 'create'
+    ? { ...manifest.createdDigests, [safe]: digest }
+    : manifest.createdDigests
+  const copiedCreates = file.action === 'create' && !manifest.copiedCreates.some((item) => item.toLowerCase() === safe.toLowerCase())
+    ? [...manifest.copiedCreates, safe]
+    : manifest.copiedCreates
+  return { ...manifest, writtenDigests, createdDigests, copiedCreates }
+}
+
+export type RestoreAction = 'restore' | 'unchanged' | 'skip' | 'missing'
+
+/**
+ * En pending: si lo que hay no es lo que escribimos, no se pisa con el backup.
+ * Sin huella, y el archivo ya no es el original, se devuelve el backup (la copia no se confirmó).
+ */
+export function pendingReplaceAction(input: {
+  current: Fsr4FileDigest | null
+  written: Fsr4FileDigest | null
+  backup: Fsr4FileDigest | null
+  backupOk: boolean
+}): RestoreAction {
+  if (!input.backupOk) return 'missing'
+  if (!input.current) return 'restore'
+  if (input.backup && digestsEqual(input.current, input.backup)) return 'unchanged'
+  if (input.written && digestsEqual(input.current, input.written)) return 'restore'
+  if (input.written) return 'skip'
+  return 'restore'
+}
+
+export function pendingCreateAction(input: {
+  current: Fsr4FileDigest | null
+  expected: Fsr4FileDigest | null
+}): 'delete' | 'skip' | 'absent' {
+  if (!input.current) return 'absent'
+  if (input.expected && digestsEqual(input.current, input.expected)) return 'delete'
+  return 'skip'
+}
+
+export function committedReplaceAction(input: {
+  current: Fsr4FileDigest | null
+  written: Fsr4FileDigest | null
+  backupOk: boolean
+  legacy: boolean
+}): RestoreAction {
+  if (!input.backupOk) return 'missing'
+  if (!input.current) return 'restore'
+  if (input.written && digestsEqual(input.current, input.written)) return 'restore'
+  if (input.written) return 'skip'
+  if (input.legacy) return 'restore'
+  return 'skip'
+}
+
+export function committedCreateAction(input: {
+  current: Fsr4FileDigest | null
+  expected: Fsr4FileDigest | null
+  legacy: boolean
+}): 'delete' | 'skip' | 'absent' {
+  if (!input.current) return 'absent'
+  if (input.expected && digestsEqual(input.current, input.expected)) return 'delete'
+  if (input.legacy && !input.expected) return 'delete'
+  return 'skip'
+}
+
+/** La metadata se borra solo si no quedó nada sin restaurar ni un archivo que no coincidió. */
+export function mayRemoveInstallMeta(input: { skipped: readonly string[], unrestoredBackups: readonly string[] }): boolean {
+  return input.skipped.length === 0 && input.unrestoredBackups.length === 0
+}
+
+/** rm recursivo solo en una carpeta nuestra que ya está vacía. Con archivos ajenos, no. */
+export function mayRecursivelyRemoveDir(input: { createdByUs: boolean, entryNames: readonly string[] | null }): boolean {
+  return input.createdByUs && input.entryNames !== null && input.entryNames.length === 0
+}
+
+/** Si hay manifiesto nuestro, primero se quita lo nuestro y después se marca el widget. */
+export function shouldUninstallBeforeWidget(input: { manifestState: Fsr4ManifestState | 'absent' }): boolean {
+  return input.manifestState === 'committed' || input.manifestState === 'pending'
+}
+
+/** El juego arrancando o corriendo bloquea cualquier escritura. */
+export function gameLaunchBlocksMutation(phase: string | undefined): boolean {
+  return phase === 'launching' || phase === 'running'
+}
+
+function putTreeFile(tree: Record<string, string>, relative: string, content: string): Record<string, string> {
+  const next = { ...tree }
+  const hit = findInTree(next, relative)
+  if (hit) next[hit.key] = content
+  else next[relative] = content
+  return next
+}
+
+function dropTreeFile(tree: Record<string, string>, relative: string): Record<string, string> {
+  const next = { ...tree }
+  const hit = findInTree(next, relative)
+  if (hit) delete next[hit.key]
+  return next
+}
+
+function dropMeta(tree: Record<string, string>): Record<string, string> {
+  const next = { ...tree }
+  for (const key of Object.keys(next)) {
+    const low = key.replace(/\\/g, '/').toLowerCase()
+    if (low === FSR4_META_DIR || low.startsWith(`${FSR4_META_DIR.toLowerCase()}/`)) delete next[key]
+  }
+  return next
+}
+
+/** Reproduce el rollback pending sobre un árbol de textos. Lo usa la prueba, con las mismas decisiones del servicio. */
+export function replayPendingRollback(tree: Record<string, string>, manifest: Fsr4LiteManifest): {
+  tree: Record<string, string>
+  skipped: string[]
+  metaKept: boolean
+} {
+  let next = { ...tree }
+  const skipped: string[] = []
+  const unrestored: string[] = []
+  for (const relative of manifest.backedUpFiles) {
+    if (relative.replace(/\\/g, '/').toLowerCase().startsWith(`${FSR4_WIDGET_META_DIR}/`) || relative.toLowerCase() === FSR4_WIDGET_META_DIR) continue
+    const backupHit = findInTree(next, `${FSR4_META_DIR}/backup/${relative}`)
+    const recordedBackup = digestRecord(manifest.backupDigests, relative)
+    const backupOk = Boolean(backupHit) && (!recordedBackup || digestMatches(backupHit?.content ?? '', recordedBackup))
+    const currentHit = findInTree(next, relative)
+    const action = pendingReplaceAction({
+      current: currentHit ? digestText(currentHit.content) : null,
+      written: digestRecord(manifest.writtenDigests, relative) ?? null,
+      backup: backupHit ? digestText(backupHit.content) : null,
+      backupOk
+    })
+    if (action === 'missing' || action === 'skip') {
+      skipped.push(relative)
+      unrestored.push(relative)
+      continue
+    }
+    if (action === 'restore' && backupHit) next = putTreeFile(next, relative, backupHit.content)
+  }
+  for (const relative of manifest.copiedCreates) {
+    if (relative.replace(/\\/g, '/').toLowerCase().startsWith(FSR4_WIDGET_META_DIR)) continue
+    const currentHit = findInTree(next, relative)
+    const action = pendingCreateAction({
+      current: currentHit ? digestText(currentHit.content) : null,
+      expected: digestRecord(manifest.createdDigests, relative) ?? null
+    })
+    if (action === 'delete') next = dropTreeFile(next, relative)
+    else if (action === 'skip') skipped.push(relative)
+  }
+  const metaKept = !mayRemoveInstallMeta({ skipped, unrestoredBackups: unrestored })
+  if (!metaKept) next = dropMeta(next)
+  return { tree: next, skipped, metaKept }
+}
+
+/** Desinstalación committed, incluyendo el manifiesto viejo sin huellas. */
+export function replayCommittedUninstall(tree: Record<string, string>, manifest: Fsr4LiteManifest): {
+  tree: Record<string, string>
+  skipped: string[]
+  metaKept: boolean
+} {
+  let next = { ...tree }
+  const skipped: string[] = []
+  const unrestored: string[] = []
+  const legacy = manifestIsLegacyCommitted(manifest)
+  for (const relative of manifest.replacedFiles) {
+    if (relative.replace(/\\/g, '/').toLowerCase().startsWith(FSR4_WIDGET_META_DIR)) continue
+    const backupHit = findInTree(next, `${FSR4_META_DIR}/backup/${relative}`)
+    const recordedBackup = digestRecord(manifest.backupDigests, relative)
+    const backupOk = Boolean(backupHit) && (!recordedBackup || digestMatches(backupHit?.content ?? '', recordedBackup))
+    const currentHit = findInTree(next, relative)
+    const action = committedReplaceAction({
+      current: currentHit ? digestText(currentHit.content) : null,
+      written: digestRecord(manifest.writtenDigests, relative) ?? null,
+      backupOk,
+      legacy
+    })
+    if (action === 'missing' || action === 'skip') {
+      skipped.push(relative)
+      if (backupHit) unrestored.push(relative)
+      continue
+    }
+    if (action === 'restore' && backupHit) next = putTreeFile(next, relative, backupHit.content)
+  }
+  for (const relative of manifest.createdFiles) {
+    if (relative.replace(/\\/g, '/').toLowerCase().startsWith(FSR4_WIDGET_META_DIR)) continue
+    const currentHit = findInTree(next, relative)
+    const action = committedCreateAction({
+      current: currentHit ? digestText(currentHit.content) : null,
+      expected: digestRecord(manifest.createdDigests, relative) ?? null,
+      legacy
+    })
+    if (action === 'delete') next = dropTreeFile(next, relative)
+    else if (action === 'skip') skipped.push(relative)
+  }
+  const metaKept = !mayRemoveInstallMeta({ skipped, unrestoredBackups: unrestored })
+  if (!metaKept) next = dropMeta(next)
+  return { tree: next, skipped, metaKept }
+}
+
+/** Un candado para install, uninstall, opciones, importación y el actualizador. Quien lo tiene, no lo suelta a medias. */
 export function createFsr4MutationGate(): {
   tryAcquire: (owner: string) => boolean
   release: (owner: string) => void
@@ -1475,3 +1942,4 @@ export interface Fsr4LiteGameView {
 export type Fsr4LiteEvent =
   | { kind: 'progress', gameId: string, phase: 'optiscaler' | 'fsr' | 'reframework' | 'copy', received: number, total: number }
   | { kind: 'session', gameId: string, status: Fsr4SessionStatus, resolution?: string }
+  | { kind: 'repair', gameId: string }

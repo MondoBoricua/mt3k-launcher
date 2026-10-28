@@ -3,6 +3,11 @@
  * No baja archivos ni toca un juego de verdad: eso es de Windows.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { link, lstat, mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   FSR4_DEFAULT_GRAPHICS_API,
   FSR4_DLL_DX12,
@@ -23,7 +28,22 @@ import {
   compatNoteForGame,
   compatRequiresReFramework,
   createFsr4MutationGate,
+  digestText,
+  finalDownloadUrlIsHttps,
   fsrCacheIsReusable,
+  gameLaunchBlocksMutation,
+  journalBackup,
+  journalCopyIntent,
+  manifestIsLegacyCommitted,
+  mayRecursivelyRemoveDir,
+  normalizeStoredManifest,
+  replayCommittedUninstall,
+  replayPendingRollback,
+  resolveUnderRoot,
+  rootedDirectoryAllowed,
+  scanIsIncomplete,
+  sessionObservation,
+  shouldUninstallBeforeWidget,
   iniValue,
   isNewerOptiBuild,
   launcherMayUpdate,
@@ -609,7 +629,7 @@ assert.equal(stale.resolution?.includes('Rendering'), false)
 assert.equal(walkDirectoryDecision('Engine', 1), 'descend')
 assert.equal(walkDirectoryDecision('Content', 1), 'descend')
 assert.equal(walkDirectoryDecision('_CommonRedist', 1), 'skip')
-assert.equal(walkDirectoryDecision('Support', 1), 'skip')
+assert.equal(walkDirectoryDecision('Support', 1), 'descend')
 assert.ok(FSR4_WALK_MAX_DEPTH >= 7)
 assert.equal(assessFsr4Target({
   provider: 'steam',
@@ -657,5 +677,200 @@ assert.equal(acceptDownloadSize({ received: 10, contentLength: 10, expectedSize:
 assert.equal(acceptDownloadSize({ received: 10, contentLength: 11, expectedSize: 11, maxBytes: 100 }), false)
 assert.equal(acceptDownloadSize({ received: 10, contentLength: 10, expectedSize: 9, maxBytes: 100 }), false)
 assert.equal(acceptDownloadSize({ received: 1_000, contentLength: 1_000, maxBytes: 100 }), false)
+
+// Ronda 2. P12: sin Content-Length el tamaño no se puede comprobar, pero el tope sigue.
+assert.equal(acceptDownloadSize({ received: 10, contentLength: null, expectedSize: 100, maxBytes: 1_000 }), true)
+assert.equal(acceptDownloadSize({ received: 1_001, contentLength: null, expectedSize: 100, maxBytes: 1_000 }), false)
+assert.equal(finalDownloadUrlIsHttps('https://github.com/optiscaler/OptiScaler-nightly/releases/download/x/a.7z'), true)
+assert.equal(finalDownloadUrlIsHttps('http://example.test/a.7z'), false)
+assert.equal(finalDownloadUrlIsHttps('not a url'), false)
+
+// P22: Support se recorre. Solo los redist se saltan. Una carpeta ilegible cierra el escaneo.
+for (const name of ['_CommonRedist', '__redist', 'Redist', 'redistributables', 'DirectX', 'Prerequisites']) {
+  assert.equal(walkDirectoryDecision(name, 1), 'skip', name)
+}
+assert.equal(walkDirectoryDecision('Support', 3), 'descend')
+assert.equal(scanIsIncomplete({ unreadableDirectory: true, fileCapHit: false }), true)
+assert.equal(scanIsIncomplete({ unreadableDirectory: false, fileCapHit: false }), false)
+assert.equal(launcherMayUpdate({
+  files: ['Support/.ralfsr/manifest.json', 'dxgi.dll'],
+  dirs: ['Support'],
+  manifestState: 'committed',
+  running: false,
+  rootRefusal: null,
+  scanTruncated: false
+}), 'widget')
+assert.equal(shouldUninstallBeforeWidget({ manifestState: 'committed' }), true)
+assert.equal(shouldUninstallBeforeWidget({ manifestState: 'pending' }), true)
+assert.equal(shouldUninstallBeforeWidget({ manifestState: 'absent' }), false)
+
+// P24.mixed: la última marca decide. Un log viejo pone unknown, no deja el badge anterior.
+const mixed = parseOptiScalerSessionLog('OptiScaler loaded\nffxProvider_FSR4Lite_Int8 hooked\ncan\'t run any FSR 4 model\n')
+assert.equal(mixed.status, 'not-lite')
+const liteAfter = parseOptiScalerSessionLog('can\'t run any FSR 4 model\nffxProvider_FSR4Lite_Int8 hooked\n')
+assert.equal(liteAfter.status, 'active')
+assert.equal(sessionObservation({ logMtimeMs: 1_000, sessionStartedAt: 2_000, logText: 'ffxProvider_FSR4Lite_Int8' }).status, 'unknown')
+assert.equal(sessionObservation({ logMtimeMs: 3_000, sessionStartedAt: 2_000, logText: 'ffxProvider_FSR4Lite_Int8 hooked\ncan\'t run any FSR 4 model' }).status, 'not-lite')
+
+// P18: import y opciones usan el mismo candado. Si el juego arrancó, no se escribe.
+const importGate = createFsr4MutationGate()
+assert.equal(importGate.tryAcquire('install'), true)
+assert.equal(importGate.tryAcquire('import'), false)
+assert.equal(importGate.tryAcquire('options'), false)
+importGate.release('install')
+assert.equal(gameLaunchBlocksMutation('running'), true)
+assert.equal(gameLaunchBlocksMutation('launching'), true)
+assert.equal(gameLaunchBlocksMutation('idle'), false)
+const serviceSource = readFileSync(fileURLToPath(new URL('../src/main/fsr4LiteService.ts', import.meta.url)), 'utf8')
+const importSlice = serviceSource.slice(serviceSource.indexOf('async importDlls'), serviceSource.indexOf('gameGet('))
+assert.ok(importSlice.indexOf('showOpenDialog') < importSlice.indexOf("withMutation('import'"))
+assert.ok(importSlice.indexOf("withMutation('import'") < importSlice.indexOf('publishFsrPair'))
+const optionsSlice = serviceSource.slice(serviceSource.indexOf('async setOptions'), serviceSource.indexOf('\n  install:'))
+const iniWrite = optionsSlice.indexOf('await writeFile(iniPath')
+const iniRead = optionsSlice.indexOf('await readFile(iniPath')
+assert.ok(iniRead > 0 && iniWrite > iniRead)
+assert.ok(optionsSlice.lastIndexOf('assertNotRunning(game.id)', iniWrite) > iniRead)
+assert.match(serviceSource, /handoffToWidget/)
+assert.match(serviceSource, /journalCopyIntent/)
+assert.match(serviceSource, /normalizeStoredManifest/)
+assert.match(serviceSource, /sessionObservation/)
+assert.match(serviceSource, /kind: 'repair'/)
+
+// P2-pending: un edit posterior no se pisa con el backup. P13: la copia se anota antes del hash.
+const ours = digestText('ours')
+const original = digestText('original')
+let pending = normalizeStoredManifest({
+  formatVersion: 1,
+  state: 'pending',
+  proxyName: 'dxgi.dll',
+  createdFiles: ['dxgi.dll'],
+  createdDirs: [],
+  replacedFiles: ['OptiScaler.ini'],
+  backedUpFiles: [],
+  copiedCreates: []
+}, () => true)
+pending = journalBackup(pending, 'OptiScaler.ini', original)
+pending = journalCopyIntent(pending, { path: 'OptiScaler.ini', action: 'replace' }, ours)
+const userEdit = replayPendingRollback({
+  'OptiScaler.ini': 'later-user-edit',
+  '.mt3k-fsr/backup/OptiScaler.ini': 'original',
+  '.mt3k-fsr/manifest.json': 'pending'
+}, pending)
+assert.equal(userEdit.tree['OptiScaler.ini'], 'later-user-edit')
+assert.equal(userEdit.tree['.mt3k-fsr/backup/OptiScaler.ini'], 'original')
+assert.equal(userEdit.metaKept, true)
+
+let logged = normalizeStoredManifest({
+  formatVersion: 1,
+  state: 'pending',
+  proxyName: 'dxgi.dll',
+  createdFiles: ['dxgi.dll'],
+  createdDirs: [],
+  replacedFiles: [],
+  backedUpFiles: [],
+  copiedCreates: []
+}, () => true)
+const proxyDigest = digestText('proxy-bytes')
+logged = journalCopyIntent(logged, { path: 'dxgi.dll', action: 'create' }, proxyDigest)
+const rolled = replayPendingRollback({
+  'dxgi.dll': 'proxy-bytes',
+  '.mt3k-fsr/manifest.json': 'pending'
+}, logged)
+assert.equal(rolled.tree['dxgi.dll'], undefined)
+assert.equal(rolled.metaKept, false)
+const unconfirmed = replayPendingRollback({
+  'dxgi.dll': 'someone-else',
+  '.mt3k-fsr/manifest.json': 'pending',
+  '.mt3k-fsr/backup/OptiScaler.ini': 'still-here'
+}, logged)
+assert.equal(unconfirmed.tree['dxgi.dll'], 'someone-else')
+assert.equal(unconfirmed.metaKept, true)
+assert.equal(unconfirmed.tree['.mt3k-fsr/backup/OptiScaler.ini'], 'still-here')
+
+// Manifiesto viejo sin state: completo es committed y se restaura. Incompleto no borra los backups.
+const legacyRaw = {
+  formatVersion: 1,
+  proxyName: 'dxgi.dll',
+  createdFiles: ['dxgi.dll'],
+  createdDirs: [],
+  replacedFiles: ['OptiScaler.ini']
+}
+const legacy = normalizeStoredManifest(legacyRaw, () => true)
+assert.equal(legacy.state, 'committed')
+assert.equal(manifestIsLegacyCommitted(legacy), true)
+const legacyFixed = replayCommittedUninstall({
+  'OptiScaler.ini': 'ours',
+  'dxgi.dll': 'loader',
+  '.mt3k-fsr/backup/OptiScaler.ini': 'original-user-ini',
+  '.mt3k-fsr/manifest.json': '{}'
+}, legacy)
+assert.equal(legacyFixed.tree['OptiScaler.ini'], 'original-user-ini')
+assert.equal(legacyFixed.tree['dxgi.dll'], undefined)
+assert.equal(legacyFixed.metaKept, false)
+const incomplete = normalizeStoredManifest({
+  ...legacyRaw,
+  replacedFiles: ['OptiScaler.ini', 'other.dll']
+}, (relative) => relative.toLowerCase() === 'optiscaler.ini')
+assert.equal(incomplete.state, 'pending')
+assert.deepEqual(incomplete.backedUpFiles, ['OptiScaler.ini'])
+const keptBackups = replayPendingRollback({
+  'OptiScaler.ini': 'ours',
+  'dxgi.dll': 'loader',
+  '.mt3k-fsr/backup/OptiScaler.ini': 'original-user-ini',
+  '.mt3k-fsr/manifest.json': '{}'
+}, incomplete)
+assert.equal(keptBackups.tree['OptiScaler.ini'], 'original-user-ini')
+assert.equal(keptBackups.metaKept, true)
+assert.equal(keptBackups.tree['.mt3k-fsr/backup/OptiScaler.ini'], 'original-user-ini')
+assert.equal(mayRecursivelyRemoveDir({ createdByUs: true, entryNames: [] }), true)
+assert.equal(mayRecursivelyRemoveDir({ createdByUs: true, entryNames: ['mod.dll'] }), false)
+assert.equal(mayRecursivelyRemoveDir({ createdByUs: false, entryNames: [] }), false)
+
+// P15: symlink de carpeta dentro de la raíz sí; archivo, hard link y .mt3k-fsr hacia afuera, no.
+const scratch = await realpath(await mkdtemp(path.join(tmpdir(), 'fsr4-root-')))
+const outside = await realpath(await mkdtemp(path.join(tmpdir(), 'fsr4-out-')))
+try {
+  const inside = path.join(scratch, 'inside')
+  await mkdir(inside)
+  await writeFile(path.join(inside, 'keep.txt'), 'ok')
+  await symlink(inside, path.join(scratch, 'linked-dir'), 'dir')
+  await symlink(outside, path.join(scratch, 'escape-dir'), 'dir')
+  await writeFile(path.join(scratch, 'real.txt'), 'file')
+  await symlink(path.join(scratch, 'real.txt'), path.join(scratch, 'file-link'))
+  await link(path.join(scratch, 'real.txt'), path.join(scratch, 'hard.txt'))
+  await symlink(outside, path.join(scratch, '.mt3k-fsr'), 'dir')
+  const disk = {
+    lstat: async (absolute: string) => lstat(absolute).catch(() => null),
+    stat: async (absolute: string) => stat(absolute).catch(() => null),
+    realpath,
+    join: (dir: string, name: string) => path.join(dir, name)
+  }
+  const linkedFile = await resolveUnderRoot({ ...disk, rootReal: scratch, relative: 'linked-dir/keep.txt' })
+  assert.equal(await realpath(linkedFile), await realpath(path.join(inside, 'keep.txt')))
+  await assert.rejects(() => resolveUnderRoot({ ...disk, rootReal: scratch, relative: 'escape-dir' }), /symlink/)
+  await assert.rejects(() => resolveUnderRoot({ ...disk, rootReal: scratch, relative: 'file-link' }), /symlink/)
+  await assert.rejects(() => resolveUnderRoot({ ...disk, rootReal: scratch, relative: 'hard.txt' }), /symlink/)
+  await assert.rejects(() => resolveUnderRoot({ ...disk, rootReal: scratch, relative: '.mt3k-fsr/manifest.json' }), /symlink/)
+  const realGame = path.join(scratch, 'real-game')
+  await mkdir(realGame)
+  const alias = path.join(scratch, 'GameAlias')
+  await symlink(realGame, alias, 'dir')
+  const aliasReal = await realpath(alias)
+  const aliasStat = await lstat(alias)
+  assert.equal(aliasStat.isSymbolicLink(), true)
+  assert.equal(rootedDirectoryAllowed({ kind: 'dir-link', realPath: aliasReal, installRootReal: aliasReal }), true)
+  assert.equal(rootedDirectoryAllowed({ kind: 'dir-link', realPath: outside, installRootReal: aliasReal }), false)
+  assert.equal(rootedDirectoryAllowed({ kind: 'file-link', realPath: aliasReal, installRootReal: aliasReal }), false)
+  const emptyDir = path.join(scratch, 'empty-created')
+  await mkdir(emptyDir)
+  assert.equal(mayRecursivelyRemoveDir({ createdByUs: true, entryNames: await readdir(emptyDir) }), true)
+  await rm(emptyDir, { recursive: true, force: true })
+  assert.equal(await readdir(scratch).then((names) => names.includes('empty-created')), false)
+  // El enlace de .mt3k-fsr no se siguió: afuera no apareció un manifiesto.
+  assert.equal((await readdir(outside)).includes('manifest.json'), false)
+} finally {
+  await rm(scratch, { recursive: true, force: true })
+  await rm(outside, { recursive: true, force: true })
+}
 
 console.log('verify:fsr4-lite passed')

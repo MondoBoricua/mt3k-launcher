@@ -36,6 +36,24 @@ import {
   Fsr4LiteFailure,
   acceptDownloadDigest,
   acceptDownloadSize,
+  classifyListedNode,
+  committedCreateAction,
+  committedReplaceAction,
+  finalDownloadUrlIsHttps,
+  gameLaunchBlocksMutation,
+  journalBackup,
+  journalCopyIntent,
+  manifestIsLegacyCommitted,
+  mayRecursivelyRemoveDir,
+  mayRemoveInstallMeta,
+  normalizeStoredManifest,
+  pendingCreateAction,
+  pendingReplaceAction,
+  resolveUnderRoot,
+  rootedDirectoryAllowed,
+  scanIsIncomplete,
+  sessionObservation,
+  shouldUninstallBeforeWidget,
   assessFsr4Target,
   assessOptiScalerArchiveEntries,
   assessReFrameworkArchiveEntries,
@@ -52,10 +70,8 @@ import {
   isNewerOptiBuild,
   isWindowsAppsPath,
   launcherMayUpdate,
-  parseOptiScalerSessionLog,
   pickOptiScalerNightly,
   planFsr4Install,
-  safeRelativePath,
   resolveGameExecutable,
   sessionLogIsFresh,
   setIniValues,
@@ -86,6 +102,8 @@ interface Fsr4GameRecord {
   installed: boolean
   widgetOwned: boolean
   proxyName?: string
+  /** Quedó una copia a medias y hay que repararla. El manifiesto no se bota. */
+  repairNeeded?: boolean
   optiBuild?: string
   renderScale: Fsr4RenderScale
   overlay: boolean
@@ -153,19 +171,6 @@ async function existsFile(path: string): Promise<boolean> {
   try { return (await stat(path)).isFile() } catch { return false }
 }
 
-/** Une una ruta relativa y no deja que se salga de la carpeta del exe. */
-function contained(root: string, relative: string): string {
-  const safe = safeRelativePath(relative)
-  if (!safe) throw new Fsr4LiteFailure('bad-path')
-  const dest = win32.normalize(win32.join(root, ...safe.split('/')))
-  const base = win32.normalize(root)
-  const prefix = base.endsWith('\\') ? base.toLowerCase() : `${base.toLowerCase()}\\`
-  if (dest.toLowerCase() !== base.toLowerCase() && !dest.toLowerCase().startsWith(prefix)) {
-    throw new Fsr4LiteFailure('bad-path')
-  }
-  return dest
-}
-
 function assertGameDirectory(dir: string, installRoot?: string): void {
   const refusal = classifyGameRoot(dir)
   if (refusal === 'windows-apps' || isWindowsAppsPath(dir)) throw new Fsr4LiteFailure('windows-apps')
@@ -175,53 +180,58 @@ function assertGameDirectory(dir: string, installRoot?: string): void {
 
 function assertNotRunning(gameId: string): void {
   const status = sessionState()
-  if (status.gameId === gameId && (status.phase === 'launching' || status.phase === 'running')) {
+  if (status.gameId === gameId && gameLaunchBlocksMutation(status.phase)) {
     throw new Fsr4LiteFailure('running')
   }
 }
 
-/** La carpeta real no puede ser un enlace que se salga del juego. */
+async function listedKind(path: string): Promise<{ kind: ReturnType<typeof classifyListedNode>, realPath: string | null }> {
+  const listed = await lstat(path).catch(() => null)
+  if (!listed) return { kind: 'missing', realPath: null }
+  const followed = listed.isSymbolicLink() ? await stat(path).catch(() => null) : null
+  const kind = classifyListedNode({
+    isSymbolicLink: listed.isSymbolicLink(),
+    isDirectory: listed.isDirectory(),
+    isFile: listed.isFile(),
+    nlink: listed.nlink,
+    targetIsDirectory: followed?.isDirectory() === true
+  })
+  const realPath = kind === 'missing' ? null : await realpath(path).catch(() => null)
+  return { kind, realPath }
+}
+
+/**
+ * La carpeta del juego puede ser un junction o un symlink de directorio
+ * (Steam los usa al mover una librería). Se acepta si el realpath queda
+ * dentro de la raíz real. Un enlace de archivo no.
+ */
 async function assertRealRoot(dir: string, installRoot: string): Promise<string> {
   assertGameDirectory(dir, installRoot)
-  const listed = await lstat(dir).catch(() => null)
-  if (!listed || listed.isSymbolicLink() || !listed.isDirectory()) {
-    throw new Fsr4LiteFailure(listed?.isSymbolicLink() ? 'symlink' : 'no-exe')
+  const installNode = await listedKind(installRoot)
+  const realInstall = installNode.realPath
+  if (!realInstall || !rootedDirectoryAllowed({ kind: installNode.kind, realPath: realInstall, installRootReal: realInstall })) {
+    throw new Fsr4LiteFailure(installNode.kind === 'missing' ? 'no-exe' : 'symlink')
   }
-  const installListed = await lstat(installRoot).catch(() => null)
-  if (!installListed || installListed.isSymbolicLink() || !installListed.isDirectory()) {
-    throw new Fsr4LiteFailure('symlink')
+  assertGameDirectory(realInstall, realInstall)
+  const node = dir === installRoot ? { kind: installNode.kind, realPath: realInstall } : await listedKind(dir)
+  const real = node.realPath
+  if (!real || !rootedDirectoryAllowed({ kind: node.kind, realPath: real, installRootReal: realInstall })) {
+    throw new Fsr4LiteFailure(node.kind === 'missing' ? 'no-exe' : 'symlink')
   }
-  const real = await realpath(dir)
-  const realInstall = await realpath(installRoot)
   assertGameDirectory(real, realInstall)
   return real
 }
 
-/** Cada tramo se mira con lstat. Un symlink o un hard link no se sigue. */
+/** Cada tramo se mira con lstat. Carpeta reparseada sí, si no se sale. Archivo enlazado, no. */
 async function containedReal(rootReal: string, relative: string): Promise<string> {
-  const safe = safeRelativePath(relative)
-  if (!safe) throw new Fsr4LiteFailure('bad-path')
-  if (safe.split('/')[0]?.toLowerCase() === '.ralfsr') throw new Fsr4LiteFailure('bad-path')
-  const dest = contained(rootReal, safe)
-  let current = rootReal
-  for (const part of safe.split('/')) {
-    const next = win32.join(current, part)
-    const listed = await lstat(next).catch(() => null)
-    if (!listed) {
-      const parent = await realpath(current).catch(() => current)
-      if (!gameDirWithinInstall(parent, rootReal) && parent.toLowerCase() !== rootReal.toLowerCase()) {
-        throw new Fsr4LiteFailure('symlink')
-      }
-      return dest
-    }
-    if (listed.isSymbolicLink() || (listed.isFile() && listed.nlink > 1)) throw new Fsr4LiteFailure('symlink')
-    current = next
-  }
-  const finalReal = await realpath(dest)
-  if (!gameDirWithinInstall(finalReal, rootReal) && finalReal.toLowerCase() !== rootReal.toLowerCase()) {
-    throw new Fsr4LiteFailure('symlink')
-  }
-  return dest
+  return resolveUnderRoot({
+    rootReal,
+    relative,
+    lstat: async (absolute) => lstat(absolute).catch(() => null),
+    stat: async (absolute) => stat(absolute).catch(() => null),
+    realpath,
+    join: (dir, name) => win32.join(dir, name)
+  })
 }
 
 async function withMutation<T>(owner: string, fn: () => Promise<T>): Promise<T> {
@@ -255,17 +265,15 @@ async function downloadTo(url: string, dest: string, options: {
   onProgress?: (received: number, total: number) => void
 }): Promise<{ etag?: string, finalUrl: string, size: number, sha256: string }> {
   const maxBytes = options.maxBytes ?? FSR4_MAX_DOWNLOAD_BYTES
-  // Solo https. Un redirección a otro esquema no se sigue como archivo válido.
-  let parsed: URL
-  try { parsed = new URL(url) } catch { throw new Fsr4LiteFailure('download') }
-  if (parsed.protocol !== 'https:') throw new Fsr4LiteFailure('download')
+  // Solo https. Se sigue el redirect y se vuelve a mirar la URL final.
+  if (!finalDownloadUrlIsHttps(url)) throw new Fsr4LiteFailure('download')
   const response = await fetch(url, {
     headers: { 'User-Agent': 'MT3K-Launcher', ...options.headers },
     redirect: 'follow',
     signal: AbortSignal.timeout(options.timeoutMs ?? FSR4_DOWNLOAD_TIMEOUT_MS)
   })
   if (!response.ok || !response.body) throw new Fsr4LiteFailure('download')
-  if (!response.url.startsWith('https:')) throw new Fsr4LiteFailure('download')
+  if (!finalDownloadUrlIsHttps(response.url)) throw new Fsr4LiteFailure('download')
   const lengthHeader = response.headers.get('content-length')
   const contentLength = lengthHeader == null || lengthHeader === '' ? null : Number(lengthHeader)
   if (contentLength != null && (!Number.isFinite(contentLength) || contentLength > maxBytes)) {
@@ -676,12 +684,12 @@ async function walkInstall(root: string): Promise<{
       entries = await readdir(current.dir, { withFileTypes: true })
     } catch {
       // Si una carpeta no se puede leer, no se da el juego por limpio.
-      truncated = true
+      truncated = scanIsIncomplete({ unreadableDirectory: true, fileCapHit: false })
       continue
     }
     for (const entry of entries) {
       if (files.length >= FSR4_WALK_MAX_FILES) {
-        truncated = true
+        truncated = scanIsIncomplete({ unreadableDirectory: false, fileCapHit: true })
         break
       }
       if (entry.isSymbolicLink()) continue
@@ -737,9 +745,12 @@ async function listPackageMap(root: string): Promise<Record<string, string>> {
 }
 
 async function writeManifest(exeDir: string, manifest: Fsr4LiteManifest): Promise<void> {
-  const dir = contained(exeDir, FSR4_META_DIR)
+  // El manifiesto pasa por el mismo chequeo físico. Un .mt3k-fsr enlazado pa' fuera se niega.
+  const dir = await containedReal(exeDir, FSR4_META_DIR)
   await mkdir(dir, { recursive: true })
-  const target = win32.join(dir, 'manifest.json')
+  const realDir = await realpath(dir)
+  if (!gameDirWithinInstall(realDir, exeDir)) throw new Fsr4LiteFailure('symlink')
+  const target = win32.join(realDir, 'manifest.json')
   const tmp = `${target}.tmp`
   await writeFile(tmp, JSON.stringify(manifest, null, 2))
   await rename(tmp, target)
@@ -754,30 +765,36 @@ function digestNamed(record: Record<string, Fsr4FileDigest> | undefined, relativ
   return undefined
 }
 
+async function backupIsPresent(exeDir: string, relative: string): Promise<boolean> {
+  try {
+    const backup = await containedReal(exeDir, `${FSR4_META_DIR}/backup/${relative}`)
+    return await existsFile(backup)
+  } catch {
+    return false
+  }
+}
+
 async function readManifest(exeDir: string): Promise<Fsr4LiteManifest> {
-  const raw = JSON.parse(await readFile(win32.join(exeDir, FSR4_META_DIR, 'manifest.json'), 'utf8')) as Fsr4LiteManifest
-  if (!raw || raw.formatVersion !== 1 || typeof raw.proxyName !== 'string') throw new Fsr4LiteFailure('manifest')
-  for (const list of [raw.createdFiles, raw.createdDirs, raw.replacedFiles]) {
-    if (!Array.isArray(list) || list.some((item) => typeof item !== 'string' || !safeRelativePath(item))) {
-      throw new Fsr4LiteFailure('manifest')
+  const manifestPath = await containedReal(exeDir, `${FSR4_META_DIR}/manifest.json`)
+  const raw = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown
+  const replaced = raw && typeof raw === 'object' && Array.isArray((raw as { replacedFiles?: unknown }).replacedFiles)
+    ? (raw as { replacedFiles: unknown[] }).replacedFiles.filter((item): item is string => typeof item === 'string')
+    : []
+  const present = new Set<string>()
+  // El manifiesto viejo no trae state. Se mira el disco pa' no tratarlo como pending vacío.
+  if (raw && typeof raw === 'object' && (raw as { state?: unknown }).state == null) {
+    for (const relative of replaced) {
+      if (await backupIsPresent(exeDir, relative)) present.add(relative.toLowerCase())
     }
   }
-  if (!Array.isArray(raw.reframeworkPreexisting)) raw.reframeworkPreexisting = []
-  // Sin estado explícito no se trata como instalado: es una copia a medias.
-  raw.state = raw.state === 'committed' ? 'committed' : 'pending'
-  raw.createdDigests ??= {}
-  raw.writtenDigests ??= {}
-  raw.backupDigests ??= {}
-  raw.backedUpFiles ??= []
-  raw.copiedCreates ??= []
-  return raw
+  return normalizeStoredManifest(raw, (relative) => present.has(relative.toLowerCase()))
 }
 
 async function manifestStateOf(exeDir: string): Promise<Fsr4ManifestState | 'absent'> {
   try {
     return (await readManifest(exeDir)).state
   } catch (error) {
-    if (error instanceof Fsr4LiteFailure && error.code === 'manifest') throw error
+    if (error instanceof Fsr4LiteFailure && (error.code === 'manifest' || error.code === 'symlink' || error.code === 'bad-path')) throw error
     return 'absent'
   }
 }
@@ -801,6 +818,25 @@ async function packageFile(root: string, relative: string): Promise<string | nul
     current = win32.join(current, hit)
   }
   return await existsFile(current) ? current : null
+}
+
+function digestBuffer(data: Buffer): Fsr4FileDigest {
+  return { size: data.length, sha256: createHash('sha256').update(data).digest('hex') }
+}
+
+/** Huella de los bytes que se van a copiar, antes de tocar la carpeta del juego. */
+async function plannedDigest(packageRoot: string, proxyName: string, refDll: string | undefined, file: { path: string, content: string }): Promise<Fsr4FileDigest> {
+  const base = win32.basename(file.path).toLowerCase()
+  if (base === 'optiscaler.ini' || base === REFRAMEWORK_CONFIG_NAME.toLowerCase()) return digestBuffer(Buffer.from(file.content, 'utf8'))
+  if (base === FSR4_DLL_DX12 || base === FSR4_DLL_VK) return hashFile(win32.join(cacheRoot(), 'fsr4', base))
+  if (base === REFRAMEWORK_DLL_NAME) {
+    if (!refDll) throw new Fsr4LiteFailure('reframework')
+    return hashFile(refDll)
+  }
+  if (file.path.toLowerCase() === proxyName.toLowerCase()) return hashFile(win32.join(packageRoot, 'OptiScaler.dll'))
+  const fromPackage = await packageFile(packageRoot, file.path)
+  if (!fromPackage) throw new Fsr4LiteFailure('layout')
+  return hashFile(fromPackage)
 }
 
 async function copyPlanned(exeDir: string, packageRoot: string, proxyName: string, refDll: string | undefined, file: { path: string, content: string }): Promise<string> {
@@ -991,8 +1027,68 @@ async function removeEmptyCreatedDirs(exeDir: string, dirs: readonly string[]): 
     const dir = await containedReal(exeDir, relative).catch(() => null)
     if (!dir) continue
     const entries = await readdir(dir).catch(() => null)
-    if (entries && entries.length === 0) await rm(dir, { recursive: false, force: true })
+    // Recursivo solo si la carpeta es nuestra y está vacía. Un archivo ajeno la deja quieta.
+    if (mayRecursivelyRemoveDir({ createdByUs: true, entryNames: entries })) {
+      await rm(dir, { recursive: true, force: true })
+    }
   }
+}
+
+async function backupTreeHasFiles(exeDir: string): Promise<boolean> {
+  const root = await containedReal(exeDir, `${FSR4_META_DIR}/backup`).catch(() => null)
+  if (!root) return false
+  // Si la carpeta no existe, no hay backups. Si no se puede leer, se asume que sí.
+  const listed = await lstat(root).catch(() => null)
+  if (!listed) return false
+  if (listed.isSymbolicLink() || !listed.isDirectory()) return true
+  const stack = [root]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (!current) break
+    const entries = await readdir(current, { withFileTypes: true }).catch(() => null)
+    if (!entries) return true
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) return true
+      const full = win32.join(current, entry.name)
+      if (entry.isDirectory()) stack.push(full)
+      else return true
+    }
+  }
+  return false
+}
+
+/** Baja por las carpetas vacías. No borra un directorio que todavía tenga un archivo. */
+async function removeEmptyDirsUnder(root: string): Promise<void> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => null)
+  if (!entries) return
+  for (const entry of entries) {
+    if (!entry.isSymbolicLink() && entry.isDirectory()) {
+      await removeEmptyDirsUnder(win32.join(root, entry.name))
+    }
+  }
+  const left = await readdir(root).catch(() => null)
+  if (mayRecursivelyRemoveDir({ createdByUs: true, entryNames: left })) {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Borra la metadata solo cuando ya no quedan backups.
+ * Primero se quitan los backups restaurados; si queda un archivo, la carpeta se queda.
+ */
+async function removeMetaIfEmptyOfBackups(exeDir: string, restored: readonly string[]): Promise<boolean> {
+  for (const relative of restored) {
+    const backup = await containedReal(exeDir, `${FSR4_META_DIR}/backup/${relative}`).catch(() => null)
+    if (backup && await existsFile(backup)) await rm(backup, { force: true })
+  }
+  if (await backupTreeHasFiles(exeDir)) return false
+  const dir = await containedReal(exeDir, FSR4_META_DIR).catch(() => null)
+  if (!dir) return false
+  const manifestPath = win32.join(dir, 'manifest.json')
+  await rm(manifestPath, { force: true })
+  await rm(`${manifestPath}.tmp`, { force: true })
+  await removeEmptyDirsUnder(dir)
+  return true
 }
 
 async function assessLocated(game: LibraryGame, located: Awaited<ReturnType<typeof locate>>): Promise<ReturnType<typeof assessFsr4Target>> {
@@ -1010,83 +1106,177 @@ async function assessLocated(game: LibraryGame, located: Awaited<ReturnType<type
   })
 }
 
-/** Devuelve la carpeta al estado de antes de esta copia a medias y quita el manifiesto. */
+function touchesWidgetPath(relative: string): boolean {
+  const top = relative.replace(/\\/g, '/').split('/')[0]?.toLowerCase()
+  return top === '.ralfsr'
+}
+
+async function digestIfFile(path: string): Promise<Fsr4FileDigest | null> {
+  if (!await existsFile(path)) return null
+  return hashFile(path)
+}
+
+async function backupLooksRight(exeDir: string, relative: string, manifest: Fsr4LiteManifest): Promise<{ ok: boolean, digest: Fsr4FileDigest | null }> {
+  const backup = await containedReal(exeDir, `${FSR4_META_DIR}/backup/${relative}`).catch(() => null)
+  if (!backup) return { ok: false, digest: null }
+  const digest = await digestIfFile(backup)
+  if (!digest) return { ok: false, digest: null }
+  const expected = digestNamed(manifest.backupDigests, relative)
+  if (expected && (digest.sha256 !== expected.sha256 || digest.size !== expected.size)) return { ok: false, digest }
+  return { ok: true, digest }
+}
+
+async function restoreBackupFile(exeDir: string, relative: string): Promise<void> {
+  const backup = await containedReal(exeDir, `${FSR4_META_DIR}/backup/${relative}`)
+  const dest = await containedReal(exeDir, relative)
+  const info = await stat(backup)
+  await mkdir(win32.dirname(dest), { recursive: true })
+  await copyFile(backup, dest)
+  await utimes(dest, info.atime, info.mtime)
+}
+
+/**
+ * Deshace una copia a medias. Si el archivo ya no es el que escribimos, no se pisa.
+ * La carpeta .mt3k-fsr se queda mientras tenga un backup que no se restauró.
+ */
 async function rollbackPending(exeDir: string, manifest: Fsr4LiteManifest): Promise<string[]> {
-  for (const relative of manifest.backedUpFiles) {
-    const backup = await containedReal(exeDir, `${FSR4_META_DIR}/backup/${relative}`)
-    if (!await existsFile(backup)) throw new Fsr4LiteFailure('backup-missing')
-    const actual = await hashFile(backup)
-    const expected = digestNamed(manifest.backupDigests, relative)
-    if (!expected || actual.sha256 !== expected.sha256 || actual.size !== expected.size) {
-      throw new Fsr4LiteFailure('backup-missing')
-    }
-  }
-  for (const relative of manifest.backedUpFiles) {
-    const backup = await containedReal(exeDir, `${FSR4_META_DIR}/backup/${relative}`)
-    const dest = await containedReal(exeDir, relative)
-    const info = await stat(backup)
-    await mkdir(win32.dirname(dest), { recursive: true })
-    await copyFile(backup, dest)
-    await utimes(dest, info.atime, info.mtime)
-  }
   const skipped: string[] = []
+  const unrestored: string[] = []
+  const restored: string[] = []
+  for (const relative of manifest.backedUpFiles) {
+    if (touchesWidgetPath(relative)) continue
+    const looked = await backupLooksRight(exeDir, relative, manifest)
+    const dest = await containedReal(exeDir, relative).catch(() => null)
+    const current = dest ? await digestIfFile(dest) : null
+    const action = pendingReplaceAction({
+      current,
+      written: digestNamed(manifest.writtenDigests, relative) ?? null,
+      backup: looked.digest,
+      backupOk: looked.ok
+    })
+    if (action === 'missing' || action === 'skip') {
+      skipped.push(relative)
+      unrestored.push(relative)
+      continue
+    }
+    if (action === 'restore') await restoreBackupFile(exeDir, relative)
+    restored.push(relative)
+  }
   for (const relative of manifest.copiedCreates) {
-    if (relative.replace(/\\/g, '/').toLowerCase().startsWith('.ralfsr')) continue
-    const dest = await containedReal(exeDir, relative)
-    if (!await existsFile(dest)) continue
-    const expected = digestNamed(manifest.createdDigests, relative)
-    const actual = await hashFile(dest)
-    if (expected && actual.sha256 === expected.sha256 && actual.size === expected.size) await rm(dest, { force: true })
-    else skipped.push(relative)
+    if (touchesWidgetPath(relative)) continue
+    const dest = await containedReal(exeDir, relative).catch(() => null)
+    const current = dest ? await digestIfFile(dest) : null
+    const action = pendingCreateAction({
+      current,
+      expected: digestNamed(manifest.createdDigests, relative) ?? null
+    })
+    if (action === 'delete' && dest) await rm(dest, { force: true })
+    else if (action === 'skip') skipped.push(relative)
   }
   await removeEmptyCreatedDirs(exeDir, manifest.createdDirs)
-  // Si algo ya no coincide, el manifiesto se queda: la ficha lo muestra como roto.
-  if (skipped.length === 0) await rm(win32.join(exeDir, FSR4_META_DIR), { recursive: true, force: true })
+  if (mayRemoveInstallMeta({ skipped, unrestoredBackups: unrestored })) {
+    const removed = await removeMetaIfEmptyOfBackups(exeDir, restored)
+    if (!removed) skipped.push(FSR4_META_DIR)
+  }
   return skipped
 }
 
 async function uninstallCommitted(exeDir: string, manifest: Fsr4LiteManifest): Promise<string[]> {
-  for (const relative of manifest.replacedFiles) {
-    if (relative.replace(/\\/g, '/').toLowerCase().startsWith('.ralfsr')) throw new Fsr4LiteFailure('bad-path')
-    const backup = await containedReal(exeDir, `${FSR4_META_DIR}/backup/${relative}`)
-    if (!await existsFile(backup)) throw new Fsr4LiteFailure('backup-missing')
-    const actual = await hashFile(backup)
-    const expected = digestNamed(manifest.backupDigests, relative)
-    if (!expected || actual.sha256 !== expected.sha256 || actual.size !== expected.size) {
-      throw new Fsr4LiteFailure('backup-missing')
-    }
-  }
   const skipped: string[] = []
+  const unrestored: string[] = []
+  const restored: string[] = []
+  const legacy = manifestIsLegacyCommitted(manifest)
   for (const relative of manifest.replacedFiles) {
-    const dest = await containedReal(exeDir, relative)
-    const backup = await containedReal(exeDir, `${FSR4_META_DIR}/backup/${relative}`)
-    if (!await existsFile(dest)) {
-      const info = await stat(backup)
-      await mkdir(win32.dirname(dest), { recursive: true })
-      await copyFile(backup, dest)
-      await utimes(dest, info.atime, info.mtime)
+    if (touchesWidgetPath(relative)) throw new Fsr4LiteFailure('bad-path')
+    const looked = await backupLooksRight(exeDir, relative, manifest)
+    const dest = await containedReal(exeDir, relative).catch(() => null)
+    const current = dest ? await digestIfFile(dest) : null
+    const action = committedReplaceAction({
+      current,
+      written: digestNamed(manifest.writtenDigests, relative) ?? null,
+      backupOk: looked.ok,
+      legacy
+    })
+    if (action === 'missing' || action === 'skip') {
+      skipped.push(relative)
+      if (looked.ok) unrestored.push(relative)
+      else unrestored.push(relative)
       continue
     }
-    const actual = await hashFile(dest)
-    const written = digestNamed(manifest.writtenDigests, relative)
-    if (written && actual.sha256 === written.sha256 && actual.size === written.size) {
-      const info = await stat(backup)
-      await copyFile(backup, dest)
-      await utimes(dest, info.atime, info.mtime)
-    } else skipped.push(relative)
+    if (action === 'restore') await restoreBackupFile(exeDir, relative)
+    restored.push(relative)
   }
   for (const relative of manifest.createdFiles) {
-    if (relative.replace(/\\/g, '/').toLowerCase().startsWith('.ralfsr')) continue
-    const dest = await containedReal(exeDir, relative)
-    if (!await existsFile(dest)) continue
-    const expected = digestNamed(manifest.createdDigests, relative)
-    const actual = await hashFile(dest)
-    if (expected && actual.sha256 === expected.sha256 && actual.size === expected.size) await rm(dest, { force: true })
-    else skipped.push(relative)
+    if (touchesWidgetPath(relative)) continue
+    const dest = await containedReal(exeDir, relative).catch(() => null)
+    const current = dest ? await digestIfFile(dest) : null
+    const action = committedCreateAction({
+      current,
+      expected: digestNamed(manifest.createdDigests, relative) ?? null,
+      legacy
+    })
+    if (action === 'delete' && dest) await rm(dest, { force: true })
+    else if (action === 'skip') skipped.push(relative)
   }
   await removeEmptyCreatedDirs(exeDir, manifest.createdDirs)
-  if (skipped.length === 0) await rm(win32.join(exeDir, FSR4_META_DIR), { recursive: true, force: true })
+  if (mayRemoveInstallMeta({ skipped, unrestoredBackups: unrestored })) {
+    const removed = await removeMetaIfEmptyOfBackups(exeDir, restored)
+    if (!removed) skipped.push(FSR4_META_DIR)
+  }
   return skipped
+}
+
+function markRepair(record: Fsr4GameRecord, exeDir: string, installRoot: string): Fsr4GameRecord {
+  const next: Fsr4GameRecord = {
+    ...record,
+    installed: false,
+    widgetOwned: false,
+    repairNeeded: true,
+    exeDir,
+    installRoot,
+    block: undefined,
+    sessionStatus: 'none',
+    resolution: undefined
+  }
+  saveRecord(next)
+  inspectCache.delete(record.gameId)
+  notify({ kind: 'repair', gameId: record.gameId })
+  return next
+}
+
+/** Quita lo nuestro y luego marca el juego como del widget. No toca .ralfsr. */
+async function handoffToWidget(record: Fsr4GameRecord, exeDir: string, installRoot: string): Promise<Fsr4GameRecord> {
+  const manifest = await readManifest(exeDir).catch((error: unknown) => {
+    if (error instanceof Fsr4LiteFailure && (error.code === 'manifest' || error.code === 'symlink' || error.code === 'bad-path')) throw error
+    return null
+  })
+  if (manifest && shouldUninstallBeforeWidget({ manifestState: manifest.state })) {
+    const skipped = manifest.state === 'pending'
+      ? await rollbackPending(exeDir, manifest)
+      : await uninstallCommitted(exeDir, manifest)
+    if (skipped.length > 0) {
+      markRepair(record, exeDir, installRoot)
+      throw new Fsr4LiteFailure('broken')
+    }
+  } else if (record.installed) {
+    log('warn', `widget en ${record.gameId} sin manifiesto nuestro; no se borran archivos a ciegas`)
+  }
+  const next: Fsr4GameRecord = {
+    ...record,
+    installed: false,
+    widgetOwned: true,
+    repairNeeded: false,
+    exeDir,
+    installRoot,
+    block: undefined,
+    proxyName: undefined,
+    optiBuild: undefined,
+    sessionStatus: 'none',
+    resolution: undefined
+  }
+  saveRecord(next)
+  inspectCache.delete(record.gameId)
+  return next
 }
 
 async function installInto(game: LibraryGame): Promise<Fsr4LiteGameView> {
@@ -1098,13 +1288,18 @@ async function installInto(game: LibraryGame): Promise<Fsr4LiteGameView> {
     let located = await locate(game)
     let assessment = await assessLocated(game, located)
     const record = readRecord(game.id)
-    const rememberWidget = (): Fsr4LiteGameView => {
-      const next = { ...record, widgetOwned: true, installed: false, exeDir: located.exeDir, installRoot: located.installRoot, block: undefined }
+    const takeWidget = async (): Promise<Fsr4LiteGameView> => {
+      const state = await manifestStateOf(located.exeDir)
+      if (shouldUninstallBeforeWidget({ manifestState: state })) {
+        const next = await handoffToWidget(record, located.exeDir, located.installRoot)
+        return viewFrom(next, true, 'widget')
+      }
+      const next = { ...record, widgetOwned: true, installed: false, repairNeeded: false, exeDir: located.exeDir, installRoot: located.installRoot, block: undefined }
       saveRecord(next)
       inspectCache.delete(game.id)
       return viewFrom(next, true, 'widget')
     }
-    if (assessment.kind === 'widget') return rememberWidget()
+    if (assessment.kind === 'widget') return takeWidget()
     if (assessment.kind === 'broken') throw new Fsr4LiteFailure('broken')
     if (assessment.block) throw new Fsr4LiteFailure(assessment.block)
     if (assessment.kind === 'installed') {
@@ -1119,7 +1314,7 @@ async function installInto(game: LibraryGame): Promise<Fsr4LiteGameView> {
     assertNotRunning(game.id)
     located = await locate(game)
     assessment = await assessLocated(game, located)
-    if (assessment.kind === 'widget') return rememberWidget()
+    if (assessment.kind === 'widget') return takeWidget()
     if (assessment.kind === 'broken') throw new Fsr4LiteFailure('broken')
     if (assessment.block) throw new Fsr4LiteFailure(assessment.block)
     const note = record.compatNote ?? await compatNote(game.name).catch(() => undefined)
@@ -1144,7 +1339,16 @@ async function installInto(game: LibraryGame): Promise<Fsr4LiteGameView> {
       nowIso: new Date().toISOString(),
       reframework: addRef ? { version: ref?.version ?? '', preexisting, dllContent: 'ref' } : undefined
     })
-    const manifest: Fsr4LiteManifest = { ...plan.manifest, state: 'pending', backedUpFiles: [], copiedCreates: [] }
+    // El plan trae huellas del texto, no de los bytes. El journal en disco arranca vacío.
+    let manifest: Fsr4LiteManifest = {
+      ...plan.manifest,
+      state: 'pending',
+      backedUpFiles: [],
+      copiedCreates: [],
+      writtenDigests: {},
+      createdDigests: {},
+      backupDigests: {}
+    }
     let mutated = false
     try {
       await writeManifest(located.exeDir, manifest)
@@ -1152,28 +1356,39 @@ async function installInto(game: LibraryGame): Promise<Fsr4LiteGameView> {
       for (const file of plan.files) {
         assertNotRunning(game.id)
         if (file.action === 'replace') {
-          manifest.backupDigests[file.path] = await backupFile(located.exeDir, file.path)
-          manifest.backedUpFiles = [...manifest.backedUpFiles, file.path]
+          const backupDigest = await backupFile(located.exeDir, file.path)
+          manifest = journalBackup(manifest, file.path, backupDigest)
           await writeManifest(located.exeDir, manifest)
         }
+        assertNotRunning(game.id)
+        const intent = await plannedDigest(opti.root, plan.proxyName, ref?.dll, file)
+        // Se anota la copia antes de hacerla. Si el hash de después falla, el rollback ya sabe del archivo.
+        manifest = journalCopyIntent(manifest, file, intent)
+        await writeManifest(located.exeDir, manifest)
+        assertNotRunning(game.id)
         notify({ kind: 'progress', gameId: game.id, phase: 'copy', received: 1, total: plan.files.length })
         const dest = await copyPlanned(located.exeDir, opti.root, plan.proxyName, ref?.dll, file)
         const written = await hashFile(dest)
-        manifest.writtenDigests[file.path] = written
-        if (file.action === 'create') {
-          manifest.createdDigests[file.path] = written
-          manifest.copiedCreates = [...manifest.copiedCreates, file.path]
-        }
+        if (written.sha256 !== intent.sha256 || written.size !== intent.size) throw new Fsr4LiteFailure('changed')
+        manifest = journalCopyIntent(manifest, file, written)
         await writeManifest(located.exeDir, manifest)
       }
-      manifest.state = 'committed'
+      manifest = { ...manifest, state: 'committed' }
       await writeManifest(located.exeDir, manifest)
     } catch (error) {
       if (mutated) {
+        log('warn', 'la instalación no terminó; se intenta deshacer', error)
         try {
-          await rollbackPending(located.exeDir, await readManifest(located.exeDir))
+          const skipped = await rollbackPending(located.exeDir, await readManifest(located.exeDir))
+          if (skipped.length > 0) {
+            markRepair(record, located.exeDir, located.installRoot)
+            throw new Fsr4LiteFailure('broken')
+          }
         } catch (rollbackError) {
+          if (rollbackError instanceof Fsr4LiteFailure && rollbackError.code === 'broken') throw rollbackError
           log('warn', 'no se pudo deshacer la instalación a medias', rollbackError)
+          markRepair(record, located.exeDir, located.installRoot)
+          throw new Fsr4LiteFailure('broken')
         }
       }
       throw error
@@ -1183,6 +1398,7 @@ async function installInto(game: LibraryGame): Promise<Fsr4LiteGameView> {
       exeDir: located.exeDir,
       installRoot: located.installRoot,
       installed: true,
+      repairNeeded: false,
       widgetOwned: false,
       proxyName: plan.proxyName,
       optiBuild: opti.build,
@@ -1209,7 +1425,12 @@ async function uninstallFrom(game: LibraryGame): Promise<Fsr4LiteGameView> {
     const located = await locate(game)
     const assessment = await assessLocated(game, located)
     if (assessment.kind === 'widget') {
-      const next = { ...record, widgetOwned: true, installed: false, exeDir: located.exeDir, installRoot: located.installRoot }
+      const state = await manifestStateOf(located.exeDir)
+      if (shouldUninstallBeforeWidget({ manifestState: state })) {
+        const next = await handoffToWidget(record, located.exeDir, located.installRoot)
+        return viewFrom(next, true, 'widget')
+      }
+      const next = { ...record, widgetOwned: true, installed: false, repairNeeded: false, exeDir: located.exeDir, installRoot: located.installRoot }
       saveRecord(next)
       inspectCache.delete(game.id)
       return viewFrom(next, true, 'widget')
@@ -1223,6 +1444,7 @@ async function uninstallFrom(game: LibraryGame): Promise<Fsr4LiteGameView> {
       : await uninstallCommitted(located.exeDir, manifest)
     if (skipped.length > 0) {
       log('warn', `se dejaron archivos que ya no coinciden: ${skipped.join(', ')}`)
+      markRepair(record, located.exeDir, located.installRoot)
       throw new Fsr4LiteFailure('changed')
     }
     const next: Fsr4GameRecord = {
@@ -1230,6 +1452,7 @@ async function uninstallFrom(game: LibraryGame): Promise<Fsr4LiteGameView> {
       exeDir: located.exeDir,
       installRoot: located.installRoot,
       installed: false,
+      repairNeeded: false,
       proxyName: undefined,
       optiBuild: undefined,
       sessionStatus: 'none',
@@ -1246,11 +1469,11 @@ async function refreshInstalled(build: CurrentBuild): Promise<void> {
     if (!record?.installed || !record.exeDir || !isNewerOptiBuild(record.optiBuild, build.build)) continue
     try {
       const status = sessionState()
-      const running = status.gameId === record.gameId && (status.phase === 'launching' || status.phase === 'running')
+      const running = status.gameId === record.gameId && gameLaunchBlocksMutation(status.phase)
       const root = record.installRoot || record.exeDir
       const refusal = classifyGameRoot(record.exeDir)
       const walked = await walkInstall(root)
-      const manifest = await readManifest(record.exeDir)
+      let manifest = await readManifest(record.exeDir)
       const decision = launcherMayUpdate({
         files: walked.files.map((file) => file.relativePath),
         dirs: walked.dirs,
@@ -1261,9 +1484,8 @@ async function refreshInstalled(build: CurrentBuild): Promise<void> {
       })
       if (decision !== 'ok') {
         log('warn', `no se actualiza ${record.gameId}: ${decision}`)
-        if (decision === 'widget') {
-          saveRecord({ ...record, installed: false, widgetOwned: true })
-          inspectCache.delete(record.gameId)
+        if (decision === 'widget' && record.exeDir) {
+          await handoffToWidget(record, record.exeDir, root)
         }
         continue
       }
@@ -1285,31 +1507,34 @@ async function refreshInstalled(build: CurrentBuild): Promise<void> {
         if (!source) continue
         const alreadyOurs = manifest.createdFiles.some((item) => item.toLowerCase() === destRel.toLowerCase())
         const alreadyReplaced = manifest.replacedFiles.some((item) => item.toLowerCase() === destRel.toLowerCase())
-        if (await existsFile(dest)) {
-          if (!alreadyOurs && !alreadyReplaced) {
-            manifest.backupDigests[destRel] = await backupFile(record.exeDir, destRel)
-            manifest.backedUpFiles = [...manifest.backedUpFiles, destRel]
-            manifest.replacedFiles = [...manifest.replacedFiles, destRel]
-            await writeManifest(record.exeDir, manifest)
-          }
-        } else if (!alreadyOurs) {
-          manifest.createdFiles = [...manifest.createdFiles, destRel]
-          manifest.copiedCreates = [...manifest.copiedCreates, destRel]
+        const action = (await existsFile(dest)) ? 'replace' as const : 'create' as const
+        if (action === 'replace' && !alreadyOurs && !alreadyReplaced) {
+          const backupDigest = await backupFile(record.exeDir, destRel)
+          manifest = journalBackup(manifest, destRel, backupDigest)
+          manifest = { ...manifest, replacedFiles: manifest.replacedFiles.some((item) => item.toLowerCase() === destRel.toLowerCase()) ? manifest.replacedFiles : [...manifest.replacedFiles, destRel] }
+          await writeManifest(record.exeDir, manifest)
+        } else if (action === 'create' && !alreadyOurs) {
           const parent = destRel.includes('/') ? destRel.slice(0, destRel.lastIndexOf('/')) : ''
           if (parent && !manifest.createdDirs.some((dir) => dir.toLowerCase() === parent.toLowerCase())) {
             let parentExists = false
             try { parentExists = (await stat(await containedReal(record.exeDir, parent))).isDirectory() } catch { parentExists = false }
-            if (!parentExists) manifest.createdDirs = [...manifest.createdDirs, parent]
+            if (!parentExists) manifest = { ...manifest, createdDirs: [...manifest.createdDirs, parent] }
           }
-          await writeManifest(record.exeDir, manifest)
+          if (!manifest.createdFiles.some((item) => item.toLowerCase() === destRel.toLowerCase())) {
+            manifest = { ...manifest, createdFiles: [...manifest.createdFiles, destRel] }
+          }
         }
+        assertNotRunning(record.gameId)
+        const intent = await hashFile(source)
+        const journalAction = (alreadyOurs || action === 'create') ? 'create' as const : 'replace' as const
+        manifest = journalCopyIntent(manifest, { path: destRel, action: journalAction }, intent)
+        await writeManifest(record.exeDir, manifest)
+        assertNotRunning(record.gameId)
         await mkdir(win32.dirname(dest), { recursive: true })
         await copyFile(source, dest)
         const written = await hashFile(dest)
-        manifest.writtenDigests[destRel] = written
-        if (manifest.createdFiles.some((item) => item.toLowerCase() === destRel.toLowerCase())) {
-          manifest.createdDigests[destRel] = written
-        }
+        if (written.sha256 !== intent.sha256 || written.size !== intent.size) throw new Fsr4LiteFailure('changed')
+        manifest = journalCopyIntent(manifest, { path: destRel, action: manifest.createdFiles.some((item) => item.toLowerCase() === destRel.toLowerCase()) ? 'create' : 'replace' }, written)
         await writeManifest(record.exeDir, manifest)
       }
       saveRecord({ ...record, optiBuild: build.build })
@@ -1395,21 +1620,24 @@ export const fsr4LiteService = {
     const dx = byName.get(FSR4_DLL_DX12)
     const vk = byName.get(FSR4_DLL_VK)
     if (!dx || !vk) throw new Fsr4LiteFailure('dll')
-    const dir = win32.join(cacheRoot(), 'fsr4')
-    const staging = win32.join(dir, 'incoming')
-    await rm(staging, { recursive: true, force: true })
-    await mkdir(staging, { recursive: true })
-    try {
-      await copyFile(dx, win32.join(staging, FSR4_DLL_DX12))
-      await copyFile(vk, win32.join(staging, FSR4_DLL_VK))
-      await publishFsrPair(staging, 'imported', {})
-    } catch (error) {
+    // El diálogo queda afuera del candado. Borrar el staging y publicar, adentro.
+    return withMutation('import', async () => {
+      const dir = win32.join(cacheRoot(), 'fsr4')
+      const staging = win32.join(dir, 'incoming')
       await rm(staging, { recursive: true, force: true })
-      throw error
-    }
-    deviceCache = undefined
-    log('info', 'DLL Lite importados')
-    return deviceStatus()
+      await mkdir(staging, { recursive: true })
+      try {
+        await copyFile(dx, win32.join(staging, FSR4_DLL_DX12))
+        await copyFile(vk, win32.join(staging, FSR4_DLL_VK))
+        await publishFsrPair(staging, 'imported', {})
+      } catch (error) {
+        await rm(staging, { recursive: true, force: true })
+        throw error
+      }
+      deviceCache = undefined
+      log('info', 'DLL Lite importados')
+      return deviceStatus()
+    })
   },
 
   gameGet(game: LibraryGame | undefined): Promise<Fsr4LiteGameView> {
@@ -1419,13 +1647,40 @@ export const fsr4LiteService = {
     return locate(game).then(async (located) => {
       const assessment = await assessLocated(game, located)
       const record = readRecord(game.id)
+      if (assessment.kind === 'widget') {
+        const state = await manifestStateOf(located.exeDir)
+        if (shouldUninstallBeforeWidget({ manifestState: state })) {
+          if (!mutationGate.tryAcquire('handoff')) {
+            const busy = viewFrom({ ...record, installed: false, widgetOwned: false, repairNeeded: true }, true, 'broken')
+            inspectCache.set(game.id, { at: Date.now(), view: busy })
+            return busy
+          }
+          try {
+            const handed = await handoffToWidget(record, located.exeDir, located.installRoot)
+            const view = viewFrom(handed, true, 'widget')
+            inspectCache.set(game.id, { at: Date.now(), view })
+            return view
+          } catch (error) {
+            if (error instanceof Fsr4LiteFailure && error.code === 'broken') {
+              const view = viewFrom({ ...readRecord(game.id), repairNeeded: true }, true, 'broken')
+              inspectCache.set(game.id, { at: Date.now(), view })
+              return view
+            }
+            throw error
+          } finally {
+            mutationGate.release('handoff')
+          }
+        }
+      }
       const note = await compatNote(game.name).catch(() => undefined)
+      const repairNeeded = record.repairNeeded === true && assessment.kind !== 'ready' && assessment.kind !== 'widget'
       const next: Fsr4GameRecord = {
         ...record,
         exeDir: located.exeDir,
         installRoot: located.installRoot,
-        installed: assessment.kind === 'installed',
+        installed: assessment.kind === 'installed' && !repairNeeded,
         widgetOwned: assessment.kind === 'widget',
+        repairNeeded,
         upscalers: assessment.upscalers,
         hasFsr2Dll: assessment.hasFsr2,
         noUpscaler: assessment.noUpscaler,
@@ -1434,15 +1689,17 @@ export const fsr4LiteService = {
         compatNote: note ?? record.compatNote
       }
       saveRecord(next)
-      const phase: Fsr4LiteGameView['phase'] = assessment.kind === 'widget'
-        ? 'widget'
-        : assessment.kind === 'broken'
-          ? 'broken'
-          : assessment.kind === 'installed'
-            ? 'installed'
-            : assessment.kind === 'refused'
-              ? 'blocked'
-              : 'ready'
+      const phase: Fsr4LiteGameView['phase'] = repairNeeded
+        ? 'broken'
+        : assessment.kind === 'widget'
+          ? 'widget'
+          : assessment.kind === 'broken'
+            ? 'broken'
+            : assessment.kind === 'installed'
+              ? 'installed'
+              : assessment.kind === 'refused'
+                ? 'blocked'
+                : 'ready'
       const view = viewFrom(next, true, phase)
       inspectCache.set(game.id, { at: Date.now(), view })
       return view
@@ -1470,29 +1727,47 @@ export const fsr4LiteService = {
       assertNotRunning(game.id)
       const record = { ...readRecord(game.id), renderScale, overlay, graphicsApi }
       const located = await locate(game)
+      assertNotRunning(game.id)
       const assessment = await assessLocated(game, located)
-      if (assessment.kind === 'widget') return viewFrom({ ...record, widgetOwned: true, installed: false }, true, 'widget')
+      assertNotRunning(game.id)
+      if (assessment.kind === 'widget') {
+        const state = await manifestStateOf(located.exeDir)
+        assertNotRunning(game.id)
+        if (shouldUninstallBeforeWidget({ manifestState: state })) {
+          const next = await handoffToWidget(record, located.exeDir, located.installRoot)
+          return viewFrom(next, true, 'widget')
+        }
+        return viewFrom({ ...record, widgetOwned: true, installed: false, repairNeeded: false }, true, 'widget')
+      }
       if (assessment.kind === 'broken') throw new Fsr4LiteFailure('broken')
       if (assessment.block) throw new Fsr4LiteFailure(assessment.block)
       if (assessment.kind === 'installed') {
         const manifest = await readManifest(located.exeDir)
+        assertNotRunning(game.id)
         if (manifest.state !== 'committed') throw new Fsr4LiteFailure('broken')
         const names = await readdir(located.exeDir)
+        assertNotRunning(game.id)
         const iniName = names.find((name) => name.toLowerCase() === 'optiscaler.ini')
         if (!iniName) throw new Fsr4LiteFailure('manifest')
         const replaced = manifest.replacedFiles.find((file) => file.toLowerCase() === 'optiscaler.ini')
         if (replaced) {
           const backup = await containedReal(located.exeDir, `${FSR4_META_DIR}/backup/${replaced}`)
+          assertNotRunning(game.id)
           if (!await existsFile(backup)) throw new Fsr4LiteFailure('backup-missing')
         }
         const iniPath = await containedReal(located.exeDir, iniName)
-        const nextIni = setIniValues(await readFile(iniPath, 'utf8'), iniAssignments({
+        assertNotRunning(game.id)
+        const currentIni = await readFile(iniPath, 'utf8')
+        assertNotRunning(game.id)
+        const nextIni = setIniValues(currentIni, iniAssignments({
           renderScale,
           overlay,
           graphicsApi,
           hasFsr2Dll: record.hasFsr2Dll,
           noUpscaler: record.noUpscaler
         }))
+        // Después de cada await: si el juego arrancó, no se escribe el ini.
+        assertNotRunning(game.id)
         await writeFile(iniPath, nextIni)
         const written = await hashFile(iniPath)
         const key = replaced ?? iniName
@@ -1538,7 +1813,13 @@ export const fsr4LiteService = {
       const logPath = win32.join(record.exeDir, logName)
       const info = await stat(logPath)
       if (startedAt == null || !sessionLogIsFresh(info.mtimeMs, startedAt)) {
+        // Un log viejo no deja el badge de la sesión anterior.
+        const observed = sessionObservation({ logMtimeMs: info.mtimeMs, sessionStartedAt: startedAt ?? null, logText: null })
+        const changed = record.sessionStatus !== observed.status || Boolean(record.resolution)
+        saveRecord({ ...record, sessionStatus: observed.status, resolution: undefined })
+        inspectCache.delete(game.id)
         log('info', `sesión ${game.id} sin log nuevo`)
+        if (changed) notify({ kind: 'session', gameId: game.id, status: observed.status })
         return
       }
       const length = Math.min(info.size, FSR4_LOG_READ_CAP)
@@ -1552,7 +1833,7 @@ export const fsr4LiteService = {
       } finally {
         await handle.close()
       }
-      const parsed = parseOptiScalerSessionLog(text)
+      const parsed = sessionObservation({ logMtimeMs: info.mtimeMs, sessionStartedAt: startedAt ?? null, logText: text })
       const changed = record.sessionStatus !== parsed.status
       saveRecord({ ...record, sessionStatus: parsed.status, resolution: parsed.resolution })
       inspectCache.delete(game.id)

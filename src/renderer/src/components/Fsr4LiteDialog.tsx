@@ -44,9 +44,25 @@ export function Fsr4LiteDialog({ game, view, onView, onClose }: Props): JSX.Elem
   }, [view?.phase, busy])
 
   useEffect(() => window.api.fsr4Lite.onEvent((event) => {
-    if (event.gameId !== game.id || event.kind !== 'progress') return
-    setProgress(event)
-  }), [game.id])
+    if (event.gameId !== game.id) return
+    if (event.kind === 'progress') setProgress(event)
+    if (event.kind === 'repair') {
+      setErrorCode('broken')
+      onView({
+        ...(view ?? {
+          supported: true,
+          phase: 'broken',
+          upscalers: [],
+          noUpscaler: true,
+          renderScale: 'game',
+          overlay: false,
+          graphicsApi: 'DX12',
+          sessionStatus: 'none'
+        }),
+        phase: 'broken'
+      })
+    }
+  }), [game.id, onView, view])
 
   const fail = (error: unknown): void => {
     const code = fsr4LiteErrorCode(error)

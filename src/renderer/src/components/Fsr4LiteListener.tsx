@@ -15,6 +15,16 @@ const TOAST: Record<'active' | 'not-lite' | 'not-loaded' | 'unknown', Translatio
 
 export function Fsr4LiteListener(): null {
   useEffect(() => window.api.fsr4Lite.onEvent((event) => {
+    if (event.kind === 'repair') {
+      notify({
+        tone: 'error',
+        titleKey: 'fsr4Lite.title',
+        messageKey: 'fsr4Lite.toast.repair',
+        force: true,
+        replace: true
+      })
+      return
+    }
     if (event.kind !== 'session') return
     notify({
       tone: event.status === 'active' ? 'success' : 'info',
