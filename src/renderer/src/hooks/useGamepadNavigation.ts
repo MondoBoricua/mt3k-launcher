@@ -1,5 +1,4 @@
 import { useAttractModeStore } from '@renderer/state/attractModeStore'
-import { oledCareCoverActive } from '@renderer/components/OledCare'
 import { oledCareControllerPlan } from '@shared/oledCarePolicy'
 import { usePreferencesStore as attractPreferences } from '@renderer/state/preferencesStore'
 import { useEffect } from 'react'
@@ -393,7 +392,7 @@ export function useGamepadNavigation(): void {
       const wakePlan = oledCareControllerPlan({
         careEnabled: carePreferences.oledCareEnabled === true,
         attractEnabled: carePreferences.attractModeEnabled === true,
-        coverActive: oledCareCoverActive(),
+        coverActive: attract.oledCover === true,
         attractActive: attract.active,
         controllerActivity: hasControllerActivity,
         consumeWake: consumeAttractWake

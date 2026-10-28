@@ -1,20 +1,27 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { shouldStartAttractMode, type AttractState } from '../src/shared/attractModePolicy.ts'
 import {
   OLED_CARE_DEFAULT_MINUTES,
   OLED_CARE_DEFAULT_MODE,
+  OLED_CARE_DIALOG_SELECTOR,
   OLED_CARE_DIM_OPACITY,
   OLED_CARE_IDLE_MINUTES,
+  OLED_CARE_LAUNCH_PHASE_PENDING,
   OLED_CARE_MODES,
   OLED_CARE_WAKE_SUPPRESS_MS,
+  attractPlanUnderOledCover,
   normalizeOledCareIdleMinutes,
   normalizeOledCareMode,
   oledCareControllerPlan,
   oledCareCoverStyle,
+  oledCareDialogIsOpen,
   oledCareLayerOpacity,
   oledCareSuppressUntil,
   oledCareVisibleSurface,
   shouldCoverWithOledCare,
+  shouldResetOledCareIdle,
+  shouldSwallowOledCareSurfaceInput,
   shouldSwallowOledCareWake,
   type OledCareState
 } from '../src/shared/oledCarePolicy.ts'
@@ -22,6 +29,7 @@ import {
 const ready: OledCareState = {
   enabled: true,
   launchPhase: 'idle',
+  dialogOpen: false,
   visible: true,
   focused: true,
   minimized: false,
@@ -40,9 +48,11 @@ for (const blocker of [
   { visible: false },
   { focused: false },
   { minimized: true },
+  { dialogOpen: true },
   { launchPhase: 'launching' },
   { launchPhase: 'running' },
   { launchPhase: 'returning' },
+  { launchPhase: OLED_CARE_LAUNCH_PHASE_PENDING },
   { idleMs: 179_999 },
   { idleMs: NaN },
   { idleMs: Number.POSITIVE_INFINITY }
@@ -144,6 +154,130 @@ assert.equal(
 )
 assert.equal(oledCareSuppressUntil(1_000, true, 0), 1_500)
 assert.equal(oledCareSuppressUntil(2_000, false, 1_500), 1_500)
+
+assert.equal(oledCareDialogIsOpen(false, false), false)
+assert.equal(oledCareDialogIsOpen(true, false), true, 'la ficha abierta cuenta como diálogo')
+assert.equal(oledCareDialogIsOpen(false, true), true, 'el marcador de modal cuenta como diálogo')
+assert.equal(
+  shouldCoverWithOledCare({ ...ready, dialogOpen: true }),
+  false,
+  'un diálogo abierto no deja cubrir, igual que la vitrina'
+)
+assert.equal(shouldResetOledCareIdle({
+  dialogOpen: true, launchPhase: 'idle', hidden: false, focused: true, visible: true
+}), true, 'con diálogo el reloj se reinicia aunque la vitrina no esté montada')
+assert.equal(shouldResetOledCareIdle({
+  dialogOpen: false, launchPhase: 'idle', hidden: false, focused: true, visible: true
+}), false, 'en reposo útil el reloj sí corre')
+assert.equal(shouldResetOledCareIdle({
+  dialogOpen: false, launchPhase: OLED_CARE_LAUNCH_PHASE_PENDING, hidden: false, focused: true, visible: true
+}), true, 'hasta leer la fase no se acumula idle')
+assert.match(OLED_CARE_DIALOG_SELECTOR, /data-focus-scope="active"/)
+assert.match(OLED_CARE_DIALOG_SELECTOR, /role="dialog"/)
+
+const wokeAt = 10_000
+const sharedUntil = oledCareSuppressUntil(wokeAt, true, 0)
+assert.equal(sharedUntil - wokeAt, OLED_CARE_WAKE_SUPPRESS_MS, 'teclado y puntero usan la misma constante')
+for (const kind of ['keyboard', 'pointer'] as const) {
+  assert.equal(shouldSwallowOledCareSurfaceInput({
+    dialogOpen: false,
+    coverActive: false,
+    heldWakeKey: false,
+    now: sharedUntil - 1,
+    suppressUntil: sharedUntil,
+    eventHitsCover: false,
+    kind
+  }), true, `${kind} sigue tragado dentro de la ventana`)
+  assert.equal(shouldSwallowOledCareSurfaceInput({
+    dialogOpen: false,
+    coverActive: false,
+    heldWakeKey: false,
+    now: sharedUntil,
+    suppressUntil: sharedUntil,
+    eventHitsCover: false,
+    kind
+  }), false, `${kind} pasa cuando se acaba la ventana`)
+  assert.equal(shouldSwallowOledCareSurfaceInput({
+    dialogOpen: true,
+    coverActive: true,
+    heldWakeKey: true,
+    now: sharedUntil - 1,
+    suppressUntil: sharedUntil,
+    eventHitsCover: true,
+    kind
+  }), false, `${kind} no se traga si hay un modal encima`)
+}
+assert.equal(shouldSwallowOledCareSurfaceInput({
+  dialogOpen: false,
+  coverActive: true,
+  heldWakeKey: false,
+  now: 5_000,
+  suppressUntil: 0,
+  eventHitsCover: true,
+  kind: 'pointer'
+}), true, 'el puntero que cae en la capa se traga')
+assert.equal(shouldSwallowOledCareSurfaceInput({
+  dialogOpen: false,
+  coverActive: true,
+  heldWakeKey: false,
+  now: 5_000,
+  suppressUntil: 0,
+  eventHitsCover: false,
+  kind: 'pointer'
+}), false, 'un puntero que no cae en la capa no se traga')
+
+assert.deepEqual(
+  attractPlanUnderOledCover({
+    coverActive: true,
+    attractAllowed: true,
+    attractCurrentlyActive: true,
+    dwellElapsed: true
+  }),
+  { active: false, advanceSlide: false },
+  'con la capa puesta la vitrina no avanza ni se queda activa'
+)
+assert.deepEqual(
+  attractPlanUnderOledCover({
+    coverActive: false,
+    attractAllowed: true,
+    attractCurrentlyActive: false,
+    dwellElapsed: false
+  }),
+  { active: true, advanceSlide: true },
+  'al quitarse la capa, la vitrina arranca si ya tocaba'
+)
+assert.deepEqual(
+  attractPlanUnderOledCover({
+    coverActive: false,
+    attractAllowed: true,
+    attractCurrentlyActive: true,
+    dwellElapsed: false
+  }),
+  { active: true, advanceSlide: false },
+  'si ya estaba en una carátula y no cumplió el tiempo, no salta'
+)
+assert.deepEqual(
+  attractPlanUnderOledCover({
+    coverActive: false,
+    attractAllowed: false,
+    attractCurrentlyActive: true,
+    dwellElapsed: true
+  }),
+  { active: false, advanceSlide: false },
+  'sin idle suficiente la vitrina sigue apagada'
+)
+
+const gamepadHook = readFileSync(new URL('../src/renderer/src/hooks/useGamepadNavigation.ts', import.meta.url), 'utf8')
+assert.equal(gamepadHook.includes('components/OledCare'), false, 'el sondeo del mando no importa el componente')
+assert.match(gamepadHook, /oledCover/)
+const oledComponent = readFileSync(new URL('../src/renderer/src/components/OledCare.tsx', import.meta.url), 'utf8')
+assert.match(oledComponent, /OLED_CARE_LAUNCH_PHASE_PENDING/)
+assert.match(oledComponent, /shouldResetOledCareIdle/)
+assert.match(oledComponent, /data-oled-care/)
+assert.match(oledComponent, /addEventListener\(name, swallowHit\)/)
+const attractComponent = readFileSync(new URL('../src/renderer/src/components/AttractMode.tsx', import.meta.url), 'utf8')
+assert.match(attractComponent, /attractPlanUnderOledCover/)
+assert.match(attractComponent, /OLED_CARE_DIALOG_SELECTOR/)
 
 assert.deepEqual(
   oledCareControllerPlan({

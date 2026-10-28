@@ -1,26 +1,36 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAttractModeStore } from '@renderer/state/attractModeStore'
+import { useGameDetailStore } from '@renderer/state/gameDetailStore'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import {
+  OLED_CARE_DIALOG_SELECTOR,
+  OLED_CARE_LAUNCH_PHASE_PENDING,
   oledCareCoverStyle,
-  oledCareSuppressUntil,
+  oledCareDialogIsOpen,
   shouldCoverWithOledCare,
-  shouldSwallowOledCareWake
+  shouldResetOledCareIdle,
+  shouldSwallowOledCareSurfaceInput
 } from '@shared/oledCarePolicy'
 
 /**
- * Bandera que el sondeo del mando lee sin esperar a React.
- * Si la capa está puesta, ese primer movimiento se traga.
+ * Publica la capa en el store (el mando lee `oledCover` desde ahí) y en
+ * React. Al prenderla apaga la vitrina en el mismo instante, sin esperar
+ * el próximo chequeo de 500 ms.
  */
-let coverActive = false
-
-export function oledCareCoverActive(): boolean {
-  return coverActive
+function publishCover(active: boolean, setCovering: (active: boolean) => void): void {
+  const current = useAttractModeStore.getState()
+  if (current.oledCover !== active || (active && current.active)) {
+    useAttractModeStore.setState(active ? { oledCover: true, active: false } : { oledCover: false })
+  }
+  setCovering(active)
 }
 
-function publishCover(active: boolean, setCovering: (active: boolean) => void): void {
-  coverActive = active
-  setCovering(active)
+/** Misma sonda que la vitrina: ficha de juego abierta, o un modal marcado. */
+function launcherDialogOpen(): boolean {
+  return oledCareDialogIsOpen(
+    !!useGameDetailStore.getState().gameId,
+    !!document.querySelector(OLED_CARE_DIALOG_SELECTOR)
+  )
 }
 
 /**
@@ -33,18 +43,24 @@ export function OledCare(): JSX.Element | null {
   const mode = usePreferencesStore((s) => s.oledCareMode)
   const touch = useAttractModeStore((s) => s.touch)
   const [covering, setCovering] = useState(false)
-  const [launchPhase, setLaunchPhase] = useState('idle')
+  // Centinela hasta la primera lectura buena. MainShell usa el mismo IPC
+  // (`getLaunchStatus` + `onLaunchStatus`) pero arranca en `idle`; aquí no,
+  // porque un juego ya corriendo no puede cubrirse en el primer sondeo.
+  const [launchPhase, setLaunchPhase] = useState(OLED_CARE_LAUNCH_PHASE_PENDING)
+  const coverRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     let cancelled = false
+    const applyPhase = (status: { phase?: string } | null | undefined): void => {
+      if (cancelled) return
+      if (typeof status?.phase === 'string' && status.phase.length > 0) setLaunchPhase(status.phase)
+    }
     // El evento no repite la fase actual: si ya hay un juego, hay que leerla.
-    void window.api.game.getLaunchStatus().then((status) => {
-      if (!cancelled && status?.phase) setLaunchPhase(status.phase)
-    }).catch((error) => {
+    void window.api.game.getLaunchStatus().then(applyPhase).catch((error) => {
       console.warn('[oled-care] No se pudo leer la fase de lanzamiento', error)
     })
     const unsubscribe = window.api.game.onLaunchStatus((status) => {
-      setLaunchPhase(status.phase)
+      applyPhase(status)
     })
     return () => {
       cancelled = true
@@ -57,39 +73,46 @@ export function OledCare(): JSX.Element | null {
     // vieja cubriría la ventana en el primer chequeo.
     touch()
     return () => {
-      coverActive = false
+      useAttractModeStore.setState({ oledCover: false, inputSuppressUntil: 0 })
       touch()
     }
   }, [touch])
 
   useEffect(() => {
     return useAttractModeStore.subscribe((state, previous) => {
-      if (state.lastInputAt !== previous.lastInputAt && coverActive) {
-        coverActive = false
-        setCovering(false)
-      }
+      // `touch()` ya apagó la capa en el store (mando, tecla o puntero).
+      // Aquí solo se entera React para desmontar el nodo.
+      if (previous.oledCover && !state.oledCover) setCovering(false)
     })
   }, [])
 
   useEffect(() => {
-    let suppressUntil = 0
     const wakingKeys = new Set<string>()
     const input = (event: Event): void => {
-      const wasCover = coverActive
+      const store = useAttractModeStore.getState()
+      const wasCover = store.oledCover
+      const dialogOpen = launcherDialogOpen()
       const heldWakeKey = event instanceof KeyboardEvent && wakingKeys.has(event.code || event.key)
       const now = Date.now()
-      if (shouldSwallowOledCareWake({
+      const eventHitsCover = event.target instanceof Element
+        && event.target.closest('[data-oled-care]') !== null
+      if (shouldSwallowOledCareSurfaceInput({
+        dialogOpen,
         coverActive: wasCover,
         heldWakeKey,
         now,
-        suppressUntil
+        suppressUntil: store.inputSuppressUntil,
+        eventHitsCover,
+        kind: event instanceof KeyboardEvent ? 'keyboard' : 'pointer'
       })) {
         if (event.cancelable) event.preventDefault()
         event.stopImmediatePropagation()
       }
-      if (wasCover) {
-        suppressUntil = oledCareSuppressUntil(now, true, suppressUntil)
-        if (event instanceof KeyboardEvent) wakingKeys.add(event.code || event.key)
+      // La tecla que despertó se recuerda para no repetirla contra la UI.
+      // La ventana de tiempo la arma `touch()` en el store, igual si el
+      // despertar vino del mando.
+      if (wasCover && !dialogOpen && event instanceof KeyboardEvent) {
+        wakingKeys.add(event.code || event.key)
       }
       if (event instanceof KeyboardEvent && event.type === 'keyup') wakingKeys.delete(event.code || event.key)
       touch()
@@ -110,29 +133,49 @@ export function OledCare(): JSX.Element | null {
   }, [touch])
 
   useEffect(() => {
+    const node = coverRef.current
+    if (!node) return
+    // El trago del puntero vive en la capa. Un modal con z más alto nunca
+    // dispara estos listeners: el hit-test no pasa por este nodo.
+    const swallowHit = (event: Event): void => {
+      if (event.cancelable) event.preventDefault()
+      event.stopPropagation()
+    }
+    const names = ['pointerdown', 'pointerup', 'click', 'wheel', 'touchstart'] as const
+    for (const name of names) node.addEventListener(name, swallowHit)
+    return () => {
+      for (const name of names) node.removeEventListener(name, swallowHit)
+    }
+  }, [covering, mode])
+
+  useEffect(() => {
     const check = (): void => {
+      const dialogOpen = launcherDialogOpen()
       const idleMs = Date.now() - useAttractModeStore.getState().lastInputAt
       const allowed = shouldCoverWithOledCare({
         enabled: true,
         launchPhase,
+        dialogOpen,
         visible: document.visibilityState === 'visible',
         focused: document.hasFocus(),
         minimized: document.hidden,
         idleMs,
         idleMinutes: minutes
       })
+      if (shouldResetOledCareIdle({
+        dialogOpen,
+        launchPhase,
+        hidden: document.hidden,
+        focused: document.hasFocus(),
+        visible: document.visibilityState === 'visible'
+      })) {
+        // Fuera de la ventana útil, o con un diálogo abierto, se reinicia
+        // el reloj aunque la vitrina no esté montada. Al volver no aparece
+        // la capa de golpe.
+        touch()
+      }
       if (!allowed) {
-        // Fuera de la ventana útil se reinicia el reloj, igual que la vitrina,
-        // para que al volver no aparezca la capa de golpe.
-        if (
-          launchPhase !== 'idle' ||
-          document.hidden ||
-          !document.hasFocus() ||
-          document.visibilityState !== 'visible'
-        ) {
-          touch()
-        }
-        if (coverActive) publishCover(false, setCovering)
+        if (useAttractModeStore.getState().oledCover) publishCover(false, setCovering)
         return
       }
       publishCover(true, setCovering)
@@ -147,6 +190,7 @@ export function OledCare(): JSX.Element | null {
   const style = oledCareCoverStyle(mode, reducedMotion)
   return (
     <div
+      ref={coverRef}
       data-oled-care={mode}
       aria-hidden="true"
       className="fixed inset-0 z-[260]"

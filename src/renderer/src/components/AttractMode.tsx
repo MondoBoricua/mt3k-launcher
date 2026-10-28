@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { attractDwellMs, nextAttractIndex, shouldStartAttractMode } from '@shared/attractModePolicy'
+import { attractPlanUnderOledCover, OLED_CARE_DIALOG_SELECTOR } from '@shared/oledCarePolicy'
 import { useAttractModeStore } from '@renderer/state/attractModeStore'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
 import { useNavigationStore } from '@renderer/state/navigationStore'
@@ -77,21 +78,34 @@ export function AttractMode({ launchPhase }: { launchPhase: string }): JSX.Eleme
     const check = (): void => {
       const state = useAttractModeStore.getState()
       const dialogOpen = !!useGameDetailStore.getState().gameId || !!document.querySelector(
-        '[role="dialog"], [role="alertdialog"], [data-focus-scope="active"]'
+        OLED_CARE_DIALOG_SELECTOR
       )
       const allowed = shouldStartAttractMode({
         enabled: true, view, launchPhase, dialogOpen,
         visible: document.visibilityState === 'visible', focused: document.hasFocus(),
         gameCount: games.length, idleMs: Date.now() - state.lastInputAt, idleMinutes: minutes
       })
-      if (!allowed) {
+      // Con la capa OLED encima no hay slideshow: ni bandera activa ni
+      // cambio de carátula. Cuando la capa se quita, el plan vuelve a
+      // las reglas de la vitrina (idle, vista y tiempo en pantalla).
+      const plan = attractPlanUnderOledCover({
+        coverActive: state.oledCover === true,
+        attractAllowed: allowed,
+        attractCurrentlyActive: state.active,
+        dwellElapsed: Date.now() - slideStarted.current >= attractDwellMs(reducedMotion)
+      })
+      if (!plan.active) {
+        if (state.oledCover === true) {
+          if (state.active) useAttractModeStore.setState({ active: false })
+          return
+        }
         // Blocking surfaces reset the clock so closing a dialog cannot immediately start a slide.
         if (dialogOpen || launchPhase !== 'idle' || !['home', 'library'].includes(view) ||
             !document.hasFocus() || document.visibilityState !== 'visible') touch()
         else if (state.active) useAttractModeStore.setState({ active: false })
         return
       }
-      if (!state.active || Date.now() - slideStarted.current >= attractDwellMs(reducedMotion)) {
+      if (plan.advanceSlide) {
         setIndex((current) => nextAttractIndex(games.length, state.active ? current : -1))
         slideStarted.current = Date.now()
         useAttractModeStore.setState({ active: true })
