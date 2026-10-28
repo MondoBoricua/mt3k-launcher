@@ -52,6 +52,8 @@ import {
   resolveUnderRoot,
   rootedDirectoryAllowed,
   scanIsIncomplete,
+  hasWidgetManifest,
+  resolveGameGetWidgetHandoff,
   sessionObservation,
   shouldUninstallBeforeWidget,
   assessFsr4Target,
@@ -1246,6 +1248,8 @@ function markRepair(record: Fsr4GameRecord, exeDir: string, installRoot: string)
 
 /** Quita lo nuestro y luego marca el juego como del widget. No toca .ralfsr. */
 async function handoffToWidget(record: Fsr4GameRecord, exeDir: string, installRoot: string): Promise<Fsr4GameRecord> {
+  // Si el juego arrancó entre el chequeo y esta llamada, no se tocan los DLL.
+  assertNotRunning(record.gameId)
   const manifest = await readManifest(exeDir).catch((error: unknown) => {
     if (error instanceof Fsr4LiteFailure && (error.code === 'manifest' || error.code === 'symlink' || error.code === 'bad-path')) throw error
     return null
@@ -1277,6 +1281,65 @@ async function handoffToWidget(record: Fsr4GameRecord, exeDir: string, installRo
   saveRecord(next)
   inspectCache.delete(record.gameId)
   return next
+}
+
+/**
+ * La ficha pidió el widget con el juego abierto o con el candado ocupado.
+ * No se escribe la carpeta ni se cachea: la próxima lectura en idle puede traspasar.
+ */
+function deferredWidgetView(record: Fsr4GameRecord, decision: ReturnType<typeof resolveGameGetWidgetHandoff>): Fsr4LiteGameView {
+  const view = viewFrom(record, true, decision.phase)
+  if (decision.note !== 'after-close') return view
+  return { ...view, handoffLater: true }
+}
+
+/**
+ * Al cerrar la sesión el juego ya no tiene los DLL. Si el widget llegó
+ * mientras corría, aquí se quita lo nuestro. Si el candado está ocupado, se deja.
+ */
+async function handoffWidgetIfIdle(gameId: string): Promise<void> {
+  const record = readRecord(gameId)
+  const root = record.installRoot || record.exeDir
+  if (!record.exeDir || !root) return
+  const status = sessionState()
+  if (status.gameId === gameId && gameLaunchBlocksMutation(status.phase)) {
+    log('info', `traspaso al widget espera: ${gameId} sigue abierto`)
+    return
+  }
+  if (mutationGate.held()) {
+    log('info', `traspaso al widget espera: candado ocupado (${gameId})`)
+    return
+  }
+  const walked = await walkInstall(root).catch((error: unknown) => {
+    log('warn', 'no se pudo mirar la carpeta al cerrar la sesión', error)
+    return null
+  })
+  if (!walked || !hasWidgetManifest(walked.files.map((file) => file.relativePath))) return
+  const state = await manifestStateOf(record.exeDir).catch((error: unknown) => {
+    log('warn', 'no se pudo leer el manifiesto pa traspasar al widget', error)
+    return null
+  })
+  if (!state) return
+  const decision = resolveGameGetWidgetHandoff({
+    manifestState: state,
+    running: false,
+    gateHeld: mutationGate.held() != null,
+    stored: record
+  })
+  if (!decision.mutate) return
+  if (!mutationGate.tryAcquire('handoff')) return
+  try {
+    await handoffToWidget(readRecord(gameId), record.exeDir, root)
+    log('info', `traspaso al widget al cerrar la sesión ${gameId}`)
+  } catch (error) {
+    if (error instanceof Fsr4LiteFailure && error.code === 'running') {
+      log('info', `traspaso al widget espera: ${gameId} sigue abierto`)
+      return
+    }
+    log('warn', 'no se pudo traspasar al widget al cerrar la sesión', error)
+  } finally {
+    mutationGate.release('handoff')
+  }
 }
 
 async function installInto(game: LibraryGame): Promise<Fsr4LiteGameView> {
@@ -1650,10 +1713,29 @@ export const fsr4LiteService = {
       if (assessment.kind === 'widget') {
         const state = await manifestStateOf(located.exeDir)
         if (shouldUninstallBeforeWidget({ manifestState: state })) {
+          const status = sessionState()
+          const running = status.gameId === game.id && gameLaunchBlocksMutation(status.phase)
+          const decision = resolveGameGetWidgetHandoff({
+            manifestState: state,
+            running,
+            gateHeld: mutationGate.held() != null,
+            stored: record
+          })
+          // Juego abierto o candado ocupado: se enseña el estado y no se copian DLL.
+          if (!decision.mutate) {
+            log('info', decision.note === 'after-close'
+              ? `widget en ${game.id} con el juego abierto; el traspaso espera`
+              : `widget en ${game.id} con el candado ocupado; se deja la fase guardada`)
+            return deferredWidgetView(record, decision)
+          }
           if (!mutationGate.tryAcquire('handoff')) {
-            const busy = viewFrom({ ...record, installed: false, widgetOwned: false, repairNeeded: true }, true, 'broken')
-            inspectCache.set(game.id, { at: Date.now(), view: busy })
-            return busy
+            const busy = resolveGameGetWidgetHandoff({
+              manifestState: state,
+              running: false,
+              gateHeld: true,
+              stored: record
+            })
+            return deferredWidgetView(record, busy)
           }
           try {
             const handed = await handoffToWidget(record, located.exeDir, located.installRoot)
@@ -1661,6 +1743,15 @@ export const fsr4LiteService = {
             inspectCache.set(game.id, { at: Date.now(), view })
             return view
           } catch (error) {
+            if (error instanceof Fsr4LiteFailure && error.code === 'running') {
+              const waiting = resolveGameGetWidgetHandoff({
+                manifestState: state,
+                running: true,
+                gateHeld: false,
+                stored: record
+              })
+              return deferredWidgetView(record, waiting)
+            }
             if (error instanceof Fsr4LiteFailure && error.code === 'broken') {
               const view = viewFrom({ ...readRecord(game.id), repairNeeded: true }, true, 'broken')
               inspectCache.set(game.id, { at: Date.now(), view })
@@ -1805,40 +1896,48 @@ export const fsr4LiteService = {
   async onSessionEnded(game: LibraryGame, startedAt?: number): Promise<void> {
     try {
       if (!featureOn()) return
+      // gameSessionManager asigna la fase nueva después de soltar este await.
+      // Sin esto, el traspaso vería "running" y se iría.
+      await Promise.resolve()
       const record = readRecord(game.id)
-      if (!record.installed || !record.exeDir) return
-      const names = await readdir(record.exeDir).catch(() => [] as string[])
-      const logName = names.find((name) => name.toLowerCase() === 'optiscaler.log')
-      if (!logName) return
-      const logPath = win32.join(record.exeDir, logName)
-      const info = await stat(logPath)
-      if (startedAt == null || !sessionLogIsFresh(info.mtimeMs, startedAt)) {
-        // Un log viejo no deja el badge de la sesión anterior.
-        const observed = sessionObservation({ logMtimeMs: info.mtimeMs, sessionStartedAt: startedAt ?? null, logText: null })
-        const changed = record.sessionStatus !== observed.status || Boolean(record.resolution)
-        saveRecord({ ...record, sessionStatus: observed.status, resolution: undefined })
-        inspectCache.delete(game.id)
-        log('info', `sesión ${game.id} sin log nuevo`)
-        if (changed) notify({ kind: 'session', gameId: game.id, status: observed.status })
-        return
-      }
-      const length = Math.min(info.size, FSR4_LOG_READ_CAP)
-      const start = Math.max(0, info.size - length)
-      const handle = await open(logPath, 'r')
-      let text = ''
       try {
-        const buf = Buffer.alloc(length)
-        await handle.read(buf, 0, length, start)
-        text = buf.toString('utf8')
+        if (!record.installed || !record.exeDir) return
+        const names = await readdir(record.exeDir).catch(() => [] as string[])
+        const logName = names.find((name) => name.toLowerCase() === 'optiscaler.log')
+        if (!logName) return
+        const logPath = win32.join(record.exeDir, logName)
+        const info = await stat(logPath)
+        if (startedAt == null || !sessionLogIsFresh(info.mtimeMs, startedAt)) {
+          // Un log viejo no deja el badge de la sesión anterior.
+          const observed = sessionObservation({ logMtimeMs: info.mtimeMs, sessionStartedAt: startedAt ?? null, logText: null })
+          const changed = record.sessionStatus !== observed.status || Boolean(record.resolution)
+          saveRecord({ ...record, sessionStatus: observed.status, resolution: undefined })
+          inspectCache.delete(game.id)
+          log('info', `sesión ${game.id} sin log nuevo`)
+          if (changed) notify({ kind: 'session', gameId: game.id, status: observed.status })
+          return
+        }
+        const length = Math.min(info.size, FSR4_LOG_READ_CAP)
+        const start = Math.max(0, info.size - length)
+        const handle = await open(logPath, 'r')
+        let text = ''
+        try {
+          const buf = Buffer.alloc(length)
+          await handle.read(buf, 0, length, start)
+          text = buf.toString('utf8')
+        } finally {
+          await handle.close()
+        }
+        const parsed = sessionObservation({ logMtimeMs: info.mtimeMs, sessionStartedAt: startedAt ?? null, logText: text })
+        const changed = record.sessionStatus !== parsed.status
+        saveRecord({ ...record, sessionStatus: parsed.status, resolution: parsed.resolution })
+        inspectCache.delete(game.id)
+        log('info', `sesión ${game.id} ${parsed.status} ${parsed.resolution ?? ''}`.trim())
+        if (changed) notify({ kind: 'session', gameId: game.id, status: parsed.status, resolution: parsed.resolution })
       } finally {
-        await handle.close()
+        // El log ya se anotó. Si el widget llegó con el juego abierto, ahora se quita lo nuestro.
+        await handoffWidgetIfIdle(game.id)
       }
-      const parsed = sessionObservation({ logMtimeMs: info.mtimeMs, sessionStartedAt: startedAt ?? null, logText: text })
-      const changed = record.sessionStatus !== parsed.status
-      saveRecord({ ...record, sessionStatus: parsed.status, resolution: parsed.resolution })
-      inspectCache.delete(game.id)
-      log('info', `sesión ${game.id} ${parsed.status} ${parsed.resolution ?? ''}`.trim())
-      if (changed) notify({ kind: 'session', gameId: game.id, status: parsed.status, resolution: parsed.resolution })
     } catch (error) {
       log('warn', 'no se pudo leer el log de la sesión', error)
     }

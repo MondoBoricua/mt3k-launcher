@@ -1757,6 +1757,56 @@ export function shouldUninstallBeforeWidget(input: { manifestState: Fsr4Manifest
   return input.manifestState === 'committed' || input.manifestState === 'pending'
 }
 
+/** La fase que ya está guardada. Un candado ocupado no la convierte en rota. */
+export function phaseFromStoredRecord(record: {
+  repairNeeded?: boolean
+  widgetOwned?: boolean
+  installed?: boolean
+  block?: unknown
+}): 'ready' | 'installed' | 'widget' | 'blocked' | 'broken' {
+  if (record.repairNeeded === true) return 'broken'
+  if (record.widgetOwned === true) return 'widget'
+  if (record.block) return 'blocked'
+  if (record.installed === true) return 'installed'
+  return 'ready'
+}
+
+/**
+ * La ficha ve el widget, pero no mueve DLLs si el juego está abierto
+ * o si otra mutación tiene el candado. El traspaso queda pa' la próxima
+ * lectura en idle o pa'l cierre de sesión.
+ * running → fase widget y una nota, sin repairNeeded inventado.
+ * busy → la fase guardada, tal cual.
+ */
+export function resolveGameGetWidgetHandoff(input: {
+  manifestState: Fsr4ManifestState | 'absent'
+  running: boolean
+  gateHeld: boolean
+  stored: {
+    repairNeeded?: boolean
+    widgetOwned?: boolean
+    installed?: boolean
+    block?: unknown
+  }
+}): {
+  mutate: boolean
+  phase: 'ready' | 'installed' | 'widget' | 'blocked' | 'broken'
+  repairNeeded: boolean
+  note: 'after-close' | null
+} {
+  const repairNeeded = input.stored.repairNeeded === true
+  if (!shouldUninstallBeforeWidget({ manifestState: input.manifestState })) {
+    return { mutate: false, phase: phaseFromStoredRecord(input.stored), repairNeeded, note: null }
+  }
+  if (input.running) {
+    return { mutate: false, phase: 'widget', repairNeeded: false, note: 'after-close' }
+  }
+  if (input.gateHeld) {
+    return { mutate: false, phase: phaseFromStoredRecord(input.stored), repairNeeded, note: null }
+  }
+  return { mutate: true, phase: 'widget', repairNeeded: false, note: null }
+}
+
 /** El juego arrancando o corriendo bloquea cualquier escritura. */
 export function gameLaunchBlocksMutation(phase: string | undefined): boolean {
   return phase === 'launching' || phase === 'running'
@@ -1937,6 +1987,8 @@ export interface Fsr4LiteGameView {
   resolution?: string
   optiBuild?: string
   compatNote?: string
+  /** El widget ya está, pero los DLL nuestros siguen porque el juego está abierto. */
+  handoffLater?: boolean
 }
 
 export type Fsr4LiteEvent =

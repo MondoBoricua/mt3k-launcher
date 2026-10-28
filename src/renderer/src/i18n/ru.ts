@@ -95,6 +95,7 @@ export const russian = {
     "fsr4Lite.remove": "Удалить FSR 4.1 Lite",
     "fsr4Lite.repair": "Восстановить FSR 4.1 Lite",
     "fsr4Lite.widgetInstalled": "Установлено виджетом ROG Ally Life",
+    "fsr4Lite.widgetHandoffLater": "Игра открыта. MT3K уберёт свои файлы, когда ты её закроешь.",
     "fsr4Lite.openGameBar": "Открыть Game Bar",
     "fsr4Lite.dialog.installTitle": "Установить FSR 4.1 Lite",
     "fsr4Lite.dialog.installBody": "OptiScaler и файлы Lite копируются рядом с игрой. Потом их можно убрать, и папка станет прежней.",
