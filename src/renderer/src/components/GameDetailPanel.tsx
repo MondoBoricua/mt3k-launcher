@@ -124,7 +124,8 @@ const GUEST_GUARDED_MANAGE_ACTIONS: Record<string, GuestModeAction> = {
   captures: 'open-captures',
   'open-backups': 'open-backups',
   'restore-backup': 'restore-backup',
-  'fsr4-lite': 'edit-metadata'
+  'fsr4-lite': 'edit-metadata',
+  'fsr4-game-bar': 'edit-metadata'
 }
 
 export function GameDetailPanel({ game }: Props): JSX.Element {
@@ -774,7 +775,11 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
     } else {
       manageActions.push({
         id: 'fsr4-lite',
-        label: t(fsr4.view?.phase === 'installed' ? 'fsr4Lite.remove' : 'fsr4Lite.install'),
+        label: t(fsr4.view?.phase === 'installed'
+          ? 'fsr4Lite.remove'
+          : fsr4.view?.phase === 'broken'
+            ? 'fsr4Lite.repair'
+            : 'fsr4Lite.install'),
         icon: Cpu,
         onSelect: () => setFsr4Open(true)
       })

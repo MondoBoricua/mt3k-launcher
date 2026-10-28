@@ -20,7 +20,22 @@ const ERROR_KEYS: Record<string, TranslationKey> = {
   'unsupported-device': 'fsr4Lite.error.unsupported',
   'no-proxy': 'fsr4Lite.error.proxy',
   download: 'fsr4Lite.error.download',
-  busy: 'fsr4Lite.busy'
+  busy: 'fsr4Lite.busy',
+  'backup-missing': 'fsr4Lite.error.backupMissing',
+  'scan-incomplete': 'fsr4Lite.error.scanIncomplete',
+  running: 'fsr4Lite.error.running',
+  'bad-package': 'fsr4Lite.error.badPackage',
+  'bad-path': 'fsr4Lite.error.badPath',
+  symlink: 'fsr4Lite.error.symlink',
+  changed: 'fsr4Lite.error.changed',
+  broken: 'fsr4Lite.error.broken',
+  layout: 'fsr4Lite.error.layout',
+  manifest: 'fsr4Lite.error.manifest',
+  disabled: 'fsr4Lite.error.disabled',
+  'not-installed': 'fsr4Lite.error.notInstalled',
+  reframework: 'fsr4Lite.error.reframework',
+  options: 'fsr4Lite.error.options',
+  guest: 'fsr4Lite.error.guest'
 }
 
 const SCALE_KEYS: Record<Fsr4RenderScale, TranslationKey> = {
@@ -91,6 +106,14 @@ export function useFsr4LiteGame(gameId: string | null): {
 export function Fsr4LiteBadge({ view }: { view: Fsr4LiteGameView | null }): JSX.Element | null {
   const t = useT()
   if (!view || view.phase === 'hidden' || view.phase === 'blocked' || view.phase === 'ready') return null
+  // Una copia a medias no se presenta como instalada.
+  if (view.phase === 'broken') {
+    return (
+      <span data-fsr4-lite-badge="broken" className="rounded-full border border-amber-200/20 bg-amber-300/10 px-2 py-1 text-amber-100/80">
+        {t('fsr4Lite.badge.broken')}
+      </span>
+    )
+  }
   if (view.phase === 'widget') {
     return (
       <span data-fsr4-lite-badge="widget" className="rounded-full border border-sky-200/20 bg-sky-300/10 px-2 py-1 text-sky-100/80">

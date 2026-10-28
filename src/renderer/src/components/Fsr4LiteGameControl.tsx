@@ -17,6 +17,15 @@ export function Fsr4LiteGameControl({ game }: { game: LibraryGame }): JSX.Elemen
   const { view, replace } = useFsr4LiteGame(eligible ? game.id : null)
   const [busy, setBusy] = useState(false)
   if (!eligible || !view || view.phase === 'hidden' || view.phase === 'blocked' || view.phase === 'widget') return null
+  // La copia a medias no se edita: hay que repararla desde la ficha.
+  if (view.phase === 'broken') {
+    return (
+      <section data-fsr4-lite-game className="space-y-3 rounded-2xl border border-white/[0.07] bg-black/15 p-4">
+        <h3 className="text-base font-semibold text-white/90">{t('fsr4Lite.title')}</h3>
+        <p className="text-sm text-amber-100/80">{t('fsr4Lite.dialog.repairBody')}</p>
+      </section>
+    )
+  }
 
   return (
     <section data-fsr4-lite-game className="space-y-3 rounded-2xl border border-white/[0.07] bg-black/15 p-4">

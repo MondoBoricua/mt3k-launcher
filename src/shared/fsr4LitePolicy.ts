@@ -20,6 +20,19 @@ export const FSR4_VERSION_LABEL = '4.1.2'
 /** Más de 50 MB: los Lite medidos andan en 85 MB y 72 MB. */
 export const FSR4_MIN_DLL_BYTES = 50 * 1024 * 1024
 export const OPTI_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
+/** Si la consulta falla, se reintenta en una hora sin gastar el cupo del día. */
+export const OPTI_FAIL_BACKOFF_MS = 60 * 60 * 1000
+/** Tope de una descarga (el par Lite medido anda en ~158 MB). */
+export const FSR4_MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024
+export const FSR4_DOWNLOAD_TIMEOUT_MS = 180_000
+/** El log se lee por el final, nunca el archivo entero. */
+export const FSR4_LOG_READ_CAP = 2_000_000
+/**
+ * Profundidad del recorrido. LEGO Batman guarda DLSS/FSR/XeSS bajo Engine\Plugins\...,
+ * así que no se salta Engine y se baja al menos 7 niveles.
+ */
+export const FSR4_WALK_MAX_DEPTH = 7
+export const FSR4_WALK_MAX_FILES = 12_000
 
 export const FSR4_META_DIR = '.mt3k-fsr'
 export const FSR4_WIDGET_META_DIR = '.ralfsr'
@@ -60,6 +73,7 @@ export type Fsr4BlockCode =
   | 'no-exe'
   | 'no-proxy'
   | 'unsupported-device'
+  | 'scan-incomplete'
 
 const RENDER_RATIO: Record<Fsr4RenderScale, string> = {
   game: '',
@@ -201,7 +215,7 @@ export interface Fsr4DeviceReport {
 }
 
 export interface Fsr4Assessment {
-  kind: 'ready' | 'installed' | 'widget' | 'refused'
+  kind: 'ready' | 'installed' | 'widget' | 'broken' | 'refused'
   block?: Fsr4BlockCode
   antiCheat?: string
   unreal: boolean
@@ -212,8 +226,17 @@ export interface Fsr4Assessment {
   needsReFramework: boolean
 }
 
+/** pending: la copia no terminó. committed: se puede tratar como instalado. */
+export type Fsr4ManifestState = 'pending' | 'committed'
+
+export interface Fsr4FileDigest {
+  size: number
+  sha256: string
+}
+
 export interface Fsr4LiteManifest {
   formatVersion: 1
+  state: Fsr4ManifestState
   gameId: string
   proxyName: string
   optiBuild: string
@@ -229,6 +252,15 @@ export interface Fsr4LiteManifest {
   createdFiles: string[]
   createdDirs: string[]
   replacedFiles: string[]
+  /** Huella de lo que escribimos. Si el archivo cambió, no se borra. */
+  createdDigests: Record<string, Fsr4FileDigest>
+  writtenDigests: Record<string, Fsr4FileDigest>
+  /** Huella del backup, para no restaurar un backup a medias. */
+  backupDigests: Record<string, Fsr4FileDigest>
+  /** Reemplazos cuyo backup ya quedó en disco. El rollback solo restaura estos. */
+  backedUpFiles: string[]
+  /** Archivos nuevos que ya se copiaron. El rollback solo borra estos. */
+  copiedCreates: string[]
   installedAt: string
 }
 
@@ -267,13 +299,72 @@ export function normalizeFsr4GameOptions(value: {
   }
 }
 
-/** Ruta relativa segura: sin absolutos ni `..`. Barras unificadas. */
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i
+
+/** Un trozo de ruta que en NTFS es otro archivo (dispositivo, ADS, punto final). */
+function windowsPathComponentOk(part: string): boolean {
+  if (!part || part === '.' || part === '..') return false
+  if (/[<>:"|?*]/.test(part)) return false
+  if (part.endsWith('.') || part.endsWith(' ')) return false
+  if (WINDOWS_RESERVED_NAME.test(part)) return false
+  return true
+}
+
+/** Ruta relativa segura: sin absolutos, `..`, ADS ni nombres de dispositivo. */
 export function safeRelativePath(value: string): string | null {
   const rel = value.replace(/\\/g, '/').replace(/^\.\//, '')
   if (!rel || rel.startsWith('/') || /^[a-zA-Z]:/.test(rel)) return null
   const parts = rel.split('/')
-  if (parts.some((part) => part === '' || part === '.' || part === '..')) return null
+  if (parts.some((part) => !windowsPathComponentOk(part))) return null
   return parts.join('/')
+}
+
+/** `.mt3k-fsr` y `.ralfsr` son del instalador o del widget: un paquete no puede escribir ahí. */
+export function isReservedInstallPath(value: string): boolean {
+  const rel = safeRelativePath(value)
+  if (!rel) return true
+  const top = rel.split('/')[0]?.toLowerCase()
+  return top === FSR4_META_DIR || top === FSR4_WIDGET_META_DIR
+}
+
+export type Fsr4RootRefusal =
+  | 'relative'
+  | 'drive-root'
+  | 'unc-root'
+  | 'windows'
+  | 'program-files'
+  | 'system'
+  | 'windows-apps'
+
+/**
+ * Raíces que no son una carpeta de juego. Program Files\Steam\... sí pasa:
+ * solo se niega la raíz misma, System32 y WindowsApps.
+ */
+export function classifyGameRoot(dir: string): Fsr4RootRefusal | null {
+  const norm = dir.trim().replace(/\//g, '\\')
+  if (!norm) return 'relative'
+  const unc = norm.startsWith('\\\\')
+  const drive = /^[a-zA-Z]:\\/.test(norm)
+  if (!unc && !drive) return 'relative'
+  if (/^[a-zA-Z]:\\?$/.test(norm)) return 'drive-root'
+  if (unc) {
+    const parts = norm.replace(/^\\+/, '').split('\\').filter((part) => part.length > 0)
+    if (parts.length < 3) return 'unc-root'
+  }
+  const lower = norm.toLowerCase().replace(/\\+$/, '')
+  if (/^[a-z]:\\windows$/.test(lower)) return 'windows'
+  if (/^[a-z]:\\program files( \(x86\))?$/.test(lower)) return 'program-files'
+  if (/\\windows\\(system32|syswow64)$/.test(lower)) return 'system'
+  if (isWindowsAppsPath(norm)) return 'windows-apps'
+  return null
+}
+
+/** La carpeta del exe tiene que vivir dentro de la carpeta de instalación del juego. */
+export function gameDirWithinInstall(exeDir: string, installDir: string): boolean {
+  const exe = exeDir.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+  const root = installDir.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+  if (!exe || !root) return false
+  return exe === root || exe.startsWith(`${root}\\`)
 }
 
 export function basenameOf(value: string): string {
@@ -336,10 +427,21 @@ export function needsReFramework(exeName: string | undefined, fileNames: readonl
   return fileNames.some((name) => /^re_chunk_.*\.pak$/i.test(basenameOf(name)))
 }
 
-export function detectAntiCheat(exeName: string | undefined, fileNames: readonly string[]): string | null {
+export function detectAntiCheat(
+  exeName: string | undefined,
+  fileNames: readonly string[],
+  dirNames: readonly string[] = []
+): string | null {
   if (exeName) {
     const byExe = ANTI_CHEAT_FILES[basenameOf(exeName).toLowerCase()]
     if (byExe) return byExe
+  }
+  // Una carpeta vacía de anti-cheat no aparece en la lista de archivos.
+  for (const dir of dirNames) {
+    for (const part of dir.replace(/\\/g, '/').split('/')) {
+      const hit = ANTI_CHEAT_DIRS[part.toLowerCase()]
+      if (hit) return hit
+    }
   }
   for (const name of fileNames) {
     const rel = name.replace(/\\/g, '/')
@@ -415,15 +517,47 @@ export function selectGameExecutable(
   return shallow ? { relativePath: shallow.relativePath.replace(/\\/g, '/'), unreal: false } : null
 }
 
+/**
+ * Un bootstrapper en la raíz de Unreal no es el exe del juego.
+ * Si el selector encuentra el Shipping, ese gana aunque la ficha apunte al launcher.
+ */
+export function resolveGameExecutable(input: {
+  storedRelative: string | null
+  entries: readonly Fsr4ExeCandidate[]
+  hasEngineDir: boolean
+}): { relativePath: string, unreal: boolean } | null {
+  const selected = selectGameExecutable(input.entries, input.hasEngineDir)
+  const stored = input.storedRelative ? safeRelativePath(input.storedRelative) : null
+  if (selected?.unreal && (!stored || !isUnrealExePath(stored))) return selected
+  if (stored) return { relativePath: stored, unreal: isUnrealExePath(stored) }
+  return selected
+}
+
+/** Carpetas de redist que el widget no recorre. Engine y Content sí se recorren. */
+const WALK_SKIP_DIRS = new Set([
+  '_commonredist', '__redist', 'redist', 'redistributables', 'directx', 'support', 'prerequisites'
+])
+
+export function walkDirectoryDecision(name: string, depth: number): 'skip' | 'descend' | 'depth-limit' {
+  if (WALK_SKIP_DIRS.has(name.toLowerCase())) return 'skip'
+  if (depth >= FSR4_WALK_MAX_DEPTH) return 'depth-limit'
+  return 'descend'
+}
+
 export function assessFsr4Target(input: {
   provider: string
   installed: boolean
   executablePath?: string
   installDir?: string
   files: readonly string[]
+  dirs?: readonly string[]
   exeName?: string
   entries?: readonly Fsr4ExeCandidate[]
   hasEngineDir?: boolean
+  /** Si el recorrido se cortó por el tope, no se asume que no hay anti-cheat. */
+  scanTruncated?: boolean
+  /** Sin `committed` un manifiesto nuestro es una instalación rota, no una hecha. */
+  manifestState?: Fsr4ManifestState | 'absent'
 }): Fsr4Assessment {
   const empty: Fsr4Assessment = {
     kind: 'refused',
@@ -439,8 +573,13 @@ export function assessFsr4Target(input: {
     return { ...empty, block: 'windows-apps' }
   }
   if (hasWidgetManifest(input.files)) return { ...empty, kind: 'widget', noUpscaler: false }
-  const antiCheat = detectAntiCheat(input.exeName, input.files)
+  const antiCheat = detectAntiCheat(input.exeName, input.files, input.dirs ?? [])
   if (antiCheat) return { ...empty, block: 'anti-cheat', antiCheat }
+  if (input.scanTruncated) return { ...empty, block: 'scan-incomplete' }
+  const ours = hasOurManifest(input.files)
+  if (input.manifestState === 'pending' || (ours && input.manifestState !== 'committed')) {
+    return { ...empty, kind: 'broken', noUpscaler: false }
+  }
   const picked = input.exeName
     ? null
     : selectGameExecutable(input.entries ?? [], input.hasEngineDir === true)
@@ -450,7 +589,8 @@ export function assessFsr4Target(input: {
   const unreal = picked?.unreal === true || (input.executablePath ? isUnrealExePath(input.executablePath) : false)
   const upscalers = upscalerKinds(input.files)
   const hasFsr2 = folderHasFsr2(input.files)
-  const installedByUs = hasOurManifest(input.files)
+  // Instalado solo con el manifiesto ya cerrado. El archivo suelto, sin estado, es roto.
+  const installedByUs = input.manifestState === 'committed'
   return {
     kind: installedByUs ? 'installed' : 'ready',
     unreal,
@@ -642,17 +782,132 @@ function parentDirs(rel: string): string[] {
   return dirs
 }
 
-function existingDirsFromTree(tree: Record<string, string>): Set<string> {
-  const dirs = new Set<string>()
-  for (const file of Object.keys(tree)) {
-    for (const dir of parentDirs(file)) dirs.add(dir)
+function rotr32(value: number, bits: number): number {
+  return ((value >>> bits) | (value << (32 - bits))) >>> 0
+}
+
+/** SHA-256 propio para no meter node:crypto en el bundle del renderer. */
+function sha256Hex(bytes: Uint8Array): string {
+  const k = new Uint32Array([
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ])
+  const hash = new Uint32Array([
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+  ])
+  const bitLen = bytes.length * 8
+  const paddedLen = Math.ceil((bytes.length + 9) / 64) * 64
+  const buf = new Uint8Array(paddedLen)
+  buf.set(bytes)
+  buf[bytes.length] = 0x80
+  const view = new DataView(buf.buffer)
+  view.setUint32(paddedLen - 8, Math.floor(bitLen / 0x1_0000_0000))
+  view.setUint32(paddedLen - 4, bitLen >>> 0)
+  const words = new Uint32Array(64)
+  for (let offset = 0; offset < paddedLen; offset += 64) {
+    for (let index = 0; index < 16; index += 1) words[index] = view.getUint32(offset + index * 4)
+    for (let index = 16; index < 64; index += 1) {
+      const s0 = rotr32(words[index - 15], 7) ^ rotr32(words[index - 15], 18) ^ (words[index - 15] >>> 3)
+      const s1 = rotr32(words[index - 2], 17) ^ rotr32(words[index - 2], 19) ^ (words[index - 2] >>> 10)
+      words[index] = (words[index - 16] + s0 + words[index - 7] + s1) >>> 0
+    }
+    let a = hash[0]
+    let b = hash[1]
+    let c = hash[2]
+    let d = hash[3]
+    let e = hash[4]
+    let f = hash[5]
+    let g = hash[6]
+    let h = hash[7]
+    for (let index = 0; index < 64; index += 1) {
+      const s1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25)
+      const ch = (e & f) ^ ((~e) & g)
+      const temp1 = (h + s1 + ch + k[index] + words[index]) >>> 0
+      const s0 = rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22)
+      const maj = (a & b) ^ (a & c) ^ (b & c)
+      const temp2 = (s0 + maj) >>> 0
+      h = g
+      g = f
+      f = e
+      e = (d + temp1) >>> 0
+      d = c
+      c = b
+      b = a
+      a = (temp1 + temp2) >>> 0
+    }
+    hash[0] = (hash[0] + a) >>> 0
+    hash[1] = (hash[1] + b) >>> 0
+    hash[2] = (hash[2] + c) >>> 0
+    hash[3] = (hash[3] + d) >>> 0
+    hash[4] = (hash[4] + e) >>> 0
+    hash[5] = (hash[5] + f) >>> 0
+    hash[6] = (hash[6] + g) >>> 0
+    hash[7] = (hash[7] + h) >>> 0
   }
-  return dirs
+  return [...hash].map((word) => word.toString(16).padStart(8, '0')).join('')
+}
+
+/** Huella de un texto. El servicio usa la misma forma con los bytes reales del archivo. */
+export function digestText(content: string): Fsr4FileDigest {
+  const bytes = new TextEncoder().encode(content)
+  return { size: bytes.length, sha256: sha256Hex(bytes) }
+}
+
+export function digestBytes(bytes: Uint8Array): Fsr4FileDigest {
+  return { size: bytes.byteLength, sha256: sha256Hex(bytes) }
+}
+
+function digestMatches(content: string, expected: Fsr4FileDigest | undefined): boolean {
+  if (!expected) return false
+  const actual = digestText(content)
+  return actual.size === expected.size && actual.sha256 === expected.sha256
+}
+
+interface TreeHit { key: string, content: string }
+
+function findInTree(tree: Record<string, string>, rel: string): TreeHit | null {
+  const want = rel.replace(/\\/g, '/').toLowerCase()
+  for (const [key, content] of Object.entries(tree)) {
+    if (key.replace(/\\/g, '/').toLowerCase() === want) return { key, content }
+  }
+  return null
+}
+
+function digestRecord(record: Record<string, Fsr4FileDigest> | undefined, rel: string): Fsr4FileDigest | undefined {
+  if (!record) return undefined
+  const want = rel.toLowerCase()
+  for (const [key, value] of Object.entries(record)) {
+    if (key.toLowerCase() === want) return value
+  }
+  return undefined
+}
+
+/** NTFS no distingue mayúsculas: si ya hay un archivo con ese nombre, es un reemplazo. */
+export function classifyInstallPath(
+  tree: Record<string, string>,
+  relative: string
+): { action: 'create' | 'replace', path: string } {
+  const safe = safeRelativePath(relative)
+  if (!safe) throw new Fsr4LiteFailure('bad-path')
+  const hit = findInTree(tree, safe)
+  return hit ? { action: 'replace', path: hit.key } : { action: 'create', path: safe }
+}
+
+function packageText(files: Record<string, string>, name: string): string {
+  const hit = Object.entries(files).find(([key]) => basenameOf(key).toLowerCase() === name && !key.includes('/') && !key.includes('\\'))
+  return hit?.[1] ?? ''
 }
 
 /**
  * Arma el plan de copia. El DLL de OptiScaler se renombra al proxy.
  * Los Lite van dentro de OptiScaler\. El ini del paquete se fusiona, no se pega crudo.
+ * En NTFS dos grafías del mismo nombre son el mismo archivo: eso es un reemplazo, con backup.
  */
 export function planFsr4Install(input: {
   tree: Record<string, string>
@@ -673,54 +928,65 @@ export function planFsr4Install(input: {
   const rootNames = Object.keys(tree).filter((path) => !path.includes('/'))
   const proxyName = chooseFsr4Proxy(rootNames)
   if (!proxyName) throw new Fsr4LiteFailure('no-proxy')
-  const files: Fsr4PlannedFile[] = []
-  const packageIni = input.packageFiles['OptiScaler.ini'] ?? input.packageFiles['optiscaler.ini'] ?? ''
+  const planned = new Map<string, Fsr4PlannedFile>()
+  // Gana la última escritura. La grafía que ya está en disco se conserva para el backup.
+  const place = (relative: string, content: string): void => {
+    const safe = safeRelativePath(relative)
+    if (!safe || isReservedInstallPath(safe)) throw new Fsr4LiteFailure('bad-package')
+    const classified = classifyInstallPath(tree, safe)
+    planned.set(classified.path.toLowerCase(), { path: classified.path, action: classified.action, content })
+  }
   for (const [rawPath, content] of Object.entries(input.packageFiles)) {
     const rel = safeRelativePath(rawPath)
-    if (!rel) continue
+    if (!rel) throw new Fsr4LiteFailure('bad-package')
+    if (isReservedInstallPath(rel)) throw new Fsr4LiteFailure('bad-package')
     const base = basenameOf(rel).toLowerCase()
     if ((FSR4_SKIP_PACKAGE_FILES as readonly string[]).includes(base)) continue
-    if (base === 'optiscaler.dll' && !rel.includes('/')) {
-      files.push({ path: proxyName, action: tree[proxyName] === undefined ? 'create' : 'replace', content })
-      continue
-    }
+    if (base === 'optiscaler.dll' && !rel.includes('/')) continue
     if (base === 'optiscaler.ini' && !rel.includes('/')) continue
-    files.push({ path: rel, action: tree[rel] === undefined ? 'create' : 'replace', content })
+    place(rel, content)
   }
-  files.push({
-    path: 'OptiScaler.ini',
-    action: tree['OptiScaler.ini'] === undefined ? 'create' : 'replace',
-    content: mergeOptiScalerIni(packageIni, input.options)
-  })
-  files.push({
-    path: `${FSR4_OPTI_SUBDIR}/${FSR4_DLL_DX12}`,
-    action: tree[`${FSR4_OPTI_SUBDIR}/${FSR4_DLL_DX12}`] === undefined ? 'create' : 'replace',
-    content: input.fsrDx12
-  })
-  files.push({
-    path: `${FSR4_OPTI_SUBDIR}/${FSR4_DLL_VK}`,
-    action: tree[`${FSR4_OPTI_SUBDIR}/${FSR4_DLL_VK}`] === undefined ? 'create' : 'replace',
-    content: input.fsrVk
-  })
+  const proxyDll = packageText(input.packageFiles, 'optiscaler.dll') || input.packageFiles['OptiScaler.dll'] || ''
+  place(proxyName, proxyDll)
+  place('OptiScaler.ini', mergeOptiScalerIni(packageText(input.packageFiles, 'optiscaler.ini'), input.options))
+  place(`${FSR4_OPTI_SUBDIR}/${FSR4_DLL_DX12}`, input.fsrDx12)
+  place(`${FSR4_OPTI_SUBDIR}/${FSR4_DLL_VK}`, input.fsrVk)
   const preexisting = new Set((input.reframework?.preexisting ?? []).map((name) => name.toLowerCase()))
   const reframeworkAdded = Boolean(input.reframework) && !preexisting.has(REFRAMEWORK_DLL_NAME)
   if (reframeworkAdded && input.reframework) {
-    files.push({
-      path: REFRAMEWORK_DLL_NAME,
-      action: 'create',
-      content: input.reframework.dllContent
-    })
+    place(REFRAMEWORK_DLL_NAME, input.reframework.dllContent)
     if (!preexisting.has(REFRAMEWORK_CONFIG_NAME.toLowerCase())) {
-      files.push({ path: REFRAMEWORK_CONFIG_NAME, action: 'create', content: REFRAMEWORK_CONFIG_TEXT })
+      place(REFRAMEWORK_CONFIG_NAME, REFRAMEWORK_CONFIG_TEXT)
     }
   }
-  // Si el paquete y los Lite pisan la misma ruta, gana el Lite.
-  const uniqueFiles = [...new Map(files.map((file) => [file.path, file])).values()]
-  const dirs = existingDirsFromTree(tree)
-  const createdDirs = [...new Set(uniqueFiles.filter((file) => file.action === 'create').flatMap((file) => parentDirs(file.path)))]
-    .filter((dir) => !dirs.has(dir) && !dir.startsWith(`${FSR4_META_DIR}`))
+  const uniqueFiles = [...planned.values()]
+  const existingDirs = new Set<string>()
+  for (const file of Object.keys(tree)) {
+    for (const dir of parentDirs(file)) existingDirs.add(dir.toLowerCase())
+  }
+  const createdDirs: string[] = []
+  for (const file of uniqueFiles) {
+    if (file.action !== 'create') continue
+    for (const dir of parentDirs(file.path)) {
+      if (existingDirs.has(dir.toLowerCase()) || isReservedInstallPath(dir)) continue
+      if (!createdDirs.some((item) => item.toLowerCase() === dir.toLowerCase())) createdDirs.push(dir)
+    }
+  }
+  const createdDigests: Record<string, Fsr4FileDigest> = {}
+  const writtenDigests: Record<string, Fsr4FileDigest> = {}
+  const backupDigests: Record<string, Fsr4FileDigest> = {}
+  for (const file of uniqueFiles) {
+    const written = digestText(file.content)
+    writtenDigests[file.path] = written
+    if (file.action === 'create') createdDigests[file.path] = written
+    else {
+      const prior = findInTree(tree, file.path)
+      if (prior) backupDigests[file.path] = digestText(prior.content)
+    }
+  }
   const manifest: Fsr4LiteManifest = {
     formatVersion: 1,
+    state: 'pending',
     gameId: input.gameId,
     proxyName,
     optiBuild: input.optiBuild,
@@ -736,58 +1002,91 @@ export function planFsr4Install(input: {
     createdFiles: uniqueFiles.filter((file) => file.action === 'create').map((file) => file.path),
     createdDirs,
     replacedFiles: uniqueFiles.filter((file) => file.action === 'replace').map((file) => file.path),
+    createdDigests,
+    writtenDigests,
+    backupDigests,
+    backedUpFiles: [],
+    copiedCreates: [],
     installedAt: input.nowIso
   }
-  // El log lo crea OptiScaler al jugar. Si no estaba, desinstalar lo borra.
-  if (tree['OptiScaler.log'] === undefined) manifest.createdFiles.push('OptiScaler.log')
+  // OptiScaler.log lo escribe el juego al correr. No es nuestro: no se lista para borrarlo.
   return { proxyName, files: uniqueFiles, createdDirs, manifest }
 }
 
 /** Aplica el plan sobre una copia del árbol. Los reemplazos quedan en el backup. */
 export function applyInstallPlan(tree: Record<string, string>, plan: Fsr4InstallPlan): Record<string, string> {
   const next: Record<string, string> = { ...tree }
+  const backedUp: string[] = []
+  const copied: string[] = []
   for (const file of plan.files) {
-    if (file.action === 'replace' && next[file.path] !== undefined) {
-      next[`${FSR4_META_DIR}/backup/${file.path}`] = next[file.path]
+    const current = findInTree(next, file.path)
+    if (file.action === 'replace' && current) {
+      next[`${FSR4_META_DIR}/backup/${current.key}`] = current.content
+      next[current.key] = file.content
+      backedUp.push(current.key)
+    } else {
+      next[file.path] = file.content
+      copied.push(file.path)
     }
-    next[file.path] = file.content
   }
-  next[`${FSR4_META_DIR}/manifest.json`] = JSON.stringify(plan.manifest)
+  const committed: Fsr4LiteManifest = {
+    ...plan.manifest,
+    state: 'committed',
+    backedUpFiles: backedUp,
+    copiedCreates: copied
+  }
+  next[`${FSR4_META_DIR}/manifest.json`] = JSON.stringify(committed)
   return next
 }
 
+function touchesWidget(rel: string): boolean {
+  const top = rel.replace(/\\/g, '/').split('/')[0]?.toLowerCase()
+  return top === FSR4_WIDGET_META_DIR
+}
+
 /**
- * Deshace el plan: restaura backups, borra lo creado y, si nosotros pusimos
- * REFramework, también sus archivos de runtime que no estaban antes.
+ * Deshace una instalación committed. No borra lo que cambió después,
+ * no vacía carpetas con archivos ajenos y no toca `.ralfsr`.
+ * Si falta un backup, no cambia nada.
  */
 export function applyUninstallPlan(tree: Record<string, string>, manifest: Fsr4LiteManifest): Record<string, string> {
-  const next: Record<string, string> = { ...tree }
+  const missing: string[] = []
   for (const file of manifest.replacedFiles) {
-    const backup = next[`${FSR4_META_DIR}/backup/${file}`]
-    if (backup !== undefined) next[file] = backup
+    if (touchesWidget(file)) continue
+    const backup = findInTree(tree, `${FSR4_META_DIR}/backup/${file}`)
+    const expected = digestRecord(manifest.backupDigests, file)
+    if (!backup || !digestMatches(backup.content, expected)) missing.push(file)
   }
-  for (const file of manifest.createdFiles) delete next[file]
-  const created = [...manifest.createdDirs].sort((a, b) => b.length - a.length)
-  for (const dir of created) {
-    for (const key of Object.keys(next)) {
-      if (key === dir || key.startsWith(`${dir}/`)) delete next[key]
+  if (missing.length > 0) throw new Fsr4LiteFailure('backup-missing')
+  const next: Record<string, string> = { ...tree }
+  const skipped: string[] = []
+  for (const file of manifest.replacedFiles) {
+    if (touchesWidget(file)) continue
+    const current = findInTree(next, file)
+    const backup = findInTree(next, `${FSR4_META_DIR}/backup/${file}`)
+    const written = digestRecord(manifest.writtenDigests, file)
+    const unchanged = !current || digestMatches(current.content, written)
+    if (unchanged && backup) {
+      if (current) next[current.key] = backup.content
+      else next[file] = backup.content
+    } else if (current) {
+      skipped.push(current.key)
     }
   }
-  if (manifest.reframeworkAdded) {
-    const keep = new Set(manifest.reframeworkPreexisting.map((name) => name.toLowerCase()))
-    for (const key of Object.keys(next)) {
-      const base = basenameOf(key).toLowerCase()
-      const top = key.split('/')[0]?.toLowerCase()
-      const runtime = top === 'reframework'
-        || base === REFRAMEWORK_DLL_NAME
-        || base === REFRAMEWORK_CONFIG_NAME.toLowerCase()
-        || base.endsWith('_fw_log.txt')
-        || base.endsWith('_fw_config.txt')
-      if (runtime && !keep.has(base) && !keep.has(top ?? '')) delete next[key]
-    }
+  for (const file of manifest.createdFiles) {
+    if (touchesWidget(file)) continue
+    const current = findInTree(next, file)
+    if (!current) continue
+    const expected = digestRecord(manifest.createdDigests, file)
+    if (digestMatches(current.content, expected)) delete next[current.key]
+    else skipped.push(current.key)
   }
-  for (const key of Object.keys(next)) {
-    if (key === FSR4_META_DIR || key.startsWith(`${FSR4_META_DIR}/`)) delete next[key]
+  // Las carpetas creadas se quedan si todavía tienen algo que no es nuestro.
+  if (skipped.length === 0) {
+    for (const key of Object.keys(next)) {
+      const low = key.replace(/\\/g, '/').toLowerCase()
+      if (low === FSR4_META_DIR || low.startsWith(`${FSR4_META_DIR.toLowerCase()}/`)) delete next[key]
+    }
   }
   return next
 }
@@ -828,14 +1127,20 @@ function lastResolution(log: string): string | undefined {
  * Lite enganchado → active. Copia del driver (DriverStore) → not-lite.
  * Vacío → not-loaded. OptiScaler presente sin señal clara → unknown.
  */
+/** El log viejo, anterior a esta sesión, no cuenta como estado de hoy. */
+export function sessionLogIsFresh(logMtimeMs: number, sessionStartedAt: number): boolean {
+  return Number.isFinite(logMtimeMs) && sessionStartedAt > 0 && logMtimeMs > sessionStartedAt
+}
+
 export function parseOptiScalerSessionLog(log: string | null | undefined): {
   status: Fsr4SessionStatus
   resolution?: string
 } {
   if (log == null || log.trim() === '') return { status: 'not-loaded' }
-  const text = log.length > 2_000_000 ? log.slice(0, 2_000_000) : log
+  // El final del archivo es la sesión más nueva. El principio puede ser de ayer.
+  const text = log.length > FSR4_LOG_READ_CAP ? log.slice(-FSR4_LOG_READ_CAP) : log
   const line = lastResolution(text)
-  const resolution = line ? `Rendering ${line}` : undefined
+  const resolution = line || undefined
   const lite = text.includes('ffxProvider_FSR4Lite_Int8')
   const driver = /driverstore/i.test(text) && /amdxcffx64\.dll|amdvkffx64\.dll/i.test(text)
   const cannot = /can't run any fsr 4 model|doesn't support fsr 4/i.test(text)
@@ -850,8 +1155,11 @@ export function shouldRefreshOptiScaler(input: {
   platform: string
   now: number
   lastCheckAt: number | null
+  /** Tras un fallo no se escribe last-check; este sello solo aplaza el reintento. */
+  backoffUntil?: number | null
 }): boolean {
   if (!input.enabled || input.platform !== 'win32') return false
+  if (input.backoffUntil != null && input.now < input.backoffUntil) return false
   if (input.lastCheckAt == null) return true
   return input.now - input.lastCheckAt >= OPTI_CHECK_INTERVAL_MS
 }
@@ -920,7 +1228,43 @@ export function companyIsAmd(company: string | null | undefined): boolean {
   return value.includes('advanced micro devices') || /(^|[^a-z])amd([^a-z]|$)/.test(value)
 }
 
-/** PE (MZ), compañía AMD y tamaño > 50 MB. El nombre tiene que ser uno de los dos DLL. */
+function headerByte(header: Uint8Array | readonly number[], offset: number): number {
+  return offset >= 0 && offset < header.length ? header[offset] : 0
+}
+
+function headerU16(header: Uint8Array | readonly number[], offset: number): number {
+  return headerByte(header, offset) | (headerByte(header, offset + 1) << 8)
+}
+
+function headerU32(header: Uint8Array | readonly number[], offset: number): number {
+  return (headerByte(header, offset)
+    | (headerByte(header, offset + 1) << 8)
+    | (headerByte(header, offset + 2) << 16)
+    | (headerByte(header, offset + 3) << 24)) >>> 0
+}
+
+/**
+ * PE32+ de x64 de verdad: MZ, firma PE, máquina AMD64 y magic 0x20B.
+ * Dos bytes MZ no alcanzan; un HTML grande con "MZ" tampoco.
+ */
+export function pe64HeaderValid(header: Uint8Array | readonly number[]): boolean {
+  if (header.length < 0x40) return false
+  if (headerByte(header, 0) !== 0x4d || headerByte(header, 1) !== 0x5a) return false
+  const lfanew = headerU32(header, 0x3c)
+  if (lfanew < 0x40 || lfanew > 1024) return false
+  if (header.length < lfanew + 26) return false
+  if (headerByte(header, lfanew) !== 0x50 || headerByte(header, lfanew + 1) !== 0x45) return false
+  if (headerByte(header, lfanew + 2) !== 0 || headerByte(header, lfanew + 3) !== 0) return false
+  if (headerU16(header, lfanew + 4) !== 0x8664) return false
+  const sections = headerU16(header, lfanew + 6)
+  if (sections < 1 || sections > 96) return false
+  const optionalSize = headerU16(header, lfanew + 20)
+  if (optionalSize < 112 || optionalSize > 1024) return false
+  if (header.length < lfanew + 24 + 2) return false
+  return headerU16(header, lfanew + 24) === 0x20b
+}
+
+/** PE64, compañía AMD y tamaño > 50 MB. El nombre tiene que ser uno de los dos DLL. */
 export function validateFsrDriverFile(input: {
   fileName: string
   size: number
@@ -930,15 +1274,157 @@ export function validateFsrDriverFile(input: {
   const name = basenameOf(input.fileName).toLowerCase()
   if (name !== FSR4_DLL_DX12 && name !== FSR4_DLL_VK) return { ok: false, reason: 'name' }
   if (!Number.isFinite(input.size) || input.size <= FSR4_MIN_DLL_BYTES) return { ok: false, reason: 'size' }
-  if (input.header.length < 2 || input.header[0] !== 0x4d || input.header[1] !== 0x5a) return { ok: false, reason: 'pe' }
+  if (!pe64HeaderValid(input.header)) return { ok: false, reason: 'pe' }
   if (!companyIsAmd(input.company)) return { ok: false, reason: 'company' }
   return { ok: true }
 }
 
+export interface Fsr4CacheFile {
+  name: string
+  size: number
+  sha256?: string
+  etag?: string
+}
+
+/** La caché solo se reusa si el archivo sigue siendo el que se validó y se anotó. */
+export function fsrCacheIsReusable(input: {
+  record: { files: readonly Fsr4CacheFile[] } | null
+  files: readonly { name: string, size: number, sha256: string, header: Uint8Array | readonly number[], company: string | null }[]
+}): boolean {
+  if (!input.record) return false
+  for (const name of [FSR4_DLL_DX12, FSR4_DLL_VK]) {
+    const live = input.files.find((file) => file.name.toLowerCase() === name)
+    const saved = input.record.files.find((file) => file.name.toLowerCase() === name)
+    if (!live || !saved?.sha256) return false
+    if (live.sha256.toLowerCase() !== saved.sha256.toLowerCase() || live.size !== saved.size) return false
+    if (!validateFsrDriverFile({ fileName: name, size: live.size, header: live.header, company: live.company }).ok) return false
+  }
+  return true
+}
+
 export interface Fsr4CacheRecord {
   source: Exclude<Fsr4FileSource, 'missing'>
-  files: { name: string, size: number, etag?: string }[]
+  files: Fsr4CacheFile[]
   recordedAt: string
+  reframework?: { version: string, zipSha256: string, dllSha256: string }
+}
+
+const OPTI_ARCHIVE_TOP = new Set([
+  'optiscaler.dll',
+  'optiscaler.ini',
+  'licenses',
+  'optiscaler',
+  'setup_windows.bat',
+  'setup_linux.sh',
+  'remove optiscaler.bat',
+  'remove_optiscaler.bat'
+])
+
+export interface Fsr4ArchiveEntry {
+  path: string
+  kind: 'file' | 'dir' | 'link'
+}
+
+/** El .7z se acepta solo si cada entrada es relativa, no es un enlace y el tope es el de OptiScaler. */
+export function assessOptiScalerArchiveEntries(
+  entries: readonly Fsr4ArchiveEntry[]
+): { ok: true } | { ok: false, reason: string } {
+  const paths: string[] = []
+  for (const entry of entries) {
+    if (entry.kind === 'link' || entry.path.includes('->')) return { ok: false, reason: 'link' }
+    const raw = entry.path.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '')
+    if (!raw) continue
+    const safe = safeRelativePath(raw)
+    if (!safe) return { ok: false, reason: 'path' }
+    if (isReservedInstallPath(safe)) return { ok: false, reason: 'reserved' }
+    const top = safe.split('/')[0].toLowerCase()
+    if (!OPTI_ARCHIVE_TOP.has(top)) return { ok: false, reason: 'layout' }
+    paths.push(safe.toLowerCase())
+  }
+  if (!paths.includes('optiscaler.dll') || !paths.includes('optiscaler.ini')) return { ok: false, reason: 'layout' }
+  return { ok: true }
+}
+
+/** El zip de REFramework tiene que traer dinput8.dll y nada que se salga de la carpeta. */
+export function assessReFrameworkArchiveEntries(
+  entries: readonly Fsr4ArchiveEntry[]
+): { ok: true } | { ok: false, reason: string } {
+  let dll = false
+  for (const entry of entries) {
+    if (entry.kind === 'link' || entry.path.includes('->')) return { ok: false, reason: 'link' }
+    const raw = entry.path.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '')
+    if (!raw) continue
+    const safe = safeRelativePath(raw)
+    if (!safe || isReservedInstallPath(safe)) return { ok: false, reason: 'path' }
+    if (basenameOf(safe).toLowerCase() === REFRAMEWORK_DLL_NAME) dll = true
+  }
+  return dll ? { ok: true } : { ok: false, reason: 'layout' }
+}
+
+/** Content-Length manda: si el servidor lo dice, lo recibido tiene que coincidir y no pasarse del tope. */
+export function acceptDownloadSize(input: {
+  received: number
+  contentLength: number | null
+  expectedSize?: number | null
+  maxBytes?: number
+}): boolean {
+  const max = input.maxBytes ?? FSR4_MAX_DOWNLOAD_BYTES
+  if (!Number.isFinite(input.received) || input.received < 0 || input.received > max) return false
+  if (input.contentLength == null) return true
+  if (!Number.isFinite(input.contentLength) || input.contentLength < 0 || input.contentLength > max) return false
+  if (input.received !== input.contentLength) return false
+  if (input.expectedSize != null && input.expectedSize > 0 && input.contentLength !== input.expectedSize) return false
+  return true
+}
+
+export type Fsr4UpdateSkip =
+  | 'ok'
+  | 'widget'
+  | 'running'
+  | 'root'
+  | 'truncated'
+  | 'broken'
+  | 'anti-cheat'
+  | 'absent'
+
+/** El actualizador no toca un juego que ya no pasa las mismas negativas del install. */
+export function launcherMayUpdate(input: {
+  files: readonly string[]
+  dirs?: readonly string[]
+  manifestState: Fsr4ManifestState | 'absent'
+  running: boolean
+  rootRefusal: Fsr4RootRefusal | null
+  scanTruncated: boolean
+  exeName?: string
+}): Fsr4UpdateSkip {
+  if (input.running) return 'running'
+  if (input.rootRefusal) return 'root'
+  if (hasWidgetManifest(input.files)) return 'widget'
+  if (detectAntiCheat(input.exeName, input.files, input.dirs ?? [])) return 'anti-cheat'
+  if (input.scanTruncated) return 'truncated'
+  if (input.manifestState === 'pending') return 'broken'
+  if (input.manifestState !== 'committed') return 'absent'
+  return 'ok'
+}
+
+/** Un candado para install, uninstall, opciones y el actualizador. Quien lo tiene, no lo suelta a medias. */
+export function createFsr4MutationGate(): {
+  tryAcquire: (owner: string) => boolean
+  release: (owner: string) => void
+  held: () => string | null
+} {
+  let owner: string | null = null
+  return {
+    tryAcquire(next: string): boolean {
+      if (owner) return false
+      owner = next
+      return true
+    },
+    release(next: string): void {
+      if (owner === next) owner = null
+    },
+    held: () => owner
+  }
 }
 
 export function compatNoteForGame(markdown: string, gameName: string): string | null {
@@ -972,7 +1458,7 @@ export interface Fsr4LiteStatus {
 
 export interface Fsr4LiteGameView {
   supported: boolean
-  phase: 'hidden' | 'ready' | 'installed' | 'widget' | 'blocked'
+  phase: 'hidden' | 'ready' | 'installed' | 'widget' | 'blocked' | 'broken'
   block?: Fsr4BlockCode
   antiCheat?: string
   upscalers: Fsr4UpscalerKind[]

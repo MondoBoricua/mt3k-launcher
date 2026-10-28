@@ -6,7 +6,7 @@ import { launchProfileService } from './launchProfileService'
 import { losslessScalingService } from './losslessScalingService'
 import { fsr4LiteService } from './fsr4LiteService'
 import { isLosslessScalingEligibleGame } from '@shared/losslessScalingPolicy'
-import { isFsr4RenderScale } from '@shared/fsr4LitePolicy'
+import { Fsr4LiteFailure, isFsr4RenderScale } from '@shared/fsr4LitePolicy'
 import { restoreRetroArchNetworkCommandsOnDisable } from './retro/retroArchNetworkConfig'
 import { isLanguage } from '@shared/language'
 import { app, clipboard, ipcMain, shell, type BrowserWindow } from 'electron'
@@ -918,6 +918,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   })
   ipcMain.handle(IPC.fsr4LiteOpenGameBar, (event) => {
     assertFsr4Sender(event)
+    // Misma política que la acción de la ficha: el invitado no abre Game Bar.
+    try {
+      guestModeService.assertActionAllowed('edit-metadata')
+    } catch {
+      throw new Fsr4LiteFailure('guest')
+    }
     fsr4LiteService.openGameBar()
   })
   ipcMain.handle(IPC.launchProfilesPending, (event) => {
@@ -979,7 +985,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     restoreLaunchProfile: () => launchProfileService.restore(),
     startLaunchCompanions: (game) => losslessScalingService.beforeLaunch(game),
     stopLaunchCompanions: (session) => void losslessScalingService.sessionEnded(session),
-    noteSessionSettled: (game) => { void fsr4LiteService.onSessionEnded(game) },
+    noteSessionSettled: (game, startedAt) => {
+      void fsr4LiteService.onSessionEnded(game, startedAt).catch((error) => {
+        console.warn('[fsr4-lite] no se pudo anotar el cierre de sesión', error)
+      })
+    },
     getLibraryGames: () => libraryService.getSnapshot().games,
     getGeForceNowMatches: () => currentGeForceNowSnapshot().matches,
     onGameConfirmed: (game, detectedAt, source) => libraryService.markGameStarted(game.id, detectedAt, source),
@@ -995,6 +1005,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     },
     onGameEnded: (game) => libraryService.backupCustomGame(game.id)
   })
+  // Cada copia vuelve a preguntar si el juego sigue corriendo.
+  fsr4LiteService.bindSession(() => gameSessionManager.getStatus())
   let gameSessionDisposed = false
   const disposeGameSession = (): void => {
     if (gameSessionDisposed) return

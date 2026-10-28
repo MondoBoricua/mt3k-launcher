@@ -86,6 +86,7 @@ export function Fsr4LiteDialog({ game, view, onView, onClose }: Props): JSX.Elem
 
   const blocked = view?.phase === 'blocked'
   const widget = view?.phase === 'widget'
+  const broken = view?.phase === 'broken'
   const installed = view?.phase === 'installed'
   const blockText = view?.block === 'anti-cheat'
     ? t('fsr4Lite.error.antiCheat', { name: view.antiCheat ?? '' })
@@ -98,7 +99,7 @@ export function Fsr4LiteDialog({ game, view, onView, onClose }: Props): JSX.Elem
       data-focus-scope="active"
       role="dialog"
       aria-modal="true"
-      aria-label={t(installed ? 'fsr4Lite.dialog.removeTitle' : 'fsr4Lite.dialog.installTitle')}
+      aria-label={t(broken ? 'fsr4Lite.dialog.repairTitle' : installed ? 'fsr4Lite.dialog.removeTitle' : 'fsr4Lite.dialog.installTitle')}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-6 backdrop-blur-md"
@@ -115,7 +116,7 @@ export function Fsr4LiteDialog({ game, view, onView, onClose }: Props): JSX.Elem
           <div className="min-w-0">
             <p className="truncate text-xs uppercase tracking-[0.2em] text-white/45">{game.name}</p>
             <h2 className="mt-1 text-xl font-semibold text-white">
-              {t(widget ? 'fsr4Lite.widgetInstalled' : installed ? 'fsr4Lite.dialog.removeTitle' : 'fsr4Lite.dialog.installTitle')}
+              {t(widget ? 'fsr4Lite.widgetInstalled' : broken ? 'fsr4Lite.dialog.repairTitle' : installed ? 'fsr4Lite.dialog.removeTitle' : 'fsr4Lite.dialog.installTitle')}
             </h2>
           </div>
           <FocusableButton variant="ghost" onClick={onClose} disabled={busy} aria-label={t('fsr4Lite.close')}>
@@ -129,6 +130,8 @@ export function Fsr4LiteDialog({ game, view, onView, onClose }: Props): JSX.Elem
             <p className="text-sm leading-relaxed text-white/75">{t('fsr4Lite.widgetInstalled')}</p>
           ) : blocked ? (
             <p className="text-sm leading-relaxed text-amber-100">{blockText ?? t('fsr4Lite.error.generic')}</p>
+          ) : broken ? (
+            <p className="text-sm leading-relaxed text-amber-100">{t('fsr4Lite.dialog.repairBody')}</p>
           ) : (
             <>
               <p className="text-sm leading-relaxed text-white/75">
@@ -158,11 +161,11 @@ export function Fsr4LiteDialog({ game, view, onView, onClose }: Props): JSX.Elem
               {t('fsr4Lite.openGameBar')}
             </FocusableButton>
           ) : null}
-          {view && !widget && !blocked && (view.phase === 'ready' || view.phase === 'installed') ? (
-            <FocusableButton data-fsr4-confirm variant="solid" disabled={busy} onClick={() => run(installed ? 'uninstall' : 'install')}>
+          {view && !widget && !blocked && (view.phase === 'ready' || view.phase === 'installed' || broken) ? (
+            <FocusableButton data-fsr4-confirm variant="solid" disabled={busy} onClick={() => run(broken || installed ? 'uninstall' : 'install')}>
               <span className="flex items-center gap-2">
                 {busy ? <Loader2 size={16} className="animate-spin" /> : null}
-                {t(installed ? 'fsr4Lite.dialog.confirmRemove' : 'fsr4Lite.dialog.confirmInstall')}
+                {t(broken ? 'fsr4Lite.dialog.confirmRepair' : installed ? 'fsr4Lite.dialog.confirmRemove' : 'fsr4Lite.dialog.confirmInstall')}
               </span>
             </FocusableButton>
           ) : null}

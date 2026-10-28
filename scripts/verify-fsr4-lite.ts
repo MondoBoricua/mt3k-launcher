@@ -9,23 +9,38 @@ import {
   FSR4_MIN_DLL_BYTES,
   OPTI_CHECK_INTERVAL_MS,
   REFRAMEWORK_CONFIG_TEXT,
+  FSR4_WALK_MAX_DEPTH,
+  OPTI_FAIL_BACKOFF_MS,
   acceptDownloadDigest,
+  acceptDownloadSize,
   applyUninstallPlan,
   assessFsr4Target,
+  assessOptiScalerArchiveEntries,
   chooseFsr4Proxy,
   classifyFsr4Device,
+  classifyGameRoot,
+  classifyInstallPath,
   compatNoteForGame,
   compatRequiresReFramework,
+  createFsr4MutationGate,
+  fsrCacheIsReusable,
   iniValue,
   isNewerOptiBuild,
+  launcherMayUpdate,
   mergeOptiScalerIni,
   parseOptiScalerSessionLog,
+  pe64HeaderValid,
   pickOptiScalerNightly,
   planFsr4Install,
+  resolveGameExecutable,
   roundTripInstall,
+  safeRelativePath,
   selectGameExecutable,
+  sessionLogIsFresh,
+  setIniValues,
   shouldRefreshOptiScaler,
   validateFsrDriverFile,
+  walkDirectoryDecision,
   type Fsr4GraphicsApi,
   type Fsr4IniOptions,
   type Fsr4RenderScale
@@ -277,13 +292,24 @@ assert.match(trip.installed['dinput8.dll'], /refw/)
 assert.match(trip.installed['re2_fw_config.txt'], /ShortcutKey=0x24/)
 assert.match(REFRAMEWORK_CONFIG_TEXT, /REFrameworkConfig_MenuOpen=false/)
 assert.equal(trip.installed['.mt3k-fsr/backup/OptiScaler.ini'], 'original-ini')
+const clean = applyUninstallPlan(trip.installed, trip.plan.manifest)
+assert.deepEqual(clean, before)
 const withRuntime = {
   ...trip.installed,
   'reframework/log.txt': 'runtime',
-  're2_fw_log.txt': 'runtime-log'
+  're2_fw_log.txt': 'runtime-log',
+  'OptiScaler/user-mod.dll': 'mod',
+  'OptiScaler.log': 'session'
 }
 const restored = applyUninstallPlan(withRuntime, trip.plan.manifest)
-assert.deepEqual(restored, before)
+assert.equal(restored['reframework/log.txt'], 'runtime')
+assert.equal(restored['re2_fw_log.txt'], 'runtime-log')
+assert.equal(restored['OptiScaler/user-mod.dll'], 'mod')
+assert.equal(restored['OptiScaler.log'], 'session')
+assert.equal(restored['dxgi.dll'], 'original-dxgi')
+assert.equal(restored['OptiScaler.ini'], 'original-ini')
+assert.equal(restored['winmm.dll'], undefined)
+assert.equal(restored['.mt3k-fsr/manifest.json'], undefined)
 
 const leaveTheirs = planFsr4Install({
   tree: { 'game.exe': 'game', 'dinput8.dll': 'theirs' },
@@ -307,7 +333,7 @@ const activeLog = [
 ].join('\n')
 const active = parseOptiScalerSessionLog(activeLog)
 assert.equal(active.status, 'active')
-assert.equal(active.resolution, 'Rendering 1280x720 → 1920x1080')
+assert.equal(active.resolution, '1280x720 → 1920x1080')
 
 const notLite = parseOptiScalerSessionLog([
   'OptiScaler loaded',
@@ -368,18 +394,36 @@ assert.equal(acceptDownloadDigest(`sha256:${'ff'.repeat(32)}`, digest), false)
 assert.equal(acceptDownloadDigest('md5:abc', digest), false)
 assert.equal(pickOptiScalerNightly([{ tag_name: 'x', assets: [{ name: newer, browser_download_url: 'https://example.test/a.7z' }] }]), null)
 
+function samplePe64Header(): Uint8Array {
+  const header = new Uint8Array(512)
+  header[0] = 0x4d
+  header[1] = 0x5a
+  header[0x3c] = 0x80
+  const pe = 0x80
+  header[pe] = 0x50
+  header[pe + 1] = 0x45
+  header[pe + 4] = 0x64
+  header[pe + 5] = 0x86
+  header[pe + 6] = 1
+  header[pe + 20] = 0xf0
+  header[pe + 24] = 0x0b
+  header[pe + 25] = 0x02
+  return header
+}
+
 const measured = 85_684_104
 assert.ok(measured > FSR4_MIN_DLL_BYTES)
+assert.equal(pe64HeaderValid(samplePe64Header()), true)
 assert.deepEqual(validateFsrDriverFile({
   fileName: 'amdxcffx64.dll',
   size: measured,
-  header: [0x4d, 0x5a, 0x90],
+  header: samplePe64Header(),
   company: 'Advanced Micro Devices, Inc.'
 }), { ok: true })
 assert.equal(validateFsrDriverFile({
   fileName: 'amdvkffx64.dll',
   size: 72_497_568,
-  header: new Uint8Array([0x4d, 0x5a]),
+  header: samplePe64Header(),
   company: 'AMD'
 }).ok, true)
 assert.equal(validateFsrDriverFile({
@@ -387,7 +431,7 @@ assert.equal(validateFsrDriverFile({
   size: measured,
   header: [0x4d, 0x5a],
   company: 'Advanced Micro Devices, Inc.'
-}).ok, true)
+}).ok, false)
 assert.equal(validateFsrDriverFile({
   fileName: 'amdxcffx64.dll',
   size: 49 * 1024 * 1024,
@@ -421,5 +465,197 @@ const note = compatNoteForGame([
 assert.equal(note, 'Requires REFramework')
 assert.equal(compatRequiresReFramework(note), true)
 assert.equal(compatNoteForGame('| Other | DX12 | fine |', 'Example Game'), null)
+
+const probeBase = {
+  packageFiles: { 'OptiScaler.dll': 'proxy', 'OptiScaler.ini': '[Custom]\nKeep=yes\n[Menu]\nShowFps=auto\n' },
+  fsrDx12: 'lite-dx',
+  fsrVk: 'lite-vk',
+  options: { overlay: false, renderScale: 'game' as const, graphicsApi: 'DX12' as const, hasFsr2Dll: false, noUpscaler: true },
+  gameId: 'local:1',
+  optiBuild: 'OptiScaler_v10_20261027.7z',
+  nowIso: '2026-10-27T00:00:00.000Z'
+}
+
+// P1: en un disco que no distingue mayúsculas, el archivo que ya está se reemplaza.
+const casePlan = planFsr4Install({
+  ...probeBase,
+  tree: { 'game.exe': 'game', 'optiscaler.ini': 'user', 'optiscaler/amdxcffx64.dll': 'user-dll', 'DXGI.dll': 'wrapper' }
+})
+assert.equal(casePlan.proxyName, 'winmm.dll')
+assert.deepEqual(classifyInstallPath({ 'DXGI.dll': 'wrapper' }, 'dxgi.dll'), { action: 'replace', path: 'DXGI.dll' })
+const caseIni = casePlan.files.find((file) => file.path.toLowerCase() === 'optiscaler.ini')
+const caseDll = casePlan.files.find((file) => file.path.toLowerCase().endsWith('amdxcffx64.dll'))
+assert.equal(caseIni?.action, 'replace')
+assert.equal(caseIni?.path, 'optiscaler.ini')
+assert.equal(caseDll?.action, 'replace')
+assert.equal(caseDll?.path, 'optiscaler/amdxcffx64.dll')
+assert.ok(casePlan.manifest.replacedFiles.some((file) => file.toLowerCase() === 'optiscaler.ini'))
+assert.equal(casePlan.files.some((file) => file.path.toLowerCase() === 'dxgi.dll'), false)
+
+// Un ini editado y un mod no se borran. Un backup que no está, para todo.
+const edited = roundTripInstall({ ...probeBase, tree: { 'game.exe': 'game' } })
+edited.installed['OptiScaler.ini'] = 'user-edit'
+edited.installed['dxgi.dll'] = 'game-update'
+edited.installed['OptiScaler/user-mod.dll'] = 'mod'
+const kept = applyUninstallPlan(edited.installed, edited.plan.manifest)
+assert.equal(kept['OptiScaler.ini'], 'user-edit')
+assert.equal(kept['dxgi.dll'], 'game-update')
+assert.equal(kept['OptiScaler/user-mod.dll'], 'mod')
+assert.throws(() => applyUninstallPlan(
+  { 'OptiScaler.ini': 'ours', '.mt3k-fsr/manifest.json': '{}' },
+  { ...edited.plan.manifest, replacedFiles: ['OptiScaler.ini'], state: 'committed' }
+), /backup-missing/)
+
+// P6: raíces que no son una carpeta de juego.
+assert.equal(classifyGameRoot('C:\\Windows'), 'windows')
+assert.equal(classifyGameRoot('C:\\Windows\\System32'), 'system')
+assert.equal(classifyGameRoot('C:\\Program Files'), 'program-files')
+assert.equal(classifyGameRoot('C:\\Program Files (x86)'), 'program-files')
+assert.equal(classifyGameRoot('\\\\server\\share\\'), 'unc-root')
+assert.equal(classifyGameRoot('relative'), 'relative')
+assert.equal(classifyGameRoot('C:\\'), 'drive-root')
+assert.equal(classifyGameRoot('D:\\Games\\Example'), null)
+assert.equal(safeRelativePath('foo:stream'), null)
+assert.equal(safeRelativePath('OptiScaler.ini.'), null)
+assert.equal(safeRelativePath('CON'), null)
+
+// P8: el bootstrapper de la raíz no gana al Shipping.
+const shippingOverBootstrap = resolveGameExecutable({
+  storedRelative: 'root.exe',
+  hasEngineDir: true,
+  entries: [
+    { relativePath: 'root.exe', size: 10 },
+    { relativePath: 'Project/Binaries/Win64/Game-Win64-Shipping.exe', size: 100 }
+  ]
+})
+assert.equal(shippingOverBootstrap?.relativePath, 'Project/Binaries/Win64/Game-Win64-Shipping.exe')
+assert.equal(shippingOverBootstrap?.unreal, true)
+
+// P9: dos DLL chiquitos no se reusan aunque estén en la caché.
+assert.equal(fsrCacheIsReusable({
+  record: { files: [
+    { name: 'amdxcffx64.dll', size: 7, sha256: 'aa' },
+    { name: 'amdvkffx64.dll', size: 7, sha256: 'bb' }
+  ] },
+  files: [
+    { name: 'amdxcffx64.dll', size: 7, sha256: 'aa', header: [0x4d, 0x5a], company: 'AMD' },
+    { name: 'amdvkffx64.dll', size: 7, sha256: 'bb', header: [0x4d, 0x5a], company: 'AMD' }
+  ]
+}), false)
+
+// P11: si apareció el widget, el actualizador no toca el proxy.
+assert.equal(launcherMayUpdate({
+  files: ['.ralfsr/manifest.json', 'dxgi.dll'],
+  manifestState: 'committed',
+  running: false,
+  rootRefusal: null,
+  scanTruncated: false
+}), 'widget')
+assert.equal(launcherMayUpdate({
+  files: ['dxgi.dll'],
+  manifestState: 'pending',
+  running: false,
+  rootRefusal: null,
+  scanTruncated: false
+}), 'broken')
+assert.equal(launcherMayUpdate({
+  files: ['Engine/EasyAntiCheat/start_protected_game.exe'],
+  dirs: ['Engine/EasyAntiCheat'],
+  manifestState: 'committed',
+  running: true,
+  rootRefusal: null,
+  scanTruncated: false
+}), 'running')
+
+// P14: el paquete no puede escribir el manifiesto ni el backup.
+assert.throws(() => planFsr4Install({
+  ...probeBase,
+  tree: { 'game.exe': 'game' },
+  packageFiles: { ...probeBase.packageFiles, '.mt3k-fsr/manifest.json': 'hostile', '.mt3k-fsr/backup/OptiScaler.ini': 'hostile' }
+}), /bad-package/)
+assert.equal(assessOptiScalerArchiveEntries([
+  { path: 'OptiScaler.dll', kind: 'file' },
+  { path: 'OptiScaler.ini', kind: 'file' },
+  { path: '../outside.dll', kind: 'file' }
+]).ok, false)
+assert.equal(assessOptiScalerArchiveEntries([
+  { path: 'OptiScaler.dll', kind: 'link' },
+  { path: 'OptiScaler.ini', kind: 'file' }
+]).ok, false)
+assert.equal(assessOptiScalerArchiveEntries([
+  { path: 'OptiScaler.dll', kind: 'file' },
+  { path: 'OptiScaler.ini', kind: 'file' },
+  { path: 'OptiScaler/amd_fidelityfx_dx12.dll', kind: 'file' },
+  { path: 'Licenses/GPL.txt', kind: 'file' }
+]).ok, true)
+
+// P18: install, quitar, opciones y el actualizador comparten un solo candado.
+const gate = createFsr4MutationGate()
+assert.equal(gate.tryAcquire('update'), true)
+assert.equal(gate.tryAcquire('uninstall'), false)
+assert.equal(gate.held(), 'update')
+gate.release('update')
+assert.equal(gate.tryAcquire('uninstall'), true)
+gate.release('uninstall')
+
+// P24: un log más viejo que la sesión no se lee. La resolución no trae inglés fijo.
+assert.equal(sessionLogIsFresh(1_000, 2_000), false)
+assert.equal(sessionLogIsFresh(3_000, 2_000), true)
+const stale = parseOptiScalerSessionLog('OptiScaler loaded\nffxProvider_FSR4Lite_Int8 hooked\nRender Resolution: 1280x720, Display Resolution 1920x1080')
+assert.equal(stale.status, 'active')
+assert.equal(stale.resolution?.includes('Rendering'), false)
+
+// El recorrido no se salta Engine ni Content. Si el tope corta, no se da por seguro.
+assert.equal(walkDirectoryDecision('Engine', 1), 'descend')
+assert.equal(walkDirectoryDecision('Content', 1), 'descend')
+assert.equal(walkDirectoryDecision('_CommonRedist', 1), 'skip')
+assert.equal(walkDirectoryDecision('Support', 1), 'skip')
+assert.ok(FSR4_WALK_MAX_DEPTH >= 7)
+assert.equal(assessFsr4Target({
+  provider: 'steam',
+  installed: true,
+  exeName: 'game.exe',
+  files: ['Engine/Plugins/DLSS/nvngx_dlss.dll'],
+  dirs: ['Engine', 'Engine/EasyAntiCheat']
+}).block, 'anti-cheat')
+assert.equal(assessFsr4Target({
+  provider: 'steam',
+  installed: true,
+  exeName: 'game.exe',
+  files: ['game.exe'],
+  scanTruncated: true
+}).block, 'scan-incomplete')
+assert.equal(assessFsr4Target({
+  provider: 'local',
+  installed: true,
+  exeName: 'game.exe',
+  files: ['.mt3k-fsr/manifest.json', 'game.exe'],
+  manifestState: 'pending'
+}).kind, 'broken')
+assert.equal(assessFsr4Target({
+  provider: 'local',
+  installed: true,
+  exeName: 'game.exe',
+  files: ['.mt3k-fsr/manifest.json', 'game.exe'],
+  manifestState: 'committed'
+}).kind, 'installed')
+
+// El reintento fallido no consume el día. Las opciones solo tocan claves nuestras.
+assert.equal(shouldRefreshOptiScaler({
+  enabled: true, platform: 'win32', now: 5_000, lastCheckAt: null, backoffUntil: 9_000
+}), false)
+assert.equal(shouldRefreshOptiScaler({
+  enabled: true, platform: 'win32', now: 10_000, lastCheckAt: null, backoffUntil: 9_000
+}), true)
+assert.equal(OPTI_FAIL_BACKOFF_MS, 60 * 60 * 1000)
+const rewritten = setIniValues('[Custom]\nKeep=yes\n[Menu]\nShowFps=auto\n', [
+  { section: 'Menu', key: 'ShowFps', value: 'true' }
+])
+assert.match(rewritten, /Keep=yes/)
+assert.match(rewritten, /ShowFps=true/)
+assert.equal(acceptDownloadSize({ received: 10, contentLength: 10, expectedSize: 10, maxBytes: 100 }), true)
+assert.equal(acceptDownloadSize({ received: 10, contentLength: 11, expectedSize: 11, maxBytes: 100 }), false)
+assert.equal(acceptDownloadSize({ received: 10, contentLength: 10, expectedSize: 9, maxBytes: 100 }), false)
+assert.equal(acceptDownloadSize({ received: 1_000, contentLength: 1_000, maxBytes: 100 }), false)
 
 console.log('verify:fsr4-lite passed')
