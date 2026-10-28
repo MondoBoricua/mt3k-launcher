@@ -121,8 +121,15 @@ export function Fsr4LiteBadge({ view }: { view: Fsr4LiteGameView | null }): JSX.
   }
   if (view.phase === 'widget') {
     return (
-      <span data-fsr4-lite-badge="widget" className="rounded-full border border-sky-200/20 bg-sky-300/10 px-2 py-1 text-sky-100/80">
-        {t('fsr4Lite.widgetInstalled')}
+      <span className="inline-flex max-w-full flex-col items-start gap-1">
+        <span data-fsr4-lite-badge="widget" className="rounded-full border border-sky-200/20 bg-sky-300/10 px-2 py-1 text-sky-100/80">
+          {t('fsr4Lite.widgetInstalled')}
+        </span>
+        {view.handoffLater ? (
+          <span data-fsr4-lite-note="handoff" className="text-xs leading-relaxed text-white/60">
+            {t('fsr4Lite.widgetHandoffLater')}
+          </span>
+        ) : null}
       </span>
     )
   }

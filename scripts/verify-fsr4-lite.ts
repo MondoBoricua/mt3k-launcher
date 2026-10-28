@@ -32,6 +32,7 @@ import {
   finalDownloadUrlIsHttps,
   fsrCacheIsReusable,
   gameLaunchBlocksMutation,
+  resolveGameGetWidgetHandoff,
   journalBackup,
   journalCopyIntent,
   manifestIsLegacyCommitted,
@@ -731,6 +732,59 @@ const iniRead = optionsSlice.indexOf('await readFile(iniPath')
 assert.ok(iniRead > 0 && iniWrite > iniRead)
 assert.ok(optionsSlice.lastIndexOf('assertNotRunning(game.id)', iniWrite) > iniRead)
 assert.match(serviceSource, /handoffToWidget/)
+
+// Ronda 3: la ficha no traspasa al widget si el juego corre o el candado está ocupado.
+const storedInstalled = { installed: true, widgetOwned: false, repairNeeded: false as boolean | undefined, block: undefined }
+const runningWidget = resolveGameGetWidgetHandoff({
+  manifestState: 'committed',
+  running: true,
+  gateHeld: false,
+  stored: storedInstalled
+})
+assert.equal(runningWidget.mutate, false)
+assert.equal(runningWidget.phase, 'widget')
+assert.equal(runningWidget.note, 'after-close')
+assert.equal(runningWidget.repairNeeded, false)
+const launchingWidget = resolveGameGetWidgetHandoff({
+  manifestState: 'pending',
+  running: gameLaunchBlocksMutation('launching'),
+  gateHeld: false,
+  stored: storedInstalled
+})
+assert.equal(launchingWidget.mutate, false)
+assert.equal(launchingWidget.repairNeeded, false)
+const busyWidget = resolveGameGetWidgetHandoff({
+  manifestState: 'committed',
+  running: false,
+  gateHeld: true,
+  stored: storedInstalled
+})
+assert.equal(busyWidget.mutate, false)
+assert.equal(busyWidget.repairNeeded, false)
+assert.equal(busyWidget.phase, 'installed')
+assert.equal(busyWidget.note, null)
+const busyBrokenStored = resolveGameGetWidgetHandoff({
+  manifestState: 'committed',
+  running: false,
+  gateHeld: true,
+  stored: { ...storedInstalled, repairNeeded: true }
+})
+assert.equal(busyBrokenStored.phase, 'broken')
+assert.equal(busyBrokenStored.repairNeeded, true)
+const idleWidget = resolveGameGetWidgetHandoff({
+  manifestState: 'committed',
+  running: false,
+  gateHeld: false,
+  stored: storedInstalled
+})
+assert.equal(idleWidget.mutate, true)
+const gameGetSlice = serviceSource.slice(serviceSource.indexOf('gameGet(game'), serviceSource.indexOf('async setOptions'))
+assert.ok(gameGetSlice.indexOf('resolveGameGetWidgetHandoff') >= 0)
+assert.ok(gameGetSlice.indexOf('resolveGameGetWidgetHandoff') < gameGetSlice.indexOf('handoffToWidget'))
+assert.doesNotMatch(gameGetSlice, /widgetOwned: false, repairNeeded: true/)
+const sessionSlice = serviceSource.slice(serviceSource.indexOf('async onSessionEnded'), serviceSource.indexOf('onFeatureEnabled'))
+assert.match(sessionSlice, /handoffWidgetIfIdle/)
+assert.match(serviceSource, /function handoffWidgetIfIdle/)
 assert.match(serviceSource, /journalCopyIntent/)
 assert.match(serviceSource, /normalizeStoredManifest/)
 assert.match(serviceSource, /sessionObservation/)
