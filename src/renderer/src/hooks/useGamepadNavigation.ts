@@ -1,4 +1,6 @@
 import { useAttractModeStore } from '@renderer/state/attractModeStore'
+import { oledCareCoverActive } from '@renderer/components/OledCare'
+import { oledCareControllerPlan } from '@shared/oledCarePolicy'
 import { usePreferencesStore as attractPreferences } from '@renderer/state/preferencesStore'
 import { useEffect } from 'react'
 import { moveFocus, type NavDirection } from '@renderer/lib/spatialNavigation'
@@ -384,19 +386,23 @@ export function useGamepadNavigation(): void {
           .setActiveController('steam', currentNativeController.id)
       }
       const hasControllerActivity = hasGamepadActivity || hasNativeControllerActivity
-      if (attractPreferences.getState().attractModeEnabled) {
-        const attract = useAttractModeStore.getState()
-        if (hasControllerActivity) {
-          consumeAttractWake ||= attract.active
-          attract.touch()
-        }
-        if (consumeAttractWake) {
-          consumeAttractWake = hasControllerActivity
-          scheduleNextPoll(pads.length > 0 || hasNativeController)
-          return
-        }
-      } else {
-        consumeAttractWake = false
+      const carePreferences = attractPreferences.getState()
+      const attract = useAttractModeStore.getState()
+      // Vitrina y cuidado OLED comparten el reloj. Si la capa está puesta,
+      // este movimiento del mando no sigue hacia la navegación.
+      const wakePlan = oledCareControllerPlan({
+        careEnabled: carePreferences.oledCareEnabled === true,
+        attractEnabled: carePreferences.attractModeEnabled === true,
+        coverActive: oledCareCoverActive(),
+        attractActive: attract.active,
+        controllerActivity: hasControllerActivity,
+        consumeWake: consumeAttractWake
+      })
+      if (wakePlan.touch) attract.touch()
+      consumeAttractWake = wakePlan.consumeWake
+      if (wakePlan.swallow) {
+        scheduleNextPoll(pads.length > 0 || hasNativeController)
+        return
       }
       const anyButtonPressed = (buttonIndex: number): boolean =>
         pads.some((pad) => isPressed(pad.buttons[buttonIndex])) ||

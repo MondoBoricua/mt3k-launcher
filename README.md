@@ -41,6 +41,7 @@ Empezó como **ORBIT MT3K Edition**, un fork de ORBIT 0.1.4. En septiembre de 20
 | **Modo invitado**: PIN con el mando, solo los juegos de una colección, sin tienda ni ajustes. Apagado por defecto. | 0.1.4-mt3k.10 |
 | **Log de diagnóstico** en `%APPDATA%\MT3K Launcher\logs`, con botón en Acerca de. Si algo falla, ese archivo es lo que se manda. | 0.1.4-mt3k.11 |
 | **Lossless Scaling con tus juegos** (sugerido por Ivan, suscriptor del canal): abre Lossless Scaling al lanzar un juego local y lo cierra al terminar si lo abrió el launcher, con elección por juego. Necesitas tener Lossless Scaling de Steam; el escalado se configura dentro de él. Apagado por defecto. | 0.1.4-mt3k.16 |
+| **Cuidado de pantalla OLED**: si dejas quieta la ventana del launcher, la cubre de negro o la atenúa para no dejar una imagen fija en el panel. Los juegos no se tocan. Apagado por defecto. | 0.1.4-mt3k.17 |
 
 El detalle por versión está en [CHANGELOG.md](CHANGELOG.md).
 

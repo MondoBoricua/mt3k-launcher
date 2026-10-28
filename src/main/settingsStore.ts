@@ -1,4 +1,5 @@
 import { normalizeAttractIdleMinutes } from '@shared/attractModePolicy'
+import { normalizeOledCareIdleMinutes, normalizeOledCareMode } from '@shared/oledCarePolicy'
 import { DEFAULT_LANGUAGE, normalizeLanguage } from '@shared/language'
 import Store from 'electron-store'
 import { normalizeGeForceNowLaunchMode } from '@shared/geforceNow'
@@ -30,6 +31,9 @@ import {
 const defaults: OrbitSettings = {
   attractModeEnabled: false,
   attractModeIdleMinutes: 5,
+  oledCareEnabled: false,
+  oledCareIdleMinutes: 3,
+  oledCareMode: 'black',
   captureShelfEnabled: false,
   launchProfilesEnabled: false,
   losslessScalingEnabled: false,
@@ -122,6 +126,9 @@ export function publicSettingsSnapshot(): OrbitSettings {
   snapshot.cornerStyle = isCornerStyleId(snapshot.cornerStyle) ? snapshot.cornerStyle : 'theme'
   snapshot.homeLayout = isHomeLayoutId(snapshot.homeLayout) ? snapshot.homeLayout : 'orbit'
   snapshot.attractModeEnabled = snapshot.attractModeEnabled === true
+  snapshot.oledCareEnabled = snapshot.oledCareEnabled === true
+  snapshot.oledCareIdleMinutes = normalizeOledCareIdleMinutes(snapshot.oledCareIdleMinutes)
+  snapshot.oledCareMode = normalizeOledCareMode(snapshot.oledCareMode)
   snapshot.captureShelfEnabled = snapshot.captureShelfEnabled === true
   // Lossless Scaling is Windows-only: elsewhere the feature reads as off everywhere.
   snapshot.losslessScalingEnabled =

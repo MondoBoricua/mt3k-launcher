@@ -2,6 +2,14 @@
 
 MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
 
+## 0.1.4-mt3k.17
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.16.
+
+### Mejoras
+
+- **Cuidado de pantalla OLED.** En Configuración → Experiencia, al final, hay un interruptor apagado por defecto. Al encenderlo, si la ventana del launcher se queda quieta (1, 2, 3, 5 o 10 minutos; 3 por defecto) se cubre de negro para apagar los píxeles, o se atenúa al 15 % de brillo. Cualquier tecla, ratón o mando la quita al instante y esa primera entrada no lanza nada. Solo cubre la ventana del launcher: un juego en marcha, o la ventana oculta, minimizada o sin foco, no se toca. Si el modo de exhibición también está activo, esta capa tapa el slideshow cuando llega su propio tiempo. El apagado de pantalla de Windows sigue siendo aparte.
+
 ## 0.1.4-mt3k.16
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.15.

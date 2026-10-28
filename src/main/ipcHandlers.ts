@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import { diagnosticLog, diagnosticLogDirectory } from './diagnosticLogStartup'
 import { listCaptures, openCapture, openCapturesFolder } from './captures/captureLibrary'
 import { ATTRACT_IDLE_MINUTES } from '@shared/attractModePolicy'
+import { OLED_CARE_IDLE_MINUTES, OLED_CARE_MODES } from '@shared/oledCarePolicy'
 import { launchProfileService } from './launchProfileService'
 import { losslessScalingService } from './losslessScalingService'
 import { isLosslessScalingEligibleGame } from '@shared/losslessScalingPolicy'
@@ -1178,10 +1179,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.settingsSet, (_e, partial: unknown) => {
     guestModeService.assertActionAllowed('change-settings')
     validateSettingsPartial(partial)
-    for (const key of ['backgroundModeEnabled', 'startWithWindows', 'attractModeEnabled', 'captureShelfEnabled', 'launchProfilesEnabled'] as const) {
+    for (const key of ['backgroundModeEnabled', 'startWithWindows', 'attractModeEnabled', 'oledCareEnabled', 'captureShelfEnabled', 'launchProfilesEnabled'] as const) {
       if (key in partial && typeof partial[key] !== 'boolean') throw new Error(`Invalid ${key}`)
     }
     if ('attractModeIdleMinutes' in partial && !ATTRACT_IDLE_MINUTES.includes(partial.attractModeIdleMinutes as 2 | 5 | 10 | 15)) throw new Error('Invalid attract idle minutes')
+    if ('oledCareIdleMinutes' in partial && !OLED_CARE_IDLE_MINUTES.includes(partial.oledCareIdleMinutes as 1 | 2 | 3 | 5 | 10)) throw new Error('Invalid OLED care idle minutes')
+    if ('oledCareMode' in partial && !OLED_CARE_MODES.includes(partial.oledCareMode as 'black' | 'dim')) throw new Error('Invalid OLED care mode')
     if ('startWithWindows' in partial) backgroundServiceManager.setStartWithWindows(partial.startWithWindows!)
     if (
       (partial.audioPreset === 'manual' || 'audioCuePresets' in partial) &&

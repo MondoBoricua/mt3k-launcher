@@ -1085,7 +1085,7 @@ async function main() {
     return
   }
   assert.deepEqual((await state()).expanded, [])
-  assert.equal((await state()).headers.length, 10, `experience headers: ${(await state()).headers.join(", ")}`)
+  assert.equal((await state()).headers.length, 11, `experience headers: ${(await state()).headers.join(", ")}`)
   await key('ArrowDown')
   assert.equal((await state()).focused, 'attract-mode', 'Down enters the first topic from the category')
   await key('ArrowDown')
@@ -1151,7 +1151,7 @@ async function main() {
       await js(`settingsQA.setPage('${page}')`)
       await settle()
       await waitFor('settingsQA.state().headers.length > 0')
-      assert.equal((await state()).headers.length, { appearance: 8, experience: 10, plus: 1, libraries: 6, hardware: 3, updates: 3, system: 4 }[page], `${page} headers: ${(await state()).headers.join(", ")}`)
+      assert.equal((await state()).headers.length, { appearance: 8, experience: 11, plus: 1, libraries: 6, hardware: 3, updates: 3, system: 4 }[page], `${page} headers: ${(await state()).headers.join(", ")}`)
       assert.equal((await state()).overflow, false, `${page} has no horizontal overflow`)
       for (const id of (await state()).headers) {
         await open(id)
@@ -1195,6 +1195,24 @@ async function main() {
   await settle()
   assert.deepEqual(await losslessToggles(), ['losslessScalingEnabled'], 'Turning it off hides the options again')
   await key('Escape')
+  // OLED care: only the switch while off; idle time and mode once on.
+  await waitFor('settingsQA.state().headers.includes("oled-care")')
+  await click('oled-care')
+  const oledToggles = () => js('[...document.querySelectorAll("#settings-oled-care-panel [data-setting-toggle]")].map(e => e.dataset.settingToggle)')
+  assert.deepEqual(await oledToggles(), ['oledCareEnabled'], 'Only the main switch while OLED care is off')
+  assert.equal(await js(`document.querySelector('[data-oled-care-options]') === null`), true, 'Idle time and mode stay hidden while off')
+  assert.equal(await js('document.querySelector("[data-setting-toggle=oledCareEnabled]").getAttribute("aria-pressed")'), 'false', 'OLED care is off by default')
+  await js('document.querySelector("[data-setting-toggle=oledCareEnabled]").click()')
+  await settle()
+  assert.equal(await js(`document.querySelector('[data-oled-care-idle]') !== null && document.querySelector('[data-oled-care-mode]') !== null`), true, 'Turning OLED care on shows idle time and mode')
+  assert.equal(await js(`document.querySelector('[data-oled-care-minutes="3"]').getAttribute('aria-pressed')`), 'true', 'Three minutes is the default idle time')
+  assert.equal(await js(`document.querySelector('[data-oled-care-mode-value="black"]').getAttribute('aria-pressed')`), 'true', 'Full black is the default mode')
+  assert.match(await js('document.getElementById("settings-oled-care-panel").textContent'), /Games are left alone/)
+  assert.equal((await state()).hiddenFocusable, 0)
+  await js('document.querySelector("[data-setting-toggle=oledCareEnabled]").click()')
+  await settle()
+  assert.equal(await js(`document.querySelector('[data-oled-care-options]') === null`), true, 'Turning OLED care off hides the options again')
+  await key('Escape')
   await js('settingsQA.setPage("experience"); settingsQA.setLanguage("de")')
   await settle()
   await waitFor('settingsQA.state().headers.includes("sound")')
@@ -1220,7 +1238,7 @@ async function main() {
   await key('Escape')
   assert.equal((await state()).exited, 1, 'Back exits normally once the topic is closed')
   assert.deepEqual(await js('settingsQA.errors'), [])
-  console.log(`Settings: ${experienceOnly ? 'Experience topics' : 'all 29 topics'}, exclusive expansion, saving, draft retention, hidden focus, keyboard/controller/category/back navigation, and 720p/1080p layout passed.`)
+  console.log(`Settings: ${experienceOnly ? 'Experience topics' : 'all 30 topics'}, exclusive expansion, saving, draft retention, hidden focus, keyboard/controller/category/back navigation, and 720p/1080p layout passed.`)
   window.destroy()
 }
 

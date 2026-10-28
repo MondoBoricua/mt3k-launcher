@@ -50,6 +50,7 @@ import { SaveBackupDirectorySection } from './SaveBackupDirectorySection'
 import { SettingsSection, SettingsSections } from './SettingsSection'
 import { SettingsToggle } from './SettingsToggle'
 import { LosslessScalingSection } from './LosslessScalingSection'
+import { OledCareSection } from './OledCareSection'
 import { TextSizeControl } from './TextSizeControl'
 import { GuestModePanel } from '@renderer/components/GuestModePanel'
 import { useAutoFocus } from '@renderer/hooks/useAutoFocus'
@@ -2863,6 +2864,7 @@ export function SettingsView(): JSX.Element {
                   />
                 </SettingsSection>
                 <LosslessScalingSection settings={settings} onSettings={setSettings} />
+                <OledCareSection />
               </div>
             )}
 

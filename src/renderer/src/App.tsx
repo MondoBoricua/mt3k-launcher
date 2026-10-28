@@ -1,4 +1,5 @@
 import { LaunchProfileListener } from '@renderer/components/LaunchProfileConfirmation'
+import { OledCare } from '@renderer/components/OledCare'
 import { LosslessScalingListener } from '@renderer/components/LosslessScalingListener'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useGamepadNavigation } from '@renderer/hooks/useGamepadNavigation'
@@ -79,6 +80,7 @@ function initialStartupMode(): StartupAnimationMode {
 function OrbitApp(): JSX.Element | null {
   const launchProfilesEnabled = usePreferencesStore((s) => s.launchProfilesEnabled)
   const losslessScalingEnabled = usePreferencesStore((s) => s.losslessScalingEnabled)
+  const oledCareEnabled = usePreferencesStore((s) => s.oledCareEnabled)
   const cachedStartupMode = useRef(initialStartupMode())
   const [ready, setReady] = useState(false)
   const [startupMode, setStartupMode] = useState<StartupAnimationMode>(
@@ -246,6 +248,7 @@ function OrbitApp(): JSX.Element | null {
       <Suspense fallback={null}>
         <GamepadKeyboard />
       </Suspense>
+      {oledCareEnabled && <OledCare />}
     </div>
   )
 }

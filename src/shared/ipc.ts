@@ -1,4 +1,5 @@
 import type { Language } from './language'
+import type { OledCareMode } from './oledCarePolicy'
 export type { Language } from './language'
 export type { CustomLauncherMusic, LauncherMusicSource } from './launcherMusic'
 export type { NativeControllerInputSnapshot } from './steamController'
@@ -476,6 +477,10 @@ export interface OrbitBackgroundServiceStatus {
 export interface OrbitSettings {
   attractModeEnabled?: boolean
   attractModeIdleMinutes?: number
+  /** Apagado por defecto. Cubre o atenúa solo la ventana del launcher al quedar quieta. */
+  oledCareEnabled?: boolean
+  oledCareIdleMinutes?: number
+  oledCareMode?: OledCareMode
   captureShelfEnabled?: boolean
   launchProfilesEnabled?: boolean
   /** Start Lossless Scaling with local games (Windows only). Off by default. */

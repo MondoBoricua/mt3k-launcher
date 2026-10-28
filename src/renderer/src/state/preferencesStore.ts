@@ -1,4 +1,9 @@
 import { normalizeAttractIdleMinutes } from '@shared/attractModePolicy'
+import {
+  normalizeOledCareIdleMinutes,
+  normalizeOledCareMode,
+  type OledCareMode
+} from '@shared/oledCarePolicy'
 import { useNotificationStore } from './notificationStore'
 import { DEFAULT_LANGUAGE, normalizeLanguage, isLanguage } from '@shared/language'
 export { LANGUAGE_OPTIONS } from '@shared/language'
@@ -82,6 +87,12 @@ interface PreferencesState {
   attractModeIdleMinutes: number
   captureShelfEnabled: boolean
   setShowcaseSettings: (partial: Partial<Pick<OrbitSettings, 'attractModeEnabled' | 'attractModeIdleMinutes' | 'captureShelfEnabled'>>) => Promise<void>
+  oledCareEnabled: boolean
+  oledCareIdleMinutes: number
+  oledCareMode: OledCareMode
+  setOledCareSettings: (
+    partial: Partial<Pick<OrbitSettings, 'oledCareEnabled' | 'oledCareIdleMinutes' | 'oledCareMode'>>
+  ) => Promise<void>
   launchProfilesEnabled: boolean
   /** Windows-only; the main process reports false elsewhere. */
   losslessScalingEnabled: boolean
@@ -527,6 +538,13 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
     await window.api.settings.set(partial)
     set(partial)
   },
+  oledCareEnabled: false,
+  oledCareIdleMinutes: 3,
+  oledCareMode: 'black',
+  setOledCareSettings: async (partial) => {
+    await window.api.settings.set(partial)
+    set(partial)
+  },
   showHomeBanners: true,
   showAchievements: true,
   backgroundTrailers: true,
@@ -674,6 +692,9 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
       attractModeEnabled: settings.attractModeEnabled === true,
       attractModeIdleMinutes: normalizeAttractIdleMinutes(settings.attractModeIdleMinutes),
       captureShelfEnabled: settings.captureShelfEnabled === true,
+      oledCareEnabled: settings.oledCareEnabled === true,
+      oledCareIdleMinutes: normalizeOledCareIdleMinutes(settings.oledCareIdleMinutes),
+      oledCareMode: normalizeOledCareMode(settings.oledCareMode),
       showFriendsHub: settings.showFriendsHub ?? true,
       showHomeBanners: homeLayout === 'orbit' ? settings.showHomeBanners : false,
       showAchievements: settings.showAchievements,
