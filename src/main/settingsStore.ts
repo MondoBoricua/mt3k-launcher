@@ -1,4 +1,5 @@
 import { normalizeAttractIdleMinutes } from '@shared/attractModePolicy'
+import { isFsr4RenderScale } from '@shared/fsr4LitePolicy'
 import { DEFAULT_LANGUAGE, normalizeLanguage } from '@shared/language'
 import Store from 'electron-store'
 import { normalizeGeForceNowLaunchMode } from '@shared/geforceNow'
@@ -35,6 +36,10 @@ const defaults: OrbitSettings = {
   losslessScalingEnabled: false,
   losslessScalingDefaultForGames: false,
   losslessScalingCloseOnExit: true,
+  fsr4LiteEnabled: false,
+  fsr4LiteAutoUpdate: true,
+  fsr4LiteOverlayDefault: false,
+  fsr4LiteRenderScaleDefault: 'game',
   backgroundModeEnabled: true,
   startWithWindows: false,
   theme: 'midnight',
@@ -128,6 +133,13 @@ export function publicSettingsSnapshot(): OrbitSettings {
     process.platform === 'win32' && snapshot.losslessScalingEnabled === true
   snapshot.losslessScalingDefaultForGames = snapshot.losslessScalingDefaultForGames === true
   snapshot.losslessScalingCloseOnExit = snapshot.losslessScalingCloseOnExit !== false
+  // FSR 4.1 Lite es solo Windows: en otro sistema el interruptor se lee apagado.
+  snapshot.fsr4LiteEnabled = process.platform === 'win32' && snapshot.fsr4LiteEnabled === true
+  snapshot.fsr4LiteAutoUpdate = snapshot.fsr4LiteAutoUpdate !== false
+  snapshot.fsr4LiteOverlayDefault = snapshot.fsr4LiteOverlayDefault === true
+  snapshot.fsr4LiteRenderScaleDefault = isFsr4RenderScale(snapshot.fsr4LiteRenderScaleDefault)
+    ? snapshot.fsr4LiteRenderScaleDefault
+    : 'game'
   snapshot.attractModeIdleMinutes = normalizeAttractIdleMinutes(snapshot.attractModeIdleMinutes)
   snapshot.language = normalizeLanguage(snapshot.language)
   snapshot.textScale = normalizeTextScale(snapshot.textScale)

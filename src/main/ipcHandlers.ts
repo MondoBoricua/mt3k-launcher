@@ -4,7 +4,9 @@ import { listCaptures, openCapture, openCapturesFolder } from './captures/captur
 import { ATTRACT_IDLE_MINUTES } from '@shared/attractModePolicy'
 import { launchProfileService } from './launchProfileService'
 import { losslessScalingService } from './losslessScalingService'
+import { fsr4LiteService } from './fsr4LiteService'
 import { isLosslessScalingEligibleGame } from '@shared/losslessScalingPolicy'
+import { isFsr4RenderScale } from '@shared/fsr4LitePolicy'
 import { restoreRetroArchNetworkCommandsOnDisable } from './retro/retroArchNetworkConfig'
 import { isLanguage } from '@shared/language'
 import { app, clipboard, ipcMain, shell, type BrowserWindow } from 'electron'
@@ -406,6 +408,15 @@ function validateSettingsPartial(value: unknown): asserts value is Partial<Orbit
   }
   if (partial.losslessScalingEnabled === true && process.platform !== 'win32') {
     throw new Error('Lossless Scaling is only available on Windows')
+  }
+  for (const key of ['fsr4LiteEnabled', 'fsr4LiteAutoUpdate', 'fsr4LiteOverlayDefault'] as const) {
+    if (key in partial && typeof partial[key] !== 'boolean') throw new Error(`Invalid ${key}`)
+  }
+  if ('fsr4LiteRenderScaleDefault' in partial && !isFsr4RenderScale(partial.fsr4LiteRenderScaleDefault)) {
+    throw new Error('Invalid fsr4LiteRenderScaleDefault')
+  }
+  if (partial.fsr4LiteEnabled === true && process.platform !== 'win32') {
+    throw new Error('FSR 4.1 Lite is only available on Windows')
   }
   if ('retroRomDirectories' in partial) {
     if (
@@ -859,6 +870,56 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
     return losslessScalingService.setGameMode(losslessScalingGameId(id), mode)
   })
+  // FSR 4.1 Lite: el estado se puede leer; instalar y quitar piden el dueño, como editar la ficha.
+  fsr4LiteService.initialize((event) => {
+    try {
+      if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(IPC.fsr4LiteEvent, event)
+    } catch (error) {
+      console.warn('[fsr4-lite] no se pudo entregar el aviso', error)
+    }
+  })
+  const assertFsr4Sender = (event: Electron.IpcMainInvokeEvent): void => {
+    if (event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+      throw new Error('Invalid FSR 4.1 Lite request sender')
+    }
+  }
+  const fsr4Game = (value: unknown) => {
+    const game = libraryService.getGame(profileGameId(value))
+    if (!game) throw new Error('Invalid library game')
+    return game
+  }
+  ipcMain.handle(IPC.fsr4LiteStatus, (event) => {
+    assertFsr4Sender(event)
+    return fsr4LiteService.status()
+  })
+  ipcMain.handle(IPC.fsr4LiteImport, (event) => {
+    assertFsr4Sender(event)
+    guestModeService.assertActionAllowed('change-settings')
+    return fsr4LiteService.importDlls(mainWindow)
+  })
+  ipcMain.handle(IPC.fsr4LiteGameGet, (event, id: unknown) => {
+    assertFsr4Sender(event)
+    return fsr4LiteService.gameGet(fsr4Game(id))
+  })
+  ipcMain.handle(IPC.fsr4LiteGameSetOptions, (event, id: unknown, value: unknown) => {
+    assertFsr4Sender(event)
+    guestModeService.assertActionAllowed('edit-metadata')
+    return fsr4LiteService.setOptions(fsr4Game(id), value)
+  })
+  ipcMain.handle(IPC.fsr4LiteInstall, (event, id: unknown) => {
+    assertFsr4Sender(event)
+    guestModeService.assertActionAllowed('edit-metadata')
+    return fsr4LiteService.install(fsr4Game(id))
+  })
+  ipcMain.handle(IPC.fsr4LiteUninstall, (event, id: unknown) => {
+    assertFsr4Sender(event)
+    guestModeService.assertActionAllowed('edit-metadata')
+    return fsr4LiteService.uninstall(fsr4Game(id))
+  })
+  ipcMain.handle(IPC.fsr4LiteOpenGameBar, (event) => {
+    assertFsr4Sender(event)
+    fsr4LiteService.openGameBar()
+  })
   ipcMain.handle(IPC.launchProfilesPending, (event) => {
     assertProfileSender(event)
     return launchProfileService.hasPendingRestore()
@@ -918,6 +979,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     restoreLaunchProfile: () => launchProfileService.restore(),
     startLaunchCompanions: (game) => losslessScalingService.beforeLaunch(game),
     stopLaunchCompanions: (session) => void losslessScalingService.sessionEnded(session),
+    noteSessionSettled: (game) => { void fsr4LiteService.onSessionEnded(game) },
     getLibraryGames: () => libraryService.getSnapshot().games,
     getGeForceNowMatches: () => currentGeForceNowSnapshot().matches,
     onGameConfirmed: (game, detectedAt, source) => libraryService.markGameStarted(game.id, detectedAt, source),
@@ -1210,6 +1272,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     settingsStore.set(next)
     if ('launchProfilesEnabled' in partial) launchProfileService.preferencesChanged()
     if (Object.keys(partial).some((key) => key.startsWith('losslessScaling'))) losslessScalingService.invalidateDiscovery()
+    if (partial.fsr4LiteEnabled === true) fsr4LiteService.onFeatureEnabled()
     if (retroPauseTurningOff) void restoreRetroArchNetworkCommandsOnDisable()
     if (languageChanged) {
       geForceNowCatalogService.refreshIfStale()

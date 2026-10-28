@@ -41,6 +41,7 @@ Empezó como **ORBIT MT3K Edition**, un fork de ORBIT 0.1.4. En septiembre de 20
 | **Modo invitado**: PIN con el mando, solo los juegos de una colección, sin tienda ni ajustes. Apagado por defecto. | 0.1.4-mt3k.10 |
 | **Log de diagnóstico** en `%APPDATA%\MT3K Launcher\logs`, con botón en Acerca de. Si algo falla, ese archivo es lo que se manda. | 0.1.4-mt3k.11 |
 | **Lossless Scaling con tus juegos** (sugerido por Ivan, suscriptor del canal): abre Lossless Scaling al lanzar un juego local y lo cierra al terminar si lo abrió el launcher, con elección por juego. Necesitas tener Lossless Scaling de Steam; el escalado se configura dentro de él. Apagado por defecto. | 0.1.4-mt3k.16 |
+| **FSR 4.1 Lite por juego**: instala FSR 4.1 Lite mediante OptiScaler en un juego local de un jugador, con quitar exacto, opciones por juego y aviso al cerrar la sesión. OptiScaler (GPL-3.0) se descarga al instalar y no va dentro del launcher. Apagado por defecto. Solo Windows. | 0.1.4-mt3k.17 |
 
 El detalle por versión está en [CHANGELOG.md](CHANGELOG.md).
 
@@ -141,6 +142,8 @@ MT3K Launcher es software libre bajo la [GNU GPL v3](LICENSE), con la [excepció
 - **ORBIT**, la base de este proyecto: © Luis Garcia. [Sitio oficial](https://www.getorbitlauncher.com/).
 - **MT3K Launcher**, los cambios y el nombre nuevo: © MT3K.
 - **Ivan (España)**: idea del acompañante de Lossless Scaling.
+- **ROG Ally Life** ([fsr4-lite-rog-ally](https://github.com/db1522/fsr4-lite-rog-ally)): receta pública de FSR 4.1 Lite. El launcher la reimplementa; no incluye ese código.
+- **OptiScaler** (GPL-3.0): se descarga sin modificar al instalar FSR 4.1 Lite. No va empaquetado en MT3K Launcher.
 - **Terceros**: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---

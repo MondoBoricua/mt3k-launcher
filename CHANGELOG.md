@@ -2,6 +2,18 @@
 
 MT3K Launcher empezó como la MT3K Edition, un fork de ORBIT 0.1.4 de Luis Garcia. Las versiones mantienen el formato `X.Y.Z-mt3k.N` para que las actualizaciones dentro de la app sigan funcionando.
 
+## 0.1.4-mt3k.17
+
+Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.16.
+
+### FSR 4.1 Lite (Configuración → Experiencia)
+
+- **Instala FSR 4.1 Lite en un juego local.** Viene **apagado** y solo aparece en Windows. Al activarlo, desde la ficha del juego se copia OptiScaler (GPL-3.0, se descarga tal cual y no va dentro del launcher) junto con las librerías Lite. Se puede quitar y la carpeta del juego vuelve a quedar como estaba. Cada juego elige escala de render, contador de FPS y API gráfica (DirectX 12, DirectX 11 o Vulkan).
+- **Dónde no entra.** No se instala en Game Pass ni en carpetas WindowsApps, ni en juegos con anti-cheat, ni en juegos de nube o tienda remota. Si el widget de ROG Ally Life ya instaló el suyo, el launcher no toca esos archivos y solo ofrece abrir Game Bar.
+- **Después de jugar.** Al cerrar la sesión se lee el registro de OptiScaler y la ficha muestra si Lite quedó activo, si cargó el FSR 4 del controlador, si no cargó, o si no se pudo confirmar. Un aviso por sesión, solo cuando el estado cambia.
+- **Actualización.** Con la opción encendida (viene encendida), como máximo una vez al día se busca una nightly más nueva de OptiScaler y se refrescan los juegos ya instalados, conservando el ini y el nombre del proxy de cada uno.
+- **Crédito.** La receta sigue el comportamiento público del widget FSR 4.1 Lite de ROG Ally Life (https://github.com/db1522/fsr4-lite-rog-ally). OptiScaler es de optiscaler, licencia GPL-3.0.
+
 ## 0.1.4-mt3k.16
 
 Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.15.

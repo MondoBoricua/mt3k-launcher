@@ -486,6 +486,14 @@ export interface OrbitSettings {
   losslessScalingCloseOnExit?: boolean
   /** Manual LosslessScaling.exe override; only the main-process file picker may set it. */
   losslessScalingPath?: string
+  /** Install FSR 4.1 Lite through OptiScaler (Windows only). Off by default. */
+  fsr4LiteEnabled?: boolean
+  /** Refresh installed games when a newer OptiScaler nightly exists. On by default. */
+  fsr4LiteAutoUpdate?: boolean
+  /** Default FPS overlay for a newly configured game. Off by default. */
+  fsr4LiteOverlayDefault?: boolean
+  /** Default render scale for a newly configured game. */
+  fsr4LiteRenderScaleDefault?: 'game' | 'native' | 'quality' | 'balanced' | 'performance'
   backgroundModeEnabled?: boolean
   startWithWindows?: boolean
   theme: ThemeId
@@ -1868,6 +1876,14 @@ export const IPC = {
   losslessScalingGameGet: 'losslessScaling:game:get',
   losslessScalingGameSet: 'losslessScaling:game:set',
   losslessScalingEvent: 'losslessScaling:event',
+  fsr4LiteStatus: 'fsr4Lite:status',
+  fsr4LiteImport: 'fsr4Lite:import',
+  fsr4LiteGameGet: 'fsr4Lite:game:get',
+  fsr4LiteGameSetOptions: 'fsr4Lite:game:set-options',
+  fsr4LiteInstall: 'fsr4Lite:install',
+  fsr4LiteUninstall: 'fsr4Lite:uninstall',
+  fsr4LiteOpenGameBar: 'fsr4Lite:open-game-bar',
+  fsr4LiteEvent: 'fsr4Lite:event',
   launchProfilesError: "launchProfiles:error",
   steamLoginStart: 'steam:login:start',
   steamLoginCancel: 'steam:login:cancel',

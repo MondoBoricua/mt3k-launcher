@@ -69,6 +69,7 @@ const responses = {
   'retroAchievements.credentials.get': { configured: false },
   'launchProfiles.pending': null,
   'losslessScaling.status': { supported: true, state: 'missing', source: 'none' },
+  'fsr4Lite.status': { supported: true, device: { support: 'supported', gpuNames: ['AMD Radeon 890M'], egpuNote: false, primaryGpu: 'AMD Radeon 890M' }, fsrSource: 'missing', optiBuild: null },
   'settings.getSaveBackupDirectory': { configuredPath: undefined, effectivePath: 'C:\\Users\\test\\AppData\\Roaming\\ORBIT\\save-backups', isDefault: true },
   'steam.credentials.get': { configured: false },
   'playstation.refreshRemotePlayStatus': { apps: [], selectedApp: null },
@@ -1085,7 +1086,7 @@ async function main() {
     return
   }
   assert.deepEqual((await state()).expanded, [])
-  assert.equal((await state()).headers.length, 10, `experience headers: ${(await state()).headers.join(", ")}`)
+  assert.equal((await state()).headers.length, 11, `experience headers: ${(await state()).headers.join(", ")}`)
   await key('ArrowDown')
   assert.equal((await state()).focused, 'attract-mode', 'Down enters the first topic from the category')
   await key('ArrowDown')
@@ -1151,7 +1152,7 @@ async function main() {
       await js(`settingsQA.setPage('${page}')`)
       await settle()
       await waitFor('settingsQA.state().headers.length > 0')
-      assert.equal((await state()).headers.length, { appearance: 8, experience: 10, plus: 1, libraries: 6, hardware: 3, updates: 3, system: 4 }[page], `${page} headers: ${(await state()).headers.join(", ")}`)
+      assert.equal((await state()).headers.length, { appearance: 8, experience: 11, plus: 1, libraries: 6, hardware: 3, updates: 3, system: 4 }[page], `${page} headers: ${(await state()).headers.join(", ")}`)
       assert.equal((await state()).overflow, false, `${page} has no horizontal overflow`)
       for (const id of (await state()).headers) {
         await open(id)
@@ -1195,6 +1196,25 @@ async function main() {
   await settle()
   assert.deepEqual(await losslessToggles(), ['losslessScalingEnabled'], 'Turning it off hides the options again')
   await key('Escape')
+  // FSR 4.1 Lite: solo el interruptor apagado; al encenderlo salen las opciones.
+  await click('fsr4-lite')
+  const fsrToggles = () => js('[...document.querySelectorAll("#settings-fsr4-lite-panel [data-setting-toggle]")].map(e => e.dataset.settingToggle)')
+  assert.deepEqual(await fsrToggles(), ['fsr4LiteEnabled'], 'Only the main switch while FSR 4.1 Lite is off')
+  assert.match(await js('document.getElementById("settings-fsr4-lite-panel").textContent'), /single-player/)
+  await js('document.querySelector("[data-setting-toggle=fsr4LiteEnabled]").click()')
+  await settle()
+  assert.deepEqual(await fsrToggles(), ['fsr4LiteEnabled', 'fsr4LiteAutoUpdate', 'fsr4LiteOverlayDefault'])
+  assert.equal(await js('document.querySelector("[data-setting-toggle=fsr4LiteAutoUpdate]").getAttribute("aria-pressed")'), 'true', 'OptiScaler updates stay on by default')
+  assert.equal(await js('document.querySelector("[data-setting-toggle=fsr4LiteOverlayDefault]").getAttribute("aria-pressed")'), 'false', 'The FPS overlay stays off by default')
+  const fsrPanel = 'document.getElementById("settings-fsr4-lite-panel").textContent'
+  assert.match(await js(fsrPanel), /ROG Ally Life/)
+  assert.match(await js(fsrPanel), /GPL-3\.0/)
+  assert.match(await js(fsrPanel), /Game Pass/)
+  assert.equal(await js('(() => { const el = document.getElementById("settings-fsr4-lite-panel"); return el.scrollWidth <= el.clientWidth + 1 })()'), true, 'FSR 4.1 Lite panel fits when on')
+  await js('document.querySelector("[data-setting-toggle=fsr4LiteEnabled]").click()')
+  await settle()
+  assert.deepEqual(await fsrToggles(), ['fsr4LiteEnabled'], 'Turning FSR 4.1 Lite off hides the options again')
+  await key('Escape')
   await js('settingsQA.setPage("experience"); settingsQA.setLanguage("de")')
   await settle()
   await waitFor('settingsQA.state().headers.includes("sound")')
@@ -1220,7 +1240,7 @@ async function main() {
   await key('Escape')
   assert.equal((await state()).exited, 1, 'Back exits normally once the topic is closed')
   assert.deepEqual(await js('settingsQA.errors'), [])
-  console.log(`Settings: ${experienceOnly ? 'Experience topics' : 'all 29 topics'}, exclusive expansion, saving, draft retention, hidden focus, keyboard/controller/category/back navigation, and 720p/1080p layout passed.`)
+  console.log(`Settings: ${experienceOnly ? 'Experience topics' : 'all 30 topics'}, exclusive expansion, saving, draft retention, hidden focus, keyboard/controller/category/back navigation, and 720p/1080p layout passed.`)
   window.destroy()
 }
 

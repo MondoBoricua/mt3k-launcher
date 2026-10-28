@@ -10,6 +10,7 @@ import {
   ChevronUp,
   CircleAlert,
   CloudLightning,
+  Cpu,
   Database,
   EyeOff,
   ExternalLink,
@@ -45,6 +46,9 @@ import { GameMetadataEditor } from './GameMetadataEditor'
 import { formatWindowsArguments, LaunchOptionsDialog } from './LaunchOptionsDialog'
 import { LibraryCollectionDialog } from './LibraryCollectionDialog'
 import { SaveRestoreBackupDialog } from './SaveRestoreBackupDialog'
+import { Fsr4LiteBadge, useFsr4LiteGame } from './Fsr4LiteGame'
+import { Fsr4LiteDialog } from './Fsr4LiteDialog'
+import { isFsr4LiteEligibleGame } from '@shared/fsr4LitePolicy'
 import {
   GameDetailActionMenu,
   type GameDetailActionMenuItem
@@ -119,7 +123,8 @@ const GUEST_GUARDED_MANAGE_ACTIONS: Record<string, GuestModeAction> = {
   exclude: 'hide',
   captures: 'open-captures',
   'open-backups': 'open-backups',
-  'restore-backup': 'restore-backup'
+  'restore-backup': 'restore-backup',
+  'fsr4-lite': 'edit-metadata'
 }
 
 export function GameDetailPanel({ game }: Props): JSX.Element {
@@ -179,6 +184,10 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
   const [launchOptionsOpen, setLaunchOptionsOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
   const [saveRestoreOpen, setSaveRestoreOpen] = useState(false)
+  const [fsr4Open, setFsr4Open] = useState(false)
+  const fsr4Enabled = usePreferencesStore((state) => state.fsr4LiteEnabled)
+  const fsr4Eligible = fsr4Enabled && isFsr4LiteEligibleGame(game)
+  const fsr4 = useFsr4LiteGame(fsr4Eligible ? game.id : null)
   const [openActionMenu, setOpenActionMenu] = useState<'discover' | 'manage' | null>(null)
   const [favoriteBusy, setFavoriteBusy] = useState(false)
   const [cloudLaunchState, setCloudLaunchState] = useState<'idle' | 'launching' | 'error'>('idle')
@@ -467,6 +476,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
       launchOptionsOpen ||
       collectionsOpen ||
       saveRestoreOpen ||
+      fsr4Open ||
       trailerOpen ||
       downloadCenterOpen ||
       openActionMenu !== null
@@ -477,6 +487,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
     metadataEditorOpen,
     collectionsOpen,
     saveRestoreOpen,
+    fsr4Open,
     downloadCenterOpen,
     launchOptionsOpen,
     openActionMenu,
@@ -752,6 +763,24 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
     }
   ]
 
+  if (fsr4Eligible) {
+    if (fsr4.view?.phase === 'widget') {
+      manageActions.push({
+        id: 'fsr4-game-bar',
+        label: t('fsr4Lite.openGameBar'),
+        icon: Cpu,
+        onSelect: () => void window.api.fsr4Lite.openGameBar()
+      })
+    } else {
+      manageActions.push({
+        id: 'fsr4-lite',
+        label: t(fsr4.view?.phase === 'installed' ? 'fsr4Lite.remove' : 'fsr4Lite.install'),
+        icon: Cpu,
+        onSelect: () => setFsr4Open(true)
+      })
+    }
+  }
+
   if (local || retro) {
     manageActions.push({
       id: 'launch-options',
@@ -854,8 +883,8 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
     <>
     <motion.div
       ref={detailRootRef}
-      data-focus-scope={metadataEditorOpen || launchOptionsOpen || collectionsOpen || saveRestoreOpen || trailerOpen || downloadCenterOpen || openActionMenu !== null || achievementSheetOpen ? undefined : 'active'}
-      aria-hidden={metadataEditorOpen || launchOptionsOpen || collectionsOpen || saveRestoreOpen || trailerOpen || downloadCenterOpen || openActionMenu !== null || undefined}
+      data-focus-scope={metadataEditorOpen || launchOptionsOpen || collectionsOpen || saveRestoreOpen || fsr4Open || trailerOpen || downloadCenterOpen || openActionMenu !== null || achievementSheetOpen ? undefined : 'active'}
+      aria-hidden={metadataEditorOpen || launchOptionsOpen || collectionsOpen || saveRestoreOpen || fsr4Open || trailerOpen || downloadCenterOpen || openActionMenu !== null || undefined}
       role="dialog"
       aria-modal="true"
       aria-label={game.name}
@@ -904,7 +933,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
           orientation="horizontal"
           className="absolute inset-0 h-full w-full scale-[1.02] object-cover"
         />
-        {trailer && trailer.format !== 'external' && backgroundTrailers && !reduceMotion && !trailerOpen && !achievementGuidePlayer && !metadataEditorOpen && !launchOptionsOpen && !collectionsOpen && !saveRestoreOpen && !achievementSheetOpen && (
+        {trailer && trailer.format !== 'external' && backgroundTrailers && !reduceMotion && !trailerOpen && !achievementGuidePlayer && !metadataEditorOpen && !launchOptionsOpen && !collectionsOpen && !saveRestoreOpen && !fsr4Open && !achievementSheetOpen && (
           <GameTrailerBackground key={`${game.id}:${trailer.url}`} trailer={trailer} />
         )}
         <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/65 to-black/20" />
@@ -976,6 +1005,7 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
                           {t('details.installed')}
                         </span>
                       )}
+                      {fsr4Eligible ? <Fsr4LiteBadge view={fsr4.view} /> : null}
                       {geForceNowMatch && (
                         <span className="flex items-center gap-1.5 rounded-full border border-[#9ee34b]/25 bg-[#76b900]/15 px-2 py-1 text-[#b7f16f]">
                           <CloudLightning size={11} />
@@ -1360,6 +1390,17 @@ export function GameDetailPanel({ game }: Props): JSX.Element {
             force: true,
             replace: true
           })
+        }}
+      />
+    )}
+    {fsr4Open && fsr4Eligible && (
+      <Fsr4LiteDialog
+        game={game}
+        view={fsr4.view}
+        onView={fsr4.replace}
+        onClose={() => {
+          setFsr4Open(false)
+          requestAnimationFrame(() => focusElement(manageActionsRef.current))
         }}
       />
     )}
