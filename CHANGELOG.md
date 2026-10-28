@@ -9,6 +9,13 @@ Base: ORBIT 0.1.4 con los cambios de 0.1.4-mt3k.16.
 ### Mejoras
 
 - **Cuidado de pantalla OLED.** En Configuración → Experiencia, al final, hay un interruptor apagado por defecto. Al encenderlo, si la ventana del launcher se queda quieta (1, 2, 3, 5 o 10 minutos; 3 por defecto) se cubre de negro para apagar los píxeles, o se atenúa al 15 % de brillo. Cualquier tecla, ratón o mando la quita al instante y esa primera entrada no lanza nada. Solo cubre la ventana del launcher: un juego en marcha, o la ventana oculta, minimizada o sin foco, no se toca. Si el modo de exhibición también está activo, esta capa tapa el slideshow cuando llega su propio tiempo. El apagado de pantalla de Windows sigue siendo aparte.
+### FSR 4.1 Lite (Configuración → Experiencia)
+
+- **Instala FSR 4.1 Lite en un juego local.** Viene **apagado** y solo aparece en Windows. Al activarlo, desde la ficha del juego se copia OptiScaler (GPL-3.0, se descarga tal cual y no va dentro del launcher) junto con las librerías Lite. Se puede quitar y la carpeta del juego vuelve a quedar como estaba. Cada juego elige escala de render, contador de FPS y API gráfica (DirectX 12, DirectX 11 o Vulkan).
+- **Dónde no entra.** No se instala en Game Pass ni en carpetas WindowsApps, ni en juegos con anti-cheat, ni en juegos de nube o tienda remota. Si el widget de ROG Ally Life ya instaló el suyo, el launcher no toca esos archivos y solo ofrece abrir Game Bar.
+- **Después de jugar.** Al cerrar la sesión se lee el registro de OptiScaler y la ficha muestra si Lite quedó activo, si cargó el FSR 4 del controlador, si no cargó, o si no se pudo confirmar. Un aviso por sesión, solo cuando el estado cambia.
+- **Actualización.** Con la opción encendida (viene encendida), como máximo una vez al día se busca una nightly más nueva de OptiScaler y se refrescan los juegos ya instalados, conservando el ini y el nombre del proxy de cada uno.
+- **Crédito.** La receta sigue el comportamiento público del widget FSR 4.1 Lite de ROG Ally Life (https://github.com/db1522/fsr4-lite-rog-ally). OptiScaler es de optiscaler, licencia GPL-3.0.
 
 ## 0.1.4-mt3k.16
 

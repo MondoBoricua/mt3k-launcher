@@ -97,6 +97,11 @@ interface PreferencesState {
   /** Windows-only; the main process reports false elsewhere. */
   losslessScalingEnabled: boolean
   losslessScalingDefaultForGames: boolean
+  /** Windows-only. Apagado: la ficha del juego no muestra FSR 4.1 Lite. */
+  fsr4LiteEnabled: boolean
+  fsr4LiteAutoUpdate: boolean
+  fsr4LiteOverlayDefault: boolean
+  fsr4LiteRenderScaleDefault: 'game' | 'native' | 'quality' | 'balanced' | 'performance'
   theme: ThemeId
   cornerStyle: CornerStyleId
   profileAvatar: ProfileAvatarId
@@ -566,6 +571,10 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
   launchProfilesEnabled: false,
   losslessScalingEnabled: false,
   losslessScalingDefaultForGames: false,
+  fsr4LiteEnabled: false,
+  fsr4LiteAutoUpdate: true,
+  fsr4LiteOverlayDefault: false,
+  fsr4LiteRenderScaleDefault: 'game',
   hardwareControlEnabled: false,
   guestModeEnabled: false,
   hardwareControlButton: 'menu',
@@ -722,6 +731,15 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
       launchProfilesEnabled: settings.launchProfilesEnabled === true,
       losslessScalingEnabled: settings.losslessScalingEnabled === true,
       losslessScalingDefaultForGames: settings.losslessScalingDefaultForGames === true,
+      fsr4LiteEnabled: settings.fsr4LiteEnabled === true,
+      fsr4LiteAutoUpdate: settings.fsr4LiteAutoUpdate !== false,
+      fsr4LiteOverlayDefault: settings.fsr4LiteOverlayDefault === true,
+      fsr4LiteRenderScaleDefault: settings.fsr4LiteRenderScaleDefault === 'native'
+        || settings.fsr4LiteRenderScaleDefault === 'quality'
+        || settings.fsr4LiteRenderScaleDefault === 'balanced'
+        || settings.fsr4LiteRenderScaleDefault === 'performance'
+        ? settings.fsr4LiteRenderScaleDefault
+        : 'game',
       hardwareControlEnabled: settings.hardwareControlEnabled ?? false,
       guestModeEnabled: settings.guestModeEnabled === true,
       hardwareControlButton: settings.hardwareControlButton ?? 'menu',

@@ -1,6 +1,7 @@
 import { LaunchProfileListener } from '@renderer/components/LaunchProfileConfirmation'
 import { OledCare } from '@renderer/components/OledCare'
 import { LosslessScalingListener } from '@renderer/components/LosslessScalingListener'
+import { Fsr4LiteListener } from '@renderer/components/Fsr4LiteListener'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useGamepadNavigation } from '@renderer/hooks/useGamepadNavigation'
 import { usePreferencesStore } from '@renderer/state/preferencesStore'
@@ -80,6 +81,7 @@ function initialStartupMode(): StartupAnimationMode {
 function OrbitApp(): JSX.Element | null {
   const launchProfilesEnabled = usePreferencesStore((s) => s.launchProfilesEnabled)
   const losslessScalingEnabled = usePreferencesStore((s) => s.losslessScalingEnabled)
+  const fsr4LiteEnabled = usePreferencesStore((s) => s.fsr4LiteEnabled)
   const oledCareEnabled = usePreferencesStore((s) => s.oledCareEnabled)
   const cachedStartupMode = useRef(initialStartupMode())
   const [ready, setReady] = useState(false)
@@ -222,6 +224,7 @@ function OrbitApp(): JSX.Element | null {
     <div className="relative h-screen w-screen overflow-hidden bg-base">
       {ready && launchProfilesEnabled && <LaunchProfileListener />}
       {ready && losslessScalingEnabled && <LosslessScalingListener />}
+      {ready && fsr4LiteEnabled && <Fsr4LiteListener />}
       <div
         ref={appContentRef}
         data-orbit-app-content

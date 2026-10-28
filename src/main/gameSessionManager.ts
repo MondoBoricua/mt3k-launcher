@@ -101,6 +101,8 @@ export interface GameSessionCallbacks {
   startLaunchCompanions?: (game: LibraryGame) => Promise<number | undefined>
   /** Session ended (complete, error or cancelled). Without an id, ends the active companion session. */
   stopLaunchCompanions?: (session?: number) => void
+  /** La sesión ya terminó y el juego sigue en activeGame. FSR 4.1 Lite lee el log aquí. */
+  noteSessionSettled?: (game: LibraryGame, startedAt: number) => void | Promise<void>
   getLibraryGames?: () => readonly LibraryGame[]
   getGeForceNowMatches?: () => readonly GeForceNowLibraryMatch[]
   onGameConfirmed?: (game: LibraryGame, detectedAt: number, source?: 'local' | 'geforce-now') => void | Promise<void>
@@ -2132,6 +2134,15 @@ export class GameSessionManager extends EventEmitter {
     if (shouldRestoreLaunchProfile(status.phase) && status.phase !== previous.phase) {
       this.callbacks.restoreLaunchProfile?.()
       this.stopCompanions()
+      // El juego sigue asignado: así se puede leer OptiScaler.log antes de limpiar la sesión.
+      const settled = this.activeGame
+      const startedAt = previous.startedAt ?? status.startedAt ?? 0
+      if (settled) {
+        // La promesa se atrapa aquí: el try de esta función no ve un rechazo async.
+        void Promise.resolve(this.callbacks.noteSessionSettled?.(settled, startedAt)).catch((error) => {
+          console.warn('[fsr4-lite] no se pudo anotar el cierre de sesión', error)
+        })
+      }
     }
     if (status.phase === 'idle') {
       this.activeGame = null

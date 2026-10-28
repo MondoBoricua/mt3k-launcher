@@ -61,6 +61,10 @@ export const mainTranslations = {
     "MT3K Launcher · Select LosslessScaling.exe": "MT3K Launcher · Select LosslessScaling.exe",
     "Use Lossless Scaling": "Use Lossless Scaling",
     "Select the LosslessScaling.exe file from your Lossless Scaling folder.": "Select the LosslessScaling.exe file from your Lossless Scaling folder.",
+    "MT3K Launcher · Select FSR 4.1 Lite files": "MT3K Launcher · Select FSR 4.1 Lite files",
+    "Use these FSR files": "Use these FSR files",
+    "Select amdxcffx64.dll and amdvkffx64.dll.": "Select amdxcffx64.dll and amdvkffx64.dll.",
+    "FSR driver files": "FSR driver files",
     "The game name must be between 1 and 120 characters.": "The game name must be between 1 and 120 characters."
   },
   "de": {
@@ -123,6 +127,10 @@ export const mainTranslations = {
     "MT3K Launcher · Select LosslessScaling.exe": "MT3K Launcher · LosslessScaling.exe auswählen",
     "Use Lossless Scaling": "Lossless Scaling verwenden",
     "Select the LosslessScaling.exe file from your Lossless Scaling folder.": "Wähle die Datei LosslessScaling.exe aus deinem Lossless-Scaling-Ordner.",
+    "MT3K Launcher · Select FSR 4.1 Lite files": "MT3K Launcher · FSR-4.1-Lite-Dateien auswählen",
+    "Use these FSR files": "Diese FSR-Dateien verwenden",
+    "Select amdxcffx64.dll and amdvkffx64.dll.": "Wähle amdxcffx64.dll und amdvkffx64.dll.",
+    "FSR driver files": "FSR-Treiberdateien",
     "The game name must be between 1 and 120 characters.": "Der Spielname muss zwischen 1 und 120 Zeichen lang sein."
   },
   "es": {
@@ -185,6 +193,10 @@ export const mainTranslations = {
     "MT3K Launcher · Select LosslessScaling.exe": "MT3K Launcher · Seleccionar LosslessScaling.exe",
     "Use Lossless Scaling": "Usar Lossless Scaling",
     "Select the LosslessScaling.exe file from your Lossless Scaling folder.": "Selecciona el archivo LosslessScaling.exe de tu carpeta de Lossless Scaling.",
+    "MT3K Launcher · Select FSR 4.1 Lite files": "MT3K Launcher · Seleccionar archivos de FSR 4.1 Lite",
+    "Use these FSR files": "Usar estos archivos FSR",
+    "Select amdxcffx64.dll and amdvkffx64.dll.": "Selecciona amdxcffx64.dll y amdvkffx64.dll.",
+    "FSR driver files": "Archivos de FSR",
     "The game name must be between 1 and 120 characters.": "El nombre del juego debe tener entre 1 y 120 caracteres."
   },
   "ru": {
@@ -247,6 +259,10 @@ export const mainTranslations = {
     "MT3K Launcher · Select LosslessScaling.exe": "MT3K Launcher · Выбор LosslessScaling.exe",
     "Use Lossless Scaling": "Использовать Lossless Scaling",
     "Select the LosslessScaling.exe file from your Lossless Scaling folder.": "Выберите файл LosslessScaling.exe в папке Lossless Scaling.",
+    "MT3K Launcher · Select FSR 4.1 Lite files": "MT3K Launcher · Выбор файлов FSR 4.1 Lite",
+    "Use these FSR files": "Использовать эти файлы FSR",
+    "Select amdxcffx64.dll and amdvkffx64.dll.": "Выберите amdxcffx64.dll и amdvkffx64.dll.",
+    "FSR driver files": "Файлы драйвера FSR",
     "The game name must be between 1 and 120 characters.": "Название игры должно содержать от 1 до 120 символов."
   }
 } as const satisfies Record<Language, Record<string, string>>

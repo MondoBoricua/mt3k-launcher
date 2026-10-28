@@ -105,6 +105,13 @@ import type {
   LosslessScalingStatus
 } from '@shared/losslessScalingPolicy'
 import type {
+  Fsr4GraphicsApi,
+  Fsr4LiteEvent,
+  Fsr4LiteGameView,
+  Fsr4LiteStatus,
+  Fsr4RenderScale
+} from '@shared/fsr4LitePolicy'
+import type {
   RetroArchCommandName,
   RetroArchCommandResult,
   RetroArchStatusSnapshot
@@ -147,6 +154,21 @@ const orbitApi = {
       const listener = (_event: Electron.IpcRendererEvent, event: LosslessScalingEvent): void => callback(event)
       ipcRenderer.on(IPC.losslessScalingEvent, listener)
       return () => ipcRenderer.removeListener(IPC.losslessScalingEvent, listener)
+    }
+  },
+  fsr4Lite: {
+    status: (): Promise<Fsr4LiteStatus> => ipcRenderer.invoke(IPC.fsr4LiteStatus),
+    importFiles: (): Promise<Fsr4LiteStatus> => ipcRenderer.invoke(IPC.fsr4LiteImport),
+    gameGet: (gameId: string): Promise<Fsr4LiteGameView> => ipcRenderer.invoke(IPC.fsr4LiteGameGet, gameId),
+    setOptions: (gameId: string, value: { renderScale: Fsr4RenderScale, overlay: boolean, graphicsApi: Fsr4GraphicsApi }): Promise<Fsr4LiteGameView> =>
+      ipcRenderer.invoke(IPC.fsr4LiteGameSetOptions, gameId, value),
+    install: (gameId: string): Promise<Fsr4LiteGameView> => ipcRenderer.invoke(IPC.fsr4LiteInstall, gameId),
+    uninstall: (gameId: string): Promise<Fsr4LiteGameView> => ipcRenderer.invoke(IPC.fsr4LiteUninstall, gameId),
+    openGameBar: (): Promise<void> => ipcRenderer.invoke(IPC.fsr4LiteOpenGameBar),
+    onEvent: (callback: (event: Fsr4LiteEvent) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, event: Fsr4LiteEvent): void => callback(event)
+      ipcRenderer.on(IPC.fsr4LiteEvent, listener)
+      return () => ipcRenderer.removeListener(IPC.fsr4LiteEvent, listener)
     }
   },
   settings: {
